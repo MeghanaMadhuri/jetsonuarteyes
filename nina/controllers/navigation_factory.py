@@ -14,12 +14,14 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
 
     NINA_NAV_MODE=local        # default; drives Jetson GPIOs directly
     NINA_NAV_MODE=remote       # talks to pi_motor_bridge over serial
+                               # (default speed 13%, DIR settle 0.1 s, chain
+                               # gap after STOP 0.25 s unless env overrides)
     NINA_NAV_REMOTE_PORT       # default /dev/ttyUSB0
     NINA_NAV_REMOTE_BAUD       # default 115200
     NINA_NAV_REMOTE_TIMEOUT_SEC# default 1.2 (allow Pi kick + warm-reverse before OK)
     NINA_NAV_START_KICK_PCT    # default 14; 0 = no breakaway pulse (was 35 — dominated low cruise)
     NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
-    NINA_NAV_DIR_SETTLE_SEC    # default 0.03; delay after DIR+EL before PWM; 0 = off
+    NINA_NAV_DIR_SETTLE_SEC    # local default 0.03; remote 0.1; DIR+EL before PWM; 0 = off
     NINA_NAV_PWM_REASSERT_SEC  # default 0.02; 2nd PWM write from rest; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.5; straight crawl only; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT # default 20 (% of cmd speed for opposite jog)
@@ -27,7 +29,8 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP # default 6; symmetric +% both wheels turn_left
     NINA_NAV_TURN_LEFT_PREP_BACK_SEC # default 0.12; 0=skip straight-back prime
     NINA_NAV_TURN_LEFT_PREP_FWD_SEC  # default 0.12; 0=skip straight-fwd prime
-    NINA_NAV_SETTLE_SEC        # default 0.1; soft-stop pause / drive_continuous gap
+    NINA_NAV_SETTLE_SEC        # local default 0.1; remote default 0.25
+    NINA_NAV_SPEED             # local default 8; remote default 13 (RPi TCP ref)
 """
 
 from __future__ import annotations

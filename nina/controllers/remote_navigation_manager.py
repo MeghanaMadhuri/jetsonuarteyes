@@ -113,7 +113,9 @@ class RemoteNavigationConfig:
     response_timeout_sec: float = 1.2
     connect_timeout_sec: float = 2.0
     reconnect_min_interval_sec: float = 1.0
-    default_speed_percent: int = 8
+    # Defaults match ``load_settings()`` when ``NINA_NAV_MODE=remote``
+    # (Sirena_Humanoid-2 / UBOT_app provenance: ~13% cruise, 2.3 s pivots).
+    default_speed_percent: int = 13
     turn_duration_sec: float = 2.3
     invert_left_dir: bool = False
     invert_right_dir: bool = False
@@ -121,15 +123,15 @@ class RemoteNavigationConfig:
     # from NavigationSettings. Unit tests keep these zero: one SET + OK.
     start_kick_percent: int = 0
     start_kick_sec: float = 0.0
-    dir_pwm_gap_sec: float = 0.0
+    dir_pwm_gap_sec: float = 0.1
     straight_opposite_nudge_sec: float = 0.0
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.0
     # Second PWM-zero write timing (mirrors local); 0 in tests skips extra SET.
     pwm_reassert_sec: float = 0.0
-    # Matches local `NavigationConfig.settle_delay_sec` — pause after STOP
-    # before a fresh SET in `drive_continuous`.
-    settle_delay_sec: float = 0.1
+    # Pause after STOP before a fresh SET (``drive_continuous``, turns). Remote
+    # default 0.25 s matches Android inter-segment gap; use 0.1 for local GPIO.
+    settle_delay_sec: float = 0.25
     pivot_turn_left_extra_pp: int = 6
     turn_left_prep_back_sec: float = 0.12
     turn_left_prep_fwd_sec: float = 0.12

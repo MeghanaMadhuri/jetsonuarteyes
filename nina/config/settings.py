@@ -77,6 +77,8 @@ class NavigationSettings:
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
     # Local + remote: delay after DIR+EL before torque (local GPIO). Remote
     # uses the same value as a sleep between protocol steps when mirroring.
+    # See `load_settings()`: default is 0.03 s (local); 0.1 s when remote
+    # (matches RPi prototype ``navigation_bldc`` disable→enable settle).
     dir_pwm_gap_sec: float = 0.03
     pwm_reassert_sec: float = 0.02
     # Straight-line only: brief opposite jog before crawling (0 sec = off).
@@ -85,6 +87,8 @@ class NavigationSettings:
     opposite_zero_settle_sec: float = 0.04
     # Pause after soft stop / between stop and fresh motion (`stop()`,
     # `drive_continuous`). Matches `NavigationConfig.settle_delay_sec`.
+    # See `load_settings()`: default is 0.1 s (local GPIO); 0.25 s when
+    # ``NINA_NAV_MODE=remote`` (Android square pattern inter-segment gap).
     settle_delay_sec: float = 0.1
     # In-place turn_left (L=back R=fwd): symmetric +% on both sides for breakaway.
     pivot_turn_left_extra_pp: int = 6
@@ -224,12 +228,23 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     recordings_dir.mkdir(parents=True, exist_ok=True)
 
+    # When talking to pi_motor_bridge over serial, default tunables match the
+    # proven Sirena_Humanoid-2 / UBOT_app stack: ~13% cruise (see
+    # global_variables.f_speed), 100 ms DIR/EL settle before PWM, 250 ms pause
+    # after STOP before the next move (Android square GAP_MS). Local Jetson-GPIO
+    # mode keeps the tighter historical defaults.
+    nav_mode = os.environ.get("NINA_NAV_MODE", "local").strip().lower()
+    remote_bridge = nav_mode == "remote"
+    nav_speed_default = "13" if remote_bridge else "8"
+    nav_dir_gap_default = "0.1" if remote_bridge else "0.03"
+    nav_settle_default = "0.25" if remote_bridge else "0.1"
+
     navigation = NavigationSettings(
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
-        # 8% matches the GUI manual floor (MIN_SPEED_PCT). Bump via
-        # NINA_NAV_SPEED for harder cruises.
-        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "8")),
+        # Local: 8% matches the GUI manual floor (MIN_SPEED_PCT). Remote/Pi
+        # bridge: 13% aligns with the old RPi bench (f_speed≈13, TCP motions 15).
+        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", nav_speed_default)),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         # Flip if a wheel spins opposite of what the GUI expects (the
         # JYQD ZF level for "forward" depends on motor wiring polarity).
@@ -247,7 +262,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
                 ),
             ),
         ),
-        dir_pwm_gap_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03")),
+        dir_pwm_gap_sec=float(
+            os.environ.get("NINA_NAV_DIR_SETTLE_SEC", nav_dir_gap_default)
+        ),
         pwm_reassert_sec=float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02")),
         straight_opposite_nudge_sec=float(
             os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.5")
@@ -258,7 +275,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         opposite_zero_settle_sec=float(
             os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
         ),
-        settle_delay_sec=float(os.environ.get("NINA_NAV_SETTLE_SEC", "0.1")),
+        settle_delay_sec=float(
+            os.environ.get("NINA_NAV_SETTLE_SEC", nav_settle_default)
+        ),
         pivot_turn_left_extra_pp=max(
             0,
             min(
@@ -293,7 +312,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
         # 'remote' -> commands are sent over serial to a Raspberry Pi
         #             running pi_motor_bridge/motor_bridge.py.
-        mode=os.environ.get("NINA_NAV_MODE", "local").strip().lower(),
+        mode=nav_mode,
         remote_serial_port=os.environ.get("NINA_NAV_REMOTE_PORT", "/dev/ttyUSB0"),
         remote_baudrate=int(os.environ.get("NINA_NAV_REMOTE_BAUD", "115200")),
         remote_response_timeout_sec=float(
