@@ -317,6 +317,15 @@ class DriveScreen(QWidget):
         # don't need to be conditional everywhere.
         self._auto_banner = None  # type: ignore[assignment]
 
+        self._manual_hint = QLabel("")
+        self._manual_hint.setWordWrap(True)
+        self._manual_hint.setStyleSheet(
+            "color: #b45309; font-size: 12px; font-weight: 600;"
+            " background-color: transparent; padding: 4px 0;"
+        )
+        self._manual_hint.hide()
+        card.add(self._manual_hint)
+
         # D-pad sits in a horizontal row centered with stretches so it
         # doesn't pin to the left edge when the card is wider.
         dpad_row = QHBoxLayout()
@@ -390,6 +399,10 @@ class DriveScreen(QWidget):
         self._brake_btn.setFocusPolicy(Qt.NoFocus)
         self._brake_btn.setMinimumHeight(34)
         self._brake_btn.setMaximumHeight(34)
+        self._brake_btn.setToolTip(
+            "When ON, the D-pad is disabled and WASD does not drive. "
+            "Tap to OFF when you are ready to move (Straight/Turn show a reminder if still ON)."
+        )
         self._brake_btn.clicked.connect(self._on_brake_toggle)
         bottom_row.addWidget(self._brake_btn)
 
@@ -484,6 +497,7 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setEnabled(False)
         self._straight_pending = True
         self._straight_ready_polls = 0
+        self._render_state(self._drive.state())
         QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
         self.setFocus()
 
@@ -517,6 +531,7 @@ class DriveScreen(QWidget):
         self._straight_seq_index = -1
         self._apply_straight_sequence_segment(0)
         self.setFocus()
+        self._render_state(self._drive.state())
 
     def _apply_straight_sequence_segment(self, index: int) -> None:
         spec = self._straight_sequence_spec
@@ -558,15 +573,13 @@ class DriveScreen(QWidget):
             self._straight_test_btn.setEnabled(True)
             st = self._drive.state()
             self._dpad.set_enabled(not st["brake"])
-            can_turn = not st["brake"]
-            self._turn_90_left_btn.setEnabled(can_turn)
-            self._turn_90_right_btn.setEnabled(can_turn)
+            self._turn_90_left_btn.setEnabled(True)
+            self._turn_90_right_btn.setEnabled(True)
         else:
             self._straight_test_btn.setEnabled(False)
             self._turn_90_left_btn.setEnabled(False)
             self._turn_90_right_btn.setEnabled(False)
-
-    def _finish_straight_test(self) -> None:
+        self._render_state(self._drive.state())
         try:
             self._drive.stop(drain=True)
         except Exception:
@@ -640,13 +653,12 @@ class DriveScreen(QWidget):
             self._turn_90_right_btn.setEnabled(False)
         else:
             st = self._drive.state()
-            manual = not st["brake"]
-            self._dpad.set_enabled(manual)
+            self._dpad.set_enabled(not st["brake"])
             self._brake_btn.setEnabled(True)
             self._reverse_btn.setEnabled(True)
             self._straight_test_btn.setEnabled(True)
-            self._turn_90_left_btn.setEnabled(manual)
-            self._turn_90_right_btn.setEnabled(manual)
+            self._turn_90_left_btn.setEnabled(True)
+            self._turn_90_right_btn.setEnabled(True)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
         # update here. The title-row pill conveys the same state.
 
@@ -767,6 +779,21 @@ class DriveScreen(QWidget):
 
         key = event.key()
         if key in _KEY_TO_DIRECTION:
+            if self._brake_btn.isChecked():
+                self._manual_hint.setText(
+                    "Brake is ON — tap Brake: OFF on the right, then use WASD or the D-pad."
+                )
+                self._manual_hint.show()
+                event.accept()
+                return
+            st = self._drive.state()
+            if not st.get("connected"):
+                self._manual_hint.setText(
+                    "Motors not connected — wait for the green BLDC pill before WASD."
+                )
+                self._manual_hint.show()
+                event.accept()
+                return
             # Only allow one direction key at a time. Pressing a second
             # while one is already held is ignored - swapping mid-drive
             # is rough on a BLDC and rough on the operator's nerves.
@@ -802,9 +829,42 @@ class DriveScreen(QWidget):
         self._hud_speed._value_label.setText(f"{state['speed_pct']}%")
         self._hud_heading._value_label.setText(f"{state['heading_deg']}\u00b0")
         self._hud_distance._value_label.setText(f"{state['distance_m']:.1f} m")
+
+        dm = str(state.get("driver_message") or "").strip()
+        if self._autonomy.is_enabled():
+            self._manual_hint.hide()
+        elif not state["connected"]:
+            if self._straight_pending:
+                self._manual_hint.setText(
+                    "Connecting to motor drivers — keep this screen open "
+                    "(Straight test will start when ready or show an error)."
+                )
+            elif dm:
+                self._manual_hint.setText(
+                    "Motors did not come up — read the BLDC pill (hover for full text if truncated). "
+                    "Typical fixes: NINA_NAV_MODE=local, jetson-io PWM on BCM 12+13, and matching "
+                    "NINA_NAV_* pin env vars."
+                )
+            else:
+                self._manual_hint.setText(
+                    "Motors not ready — wait for the green BLDC pill. "
+                    "Check NINA_NAV_MODE=local, Jetson-IO PWM, and wiring."
+                )
+            self._manual_hint.show()
+        elif state["brake"]:
+            self._manual_hint.setText(
+                "Brake is ON — tap Brake: OFF to use the D-pad. "
+                "Straight / Turn will pop a reminder if you try while braked."
+            )
+            self._manual_hint.show()
+        else:
+            self._manual_hint.hide()
+
         # Autonomy lock takes priority over the brake-lock for D-pad
         # enablement: while autonomy is on, the D-pad stays disabled
-        # regardless of the manual brake state.
+        # regardless of the manual brake state. Brake ON also disables
+        # the D-pad (release brake first); Straight / Turn stay enabled
+        # so their handlers can show an explicit dialog instead of dead clicks.
         if not self._autonomy.is_enabled():
             if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
                 self._dpad.set_enabled(False)
@@ -812,20 +872,24 @@ class DriveScreen(QWidget):
                 self._turn_90_right_btn.setEnabled(False)
             else:
                 st = self._drive.state()
-                can_manual = not st["brake"]
-                self._dpad.set_enabled(can_manual)
-                self._turn_90_left_btn.setEnabled(can_manual)
-                self._turn_90_right_btn.setEnabled(can_manual)
+                self._dpad.set_enabled(not st["brake"])
+                self._turn_90_left_btn.setEnabled(True)
+                self._turn_90_right_btn.setEnabled(True)
 
-        message = state.get("driver_message", "")
+        message_raw = str(state.get("driver_message") or "").strip()
+        display_msg = message_raw.replace("\n", " ")
+        if len(display_msg) > 96:
+            display_msg = display_msg[:93] + "..."
+
         if state["connected"]:
-            self._conn_pill.setText(message or "BLDC connected")
+            self._conn_pill.setText(message_raw or "BLDC connected")
+            self._conn_pill.setToolTip("")
             self._conn_pill.set_kind(Pill.KIND_OK)
-        elif message and message.startswith("Simulation"):
-            # GPIO backend missing - dev mode; show a warn pill so the
-            # operator understands button presses don't move wheels.
-            self._conn_pill.setText(message)
+        elif message_raw:
+            self._conn_pill.setText(display_msg or "BLDC error")
+            self._conn_pill.setToolTip(message_raw)
             self._conn_pill.set_kind(Pill.KIND_WARN)
         else:
             self._conn_pill.setText("BLDC not connected")
+            self._conn_pill.setToolTip("")
             self._conn_pill.set_kind(Pill.KIND_NEUTRAL)

@@ -21,17 +21,16 @@ this is your loom).
 | REL (right enable)   | 19 | 10 | `r_en`  | `NINA_NAV_R_EN=10` |
 | LZF (left direction) | 15 | 22 | `l_dir` | `NINA_NAV_L_DIR=22` |
 | RZF (right direction)| 32 | 12 | `r_dir` | `NINA_NAV_R_DIR=12` |
-| Signal left (left VR / PWM) | 18 | 24 | `pwm_l` | `NINA_NAV_L_PWM=24` |
-| Signal right (right VR / PWM) | 13 | 27 | `pwm_r` | `NINA_NAV_R_PWM=27` |
-| VR common (see note) | 33 | 13 | — | — |
+| Left VR (PWM) **must use Jetson HW PWM** | **32** | **12** | `pwm_l` | default or `NINA_NAV_L_PWM=12` |
+| Right VR (PWM) **must use Jetson HW PWM** | **33** | **13** | `pwm_r` | default or `NINA_NAV_R_PWM=13` |
 | GND                  | 34, 39 | — | — | — |
 
-**Note — “VR common” on pin 33 (BCM 13):** `NavigationManager` drives **two**
-independent PWM outputs (`pwm_l` / `pwm_r`). If both JYQD **VR** inputs are
-actually wired only to physical **33**, you cannot match the stock firmware
-model without a hardware change (or a single shared speed). If instead **33**
-is a reference or both VR return through that net while **18** and **13** are
-the driven PWM lines, use the env block above.
+**Jetson Orin Nano:** `Jetson.GPIO` only drives speed (VR) reliably on **BCM 12
+& 13** after `jetson-io.py` enables `pwm0` / `pwm2`. If your harness previously
+brought VR to other pads (e.g. phys 18 / 13 as “signal” lines), **run those
+two VR wires to physical 32 and 33** (or add jumpers). Keep EL/DIR mapping via
+`NINA_NAV_L_EN`, `NINA_NAV_L_DIR`, etc. Setting `NINA_NAV_L_PWM=24` (or other
+non-PWM BCMs) will usually **fail BLDC init** in the GUI.
 
 ## Per-wheel signals
 

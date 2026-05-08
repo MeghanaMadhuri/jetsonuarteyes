@@ -102,9 +102,12 @@ class JetsonBackend:
             pwm = self._gpio.PWM(pin, frequency_hz)
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to start hardware PWM on BCM {pin}. "
-                "Hardware PWM is only available on BCM 12 (pin 32) and BCM 13 (pin 33). "
-                "Enable PWM via: sudo /opt/nvidia/jetson-io/jetson-io.py"
+                f"Failed to start PWM on BCM {pin}. On Jetson Orin Nano, "
+                f"Jetson.GPIO expects VR/PWM on BCM 12 (pin 32) and BCM 13 (pin 33); "
+                f"enable them with sudo /opt/nvidia/jetson-io/jetson-io.py and reboot. "
+                f"If your harness uses other BCMs for VR, wire those signals to pins "
+                f"32 & 33 (or drop custom NINA_NAV_*_PWM overrides so defaults apply). "
+                f"Original error: {exc!r}"
             ) from exc
         pwm.start(0.0)
         self._pwm[pin] = pwm

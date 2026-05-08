@@ -779,13 +779,14 @@ class DriveController(QObject):
     def _do_init(self) -> None:
         if self._init_attempted:
             return
-        self._init_attempted = True
+        nav: Optional[NavigationManagerLike] = None
         try:
             if self._injected_nav is not None:
-                self._nav = self._injected_nav
+                nav = self._injected_nav
             else:
-                self._nav = NavigationManager(self._config)
-            self._nav.initialize()
+                nav = NavigationManager(self._config)
+            nav.initialize()
+            self._nav = nav
             # Push the persisted/env-seeded wheel polarity into the
             # nav manager BEFORE we settle into engage_brake() so the
             # very first SET issued from the GUI honours it. This is
@@ -797,7 +798,8 @@ class DriveController(QObject):
             # wired - the safest "armed but stationary" resting state
             # is brake engaged + PWM 0, which is what initialize()
             # leaves us in. Make that explicit anyway.
-            self._nav.engage_brake()
+            nav.engage_brake()
+            self._init_attempted = True
             if self._navigation_mode == "remote":
                 port = self._remote_serial_port or "serial"
                 drv_msg = f"BLDC L+R — motor bridge ({port})"
@@ -808,12 +810,17 @@ class DriveController(QObject):
                 self._state["driver_message"] = drv_msg
             log.info("DriveController: BLDC drivers connected (%s)", drv_msg)
         except Exception as exc:
+            if nav is not None:
+                try:
+                    nav.shutdown()
+                except Exception:
+                    pass
             self._nav = None
             with self._lock:
                 self._state["connected"] = False
-                self._state["driver_message"] = f"Simulation \u2014 {exc}"
+                self._state["driver_message"] = f"BLDC init failed — {exc}"
             log.warning(
-                "DriveController init failed (%s) - running in simulation",
+                "DriveController init failed (%s) - running without motors",
                 exc,
             )
         self._emit_state()
