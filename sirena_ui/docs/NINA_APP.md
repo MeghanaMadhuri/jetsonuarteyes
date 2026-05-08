@@ -731,6 +731,10 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 # export NINA_STRAIGHT_TEST_MS=10000
 # export NINA_STRAIGHT_SEQ_FWD1_MS=10000   # legacy alias for duration only
 
+# Drive / BLDC: espeak-ng alerts on init failure or drive ignored (backend not ready).
+# NINA_BLDC_ALERT_SPEECH=0           # disable spoken BLDC errors
+# NINA_BLDC_ALERT_COOLDOWN_SEC=12   # suppress repeat of identical phrase (seconds)
+
 # Vision
 export NINA_VISION_CAMERA=0
 export NINA_VISION_TRT=1                       # 0 = force PyTorch CPU

@@ -16,6 +16,7 @@ The backend is intentionally minimal: digital write, PWM init, PWM duty update,
 and shutdown. NavigationManager owns all logic on top of it.
 """
 
+import errno
 import logging
 import os
 import warnings
@@ -23,6 +24,19 @@ from typing import Any, Dict, Optional, Protocol
 
 
 log = logging.getLogger("nina.gpio")
+
+
+def _gpio_busy_runtime_error(pin: int, exc: BaseException) -> RuntimeError:
+    """User-facing hint when libgpiod returns EBUSY (Errno 16)."""
+    return RuntimeError(
+        "GPIO lines busy (Errno 16) — another process likely holds BCM "
+        f"{pin}. Stop anything else using the 40-pin header: "
+        "`systemctl --user stop nina-ui-kiosk`, "
+        "`sudo systemctl stop nina-link`, "
+        "and quit stray shells running the GUI / motor_control / nav tests. "
+        "If nothing is running, reboot (a crashed process may have skipped "
+        f"GPIO.cleanup). Original error: {exc!r}"
+    ) from exc
 
 
 class GpioBackend(Protocol):
@@ -87,7 +101,12 @@ class JetsonBackend:
 
     def configure_output(self, pin: int) -> None:
         self._require_setup()
-        self._gpio.setup(pin, self._gpio.OUT, initial=self._gpio.LOW)
+        try:
+            self._gpio.setup(pin, self._gpio.OUT, initial=self._gpio.LOW)
+        except OSError as exc:
+            if getattr(exc, "errno", None) == errno.EBUSY:
+                raise _gpio_busy_runtime_error(pin, exc) from exc
+            raise
 
     def write(self, pin: int, value: int) -> None:
         self._require_setup()
@@ -97,7 +116,12 @@ class JetsonBackend:
         self._require_setup()
         if pin in self._pwm:
             return
-        self._gpio.setup(pin, self._gpio.OUT, initial=self._gpio.LOW)
+        try:
+            self._gpio.setup(pin, self._gpio.OUT, initial=self._gpio.LOW)
+        except OSError as exc:
+            if getattr(exc, "errno", None) == errno.EBUSY:
+                raise _gpio_busy_runtime_error(pin, exc) from exc
+            raise
         try:
             pwm = self._gpio.PWM(pin, frequency_hz)
         except Exception as exc:

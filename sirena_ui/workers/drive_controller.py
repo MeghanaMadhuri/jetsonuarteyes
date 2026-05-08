@@ -59,6 +59,7 @@ from nina.controllers.navigation_manager import (
     NavigationConfig,
     NavigationManager,
 )
+from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 
 # Type alias only; the remote manager is imported lazily by the factory
 # so this file stays usable on dev machines without pyserial.
@@ -823,6 +824,7 @@ class DriveController(QObject):
                 "DriveController init failed (%s) - running without motors",
                 exc,
             )
+            maybe_speak_bldc_alert(f"BLDC init failed. {exc}")
         self._emit_state()
 
     def _apply_polarity_to_nav(self) -> None:
@@ -879,6 +881,15 @@ class DriveController(QObject):
 
     def _do_drive(self, direction: str, speed_pct: int) -> None:
         if self._nav is None:
+            log.warning(
+                "Drive dropped (%s): BLDC backend not ready yet — wait for green "
+                "pill or fix init (see driver_message). Brake must be OFF.",
+                direction,
+            )
+            maybe_speak_bldc_alert(
+                "Drive ignored. Motors not ready yet, or still connecting. "
+                "Wait for green status, brake off, try again."
+            )
             return
         try:
             ldir, rdir = self._wheel_dirs_for(direction)
@@ -920,6 +931,12 @@ class DriveController(QObject):
 
     def _do_turn_90(self, which: str) -> None:
         if self._nav is None:
+            log.warning(
+                "turn_90(%s) dropped: BLDC backend not ready yet", which
+            )
+            maybe_speak_bldc_alert(
+                "Turn ignored. Motors not ready. Wait for green status."
+            )
             return
         try:
             with self._lock:
@@ -1026,6 +1043,14 @@ class DriveController(QObject):
         right_speed: int,
     ) -> None:
         if self._nav is None:
+            log.warning(
+                "drive_wheels dropped: BLDC backend not ready yet "
+                "(init still running or failed — check pill / driver_message)"
+            )
+            maybe_speak_bldc_alert(
+                "Straight or drive ignored. Motors not ready. "
+                "Wait for green status."
+            )
             return
         try:
             ldir = (
