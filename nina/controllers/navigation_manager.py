@@ -760,10 +760,19 @@ class NavigationManager:
 
         kls = _kick_duty(ls)
         krs = _kick_duty(rs)
+        # Symmetric pivots often bump duty via pivot_turn_left_extra_pp so
+        # kls==ls; without also treating pivot_crawl as needing a kick hold,
+        # start_kick_sec is skipped and left-in-place turns stall until a
+        # physical nudge overcomes static friction.
         need_kick = (
             was_rest
             and moving_now
-            and (kls > ls or krs > rs)
+            and kp > 0
+            and ks > 0
+            and (
+                (kls > ls or krs > rs)
+                or pivot_crawl
+            )
         )
         if need_kick:
             self._apply_side_pwm(self.SIDE_LEFT, kls)

@@ -497,7 +497,16 @@ class RemoteNavigationManager:
 
         kls = _kick_duty(ls)
         krs = _kick_duty(rs)
-        need_kick = was_rest and moving_now and (kls > ls or krs > rs)
+        need_kick = (
+            was_rest
+            and moving_now
+            and kp > 0
+            and ks > 0
+            and (
+                (kls > ls or krs > rs)
+                or pivot_crawl
+            )
+        )
         if need_kick:
             self._send_command(f"SET {l_letter} {kls} {r_letter} {krs}")
             time.sleep(ks)

@@ -1005,12 +1005,17 @@ class DriveController(QObject):
                 and left_speed == right_speed
                 and left_speed > 0
             )
-            entering_symmetric_pivot = False
-            if is_turn_left or is_turn_right:
+            is_symmetric_straight = (
+                ldir == rdir
+                and left_speed == right_speed
+                and left_speed > 0
+            )
+            entering_symmetric_motion = False
+            if is_turn_left or is_turn_right or is_symmetric_straight:
                 with self._lock:
                     prev = self._active_drive
                 if prev is None:
-                    entering_symmetric_pivot = True
+                    entering_symmetric_motion = True
                 else:
                     p_ld, p_ls, p_rd, p_rs = prev
                     if not (
@@ -1018,8 +1023,14 @@ class DriveController(QObject):
                         and p_rd == rdir
                         and p_ls == p_rs == left_speed
                     ):
-                        entering_symmetric_pivot = True
-            run_turn_left_prep = is_turn_left and entering_symmetric_pivot
+                        entering_symmetric_motion = True
+            entering_symmetric_pivot = entering_symmetric_motion and (
+                is_turn_left or is_turn_right
+            )
+            entering_symmetric_straight = (
+                entering_symmetric_motion and is_symmetric_straight
+            )
+            run_turn_left_prep = is_turn_left and entering_symmetric_motion
             if run_turn_left_prep:
                 cfg = getattr(self._nav, "config", None)
                 if cfg is not None:
@@ -1055,6 +1066,22 @@ class DriveController(QObject):
                 )
                 self._commit_wheels(
                     ldir, left_speed, rdir, right_speed, start_phase=False,
+                )
+            elif entering_symmetric_straight:
+                # Bench "Straight" and the first autonomy forward/reverse tick
+                # used to call only set_wheels(); D-pad W/S use drive_continuous +
+                # kick/cruise from rest. Without that sequence, the first straight
+                # after app/bridge start often does nothing until a later command.
+                kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
+                kick = max(kick, int(left_speed))
+                kick = min(100, kick)
+                cruise = max(0, min(100, int(left_speed)))
+                self._nav.drive_continuous(ldir, rdir, kick)
+                self._commit_wheels(
+                    ldir, kick, rdir, kick, start_phase=True,
+                )
+                self._commit_wheels(
+                    ldir, cruise, rdir, cruise, start_phase=False,
                 )
             else:
                 self._commit_wheels(
