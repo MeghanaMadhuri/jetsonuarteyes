@@ -7,6 +7,32 @@ differ from the Pi BCM column — see code comments A/B/C). This file’s
 **Pi BCM** columns match `pi_motor_bridge/navigation_bldc.py` when a
 **Raspberry Pi** still runs `motor_bridge.py` (**legacy**).
 
+## As-built harness (40-pin physical — one deployment)
+
+The following **physical pin numbers** (1–40 J12-style header) and BCM GPIO
+names match a **wired** Nina unit where labels mirror the screw or harness
+names. Map into `NavigationManager` via `NINA_NAV_*` (defaults in code may
+still target a different Orin carrier—set these env vars on the Jetson if
+this is your loom).
+
+| Harness / screw role | Phys pin | BCM | `NavigationManager` | Env override |
+|----------------------|---------:|----:|---------------------|--------------|
+| LEL (left enable)    | 12 | 18 | `l_en`  | `NINA_NAV_L_EN=18` |
+| REL (right enable)   | 19 | 10 | `r_en`  | `NINA_NAV_R_EN=10` |
+| LZF (left direction) | 15 | 22 | `l_dir` | `NINA_NAV_L_DIR=22` |
+| RZF (right direction)| 32 | 12 | `r_dir` | `NINA_NAV_R_DIR=12` |
+| Signal left (left VR / PWM) | 18 | 24 | `pwm_l` | `NINA_NAV_L_PWM=24` |
+| Signal right (right VR / PWM) | 13 | 27 | `pwm_r` | `NINA_NAV_R_PWM=27` |
+| VR common (see note) | 33 | 13 | — | — |
+| GND                  | 34, 39 | — | — | — |
+
+**Note — “VR common” on pin 33 (BCM 13):** `NavigationManager` drives **two**
+independent PWM outputs (`pwm_l` / `pwm_r`). If both JYQD **VR** inputs are
+actually wired only to physical **33**, you cannot match the stock firmware
+model without a hardware change (or a single shared speed). If instead **33**
+is a reference or both VR return through that net while **18** and **13** are
+the driven PWM lines, use the env block above.
+
 ## Per-wheel signals
 
 ### Left wheel (JYQD-L)
