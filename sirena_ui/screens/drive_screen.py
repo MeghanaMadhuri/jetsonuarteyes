@@ -580,6 +580,8 @@ class DriveScreen(QWidget):
             self._turn_90_left_btn.setEnabled(False)
             self._turn_90_right_btn.setEnabled(False)
         self._render_state(self._drive.state())
+
+    def _finish_straight_test(self) -> None:
         try:
             self._drive.stop(drain=True)
         except Exception:
