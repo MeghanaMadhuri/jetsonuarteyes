@@ -54,6 +54,11 @@ If a **Raspberry Pi** runs `pi_motor_bridge/motor_bridge.py` and the Jetson uses
 (BCM 18 / 25 / 22 for some EL/DIR lines). That map is **not** identical to the
 Jetson `DEFAULT_PINS` above — see `pi_motor_bridge/navigation_bldc.py`.
 
+> **Pi-only:** that module also sets **`L_SIG` / `R_SIG` (BCM 24 / 27)** as
+> **JYQD feedback inputs**. Do **not** conflate those with Jetson **BCM 24**
+> (left EL) or **BCM 27** (default **rear_right** HC-SR04 TRIG) — different boards,
+> different roles.
+
 | JYQD-L screw | Function | Pi BCM | Pi physical |
 |--------------|----------|--------|-------------|
 | EL | enable | 18 | 12 |

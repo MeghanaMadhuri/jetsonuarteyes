@@ -4,11 +4,11 @@ NavigationManager for Nina (5 ft wheeled bot, Jetson Orin Nano).
 This module is a clean port of the proven Sirena Raspberry Pi reference
 build (`/Downloads/navigation_bldc.py` + `motor_control.py` from the Pi
 prototype) onto the Jetson Orin Nano. It drives 2x JYQD_V7.3E2 BLDC
-drivers (one per wheel) with the **exact same pin map and write
-sequence** as the RPi build - the Orin Nano J12 header shares the same
-40-pin **layout** as the Raspberry Pi header; **BCM numbers still refer to the
-same physical pins**, though Nina's **production EL/DIR BCM choices** differ from
-the original Pi firmware on several lines (see Notes A–C below).
+drivers (one per wheel) with the **same write sequence and polarity rules**
+as the RPi build. The 40-pin header uses the **same BCM↔physical numbering**
+as Raspberry Pi docs, but Nina's **production Jetson EL/DIR BCM choices**
+intentionally differ from the original Pi firmware on several lines (see
+Notes A–C below); always wire and tune against **`DEFAULT_PINS`** / `PINMAP.md`.
 
 Why a 1:1 port and not a clever Jetson rewrite:
   Earlier Jetson builds tried to be smart about the JYQD ("VR with
@@ -93,10 +93,10 @@ Note C (L-DIR pin choice):
   motor's direction to whichever side of its threshold it last saw,
   so the left wheel can never reverse. Bench-confirmed with
   `python3 -m nina.app.pin_probe --pin 25`. We use BCM 6 / pin 31
-  instead - plain GPIO on this carrier (clean 0/3.3 V toggle). Note
-  this collides with the default HC-SR04 rear-right TRIG channel; if
-  you wire that ultrasonic sensor, override either pin via env var.
-  Override via NINA_NAV_L_DIR if a later image frees pin 22.
+  instead - plain GPIO on this carrier (clean 0/3.3 V toggle).
+  HC-SR04 defaults avoid this pin (**rear_right TRIG = BCM 27**); see
+  `nina/sensors/hcsr04.py`. Override via NINA_NAV_L_DIR if a later image
+  frees pin 22.
 
 One-time Jetson setup (per fresh install / new SD card):
   sudo /opt/nvidia/jetson-io/jetson-io.py
@@ -170,9 +170,10 @@ _DEFAULT_OPP_ZERO_SETTLE_SEC = float(
 class NavigationPins:
     """BCM pin numbers for navigation hardware.
 
-    Values are RPi BCM numbers; the Jetson Orin Nano J12 header maps
-    them to the same physical pins as the RPi 40-pin header, so the
-    same numbers describe the same wiring on both boards.
+    **Jetson Orin Nano:** use `DEFAULT_PINS` / ``NINA_NAV_*`` env overrides.
+    BCM *n* refers to the same physical pad as in Raspberry Pi pinout charts
+    for this header; EL/DIR BCMs here may still **differ** from the legacy
+    Raspberry Pi ``navigation_bldc.py`` firmware — compare ``PINMAP.md``.
     """
     l_en: int
     l_dir: int
@@ -224,9 +225,9 @@ class NavigationConfig:
     turn_left_prep_fwd_sec: float = 0.12
 
 
-# Default Nina pinout: 1:1 mirror of the working RPi reference build.
-# Override any single pin via the corresponding NINA_NAV_* env var if a
-# specific harness needs a different mapping (rare).
+# Production Jetson Orin Nano defaults (same protocol as Pi reference;
+# EL/L-DIR/R-DIR BCMs remapped where Orin pads are unusable — see docstring).
+# Override any field via the matching NINA_NAV_* env var.
 DEFAULT_PINS = NavigationPins(
     # NOTE: BCM 24 (pin 18), not BCM 18 (pin 12) per the RPi reference.
     # Pin 12 is partially claimed by the Orin Nano audio device tree -

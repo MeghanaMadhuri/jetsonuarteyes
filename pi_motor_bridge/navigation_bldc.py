@@ -24,7 +24,7 @@ Pin map (Raspberry Pi 40-pin header in **`motor_bridge.py` / this module**;
     L-PWM (VR)     12     32              hardware PWM0
     R-EL           10     19              digital out
     R-DIR (Z/F)    22     15              digital out
-    R-PWM (VR)     13     33              hardware PWM1
+    R-PWM (VR)     13     33              hardware PWM (pigpio; Jetson labels this pad pwm2)
     Status RED     21     40              digital out (active-low)
     Status GREEN   20     38              digital out (active-low)
     Status BLUE    16     36              digital out (active-low)
