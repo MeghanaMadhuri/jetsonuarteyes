@@ -895,8 +895,16 @@ class DriveController(QObject):
         except Exception as exc:
             log.exception("turn_90(%s) failed: %s", which, exc)
         finally:
+            # Timed turn already ends with stop(), but on error or bridge
+            # glitch ensure PWM is parked so the next Straight/drive_wheels
+            # sequence does not inherit stale nav bookkeeping.
+            try:
+                self._nav.stop()
+            except Exception:
+                pass
             with self._lock:
                 self._state["direction"] = "idle"
+                self._active_drive = None
             self._emit_state()
 
     def _do_apply_live_speed(self, direction: str, speed_pct: int) -> None:
@@ -937,10 +945,13 @@ class DriveController(QObject):
             return
         try:
             self._nav.stop()
-            with self._lock:
-                self._active_drive = None
         except Exception as exc:
             log.exception("stop() failed: %s", exc)
+        finally:
+            # Always drop commanded motion: if stop() failed or a prior tick
+            # wedged, the heartbeat thread must not replay a stale SET forever.
+            with self._lock:
+                self._active_drive = None
 
     def _do_emergency_stop(self) -> None:
         if self._nav is None:
@@ -954,7 +965,6 @@ class DriveController(QObject):
         try:
             self._nav.emergency_stop()
             with self._lock:
-                self._active_drive = None
                 self._state["driver_message"] = (
                     "EMERGENCY STOP - brake engaged, release brake to resume"
                 )
@@ -962,6 +972,9 @@ class DriveController(QObject):
             log.warning("DriveController: emergency_stop fired")
         except Exception as exc:
             log.exception("emergency_stop failed: %s", exc)
+        finally:
+            with self._lock:
+                self._active_drive = None
 
     def _do_drive_wheels(
         self,

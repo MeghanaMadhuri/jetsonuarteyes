@@ -776,6 +776,14 @@ class RemoteNavigationManager:
                 continue
             if line.startswith("EVT "):
                 log.warning("bridge event: %s", line)
+                # Pi watchdog soft-stopped the wheels; Jetson must not keep
+                # treating the last non-zero SET as "still moving" or the
+                # next motion can skip breakaway / rest logic and feel stuck.
+                if "WATCHDOG" in line:
+                    self._last_l_pwm = 0
+                    self._last_r_pwm = 0
+                    self._last_straight_sign = None
+                    self._last_was_symmetric_straight = False
                 continue
             return line
         return ""
