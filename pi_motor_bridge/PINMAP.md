@@ -104,6 +104,11 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
 5. **Custom carrier:** Jetson.GPIO’s BCM numbers assume the **dev-kit** strap.
    A third-party board may route the **40-pin plug** differently — confirm nets
    with the **carrier schematic**, not only BCM labels.
-6. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
+6. **EL / Z(F) steady states:**  
+   `python3 -m nina.app.main nav-probe-eldir --hold 15`  
+   Arms both sides **forward** with **PWM 0** so you can meter **EL** and **Z/F**
+   without motion. Expect left Z/F high and right Z/F low for “forward” (see
+   **Direction polarity** above) when not using `NINA_NAV_INVERT_*`.
+7. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
    backlash nudge when testing `nav-forward` (unlikely to be the root cause if
    `nav-diag-forward` also fails).

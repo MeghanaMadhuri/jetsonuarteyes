@@ -307,6 +307,7 @@ class NavigationManager:
       engage_brake() / release_brake()
       set_status(mode)
       diag_symmetric_forward(speed_percent, hold_sec)  # bench: raw EL/DIR/PWM
+      diag_arm_forward_pwm_zero_hold(hold_sec)  # bench: EL+DIR forward, VR 0 — probe screws
     """
 
     SIDE_LEFT = "left"
@@ -409,6 +410,26 @@ class NavigationManager:
         )
         self._control_speed(self.SIDE_LEFT, True, speed, self.DIR_FORWARD)
         self._control_speed(self.SIDE_RIGHT, True, speed, self.DIR_FORWARD)
+        if hold > 0:
+            time.sleep(hold)
+
+    def diag_arm_forward_pwm_zero_hold(self, hold_sec: float) -> None:
+        """Hold both drivers **armed**: EL HIGH, **forward** DIR, **PWM 0** (no torque).
+
+        For multimeter checks at the JYQD **EL** and **Z/F** screws without hubs
+        spinning. Expected (Jetson GND, default polarity, no NINA_NAV_INVERT_*):
+
+        - **Left:** EL ~3.3 V, Z/F ~3.3 V (forward = HIGH).
+        - **Right:** EL ~3.3 V, Z/F ~0 V (forward = LOW, mirrored).
+        """
+        self._require_initialized()
+        hold = max(0.0, float(hold_sec))
+        self._prepare_side_motion(self.SIDE_LEFT, self.DIR_FORWARD)
+        self._prepare_side_motion(self.SIDE_RIGHT, self.DIR_FORWARD)
+        log.info(
+            "diag_arm_forward_pwm_zero_hold: EL+DIR forward, PWM 0 for %ss",
+            hold,
+        )
         if hold > 0:
             time.sleep(hold)
 

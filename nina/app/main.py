@@ -198,6 +198,20 @@ def main() -> None:
         help="Seconds to hold torque (default 3)",
     )
 
+    nav_probe_eldir = sub.add_parser(
+        "nav-probe-eldir",
+        help=(
+            "Bench: arm both wheels forward with PWM 0 — probe EL and Z/F at the "
+            "JYQD screws with no hub torque (multimeter vs GND)."
+        ),
+    )
+    nav_probe_eldir.add_argument(
+        "--hold",
+        type=float,
+        default=15.0,
+        help="Seconds to hold armed-forward / zero-speed (default 15)",
+    )
+
     nav_test = sub.add_parser(
         "nav-test-pin",
         help="Drive a single GPIO pin or PWM output for diagnostics. Probe with a multimeter.",
@@ -382,6 +396,52 @@ def main() -> None:
                 f"[OK] nav-diag-forward: held {int(args.speed)}% symmetric forward "
                 f"for {float(args.hold)}s — if hubs did not move, probe EL/DIR/VR "
                 f"and 24 V (see pi_motor_bridge/PINMAP.md troubleshooting)."
+            )
+        except Exception as exc:
+            print(f"[FAIL] {exc}")
+            raise SystemExit(1)
+        finally:
+            try:
+                nav.shutdown()
+            except Exception:
+                pass
+        return
+
+    if args.command == "nav-probe-eldir":
+        nav = build_navigation(settings)
+        mode = settings.navigation.mode
+        try:
+            nav.initialize()
+            print(f"[INIT] Navigation mode: {mode}")
+            if mode == "local":
+                pins = nav.config.pins
+                print(
+                    "Jetson BCM (probe vs header GND; default polarity, no "
+                    "NINA_NAV_INVERT_*):"
+                )
+                print(
+                    f"  Left:  EL=BCM{pins.l_en}  Z/F=BCM{pins.l_dir}  "
+                    f"VR=BCM{pins.pwm_l}"
+                )
+                print(
+                    f"  Right: EL=BCM{pins.r_en}  Z/F=BCM{pins.r_dir}  "
+                    f"VR=BCM{pins.pwm_r}"
+                )
+            else:
+                print(
+                    "Remote mode: Pi owns EL/DIR/PWM — use the "
+                    "`pi_motor_bridge/PINMAP.md` **Raspberry Pi reference** "
+                    "column at the JYQD screws."
+                )
+            print(
+                "Expected while held: Left EL high, Z/F high (forward); "
+                "Right EL high, Z/F low (forward, mirrored). "
+                "VR lines should stay at 0% duty."
+            )
+            nav.diag_arm_forward_pwm_zero_hold(float(args.hold))
+            print(
+                f"[OK] nav-probe-eldir: held forward + 0% speed for "
+                f"{float(args.hold)}s."
             )
         except Exception as exc:
             print(f"[FAIL] {exc}")

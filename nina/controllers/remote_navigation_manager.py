@@ -589,6 +589,27 @@ class RemoteNavigationManager:
         if hold > 0:
             time.sleep(hold)
 
+    def diag_arm_forward_pwm_zero_hold(self, hold_sec: float) -> None:
+        """Hold both drivers **armed** via SET: forward DIR, **speed 0** (no torque).
+
+        Same intent as `NavigationManager.diag_arm_forward_pwm_zero_hold`: probe
+        **EL** and **Z/F** at the JYQD screws without hubs spinning.
+        """
+        self._require_initialized()
+        hold = max(0.0, float(hold_sec))
+        log.info(
+            "diag_arm_forward_pwm_zero_hold (remote): forward, 0%% for %ss",
+            hold,
+        )
+        self.set_wheels(
+            left_dir=self.DIR_FORWARD,
+            left_speed=0,
+            right_dir=self.DIR_FORWARD,
+            right_speed=0,
+        )
+        if hold > 0:
+            time.sleep(hold)
+
     def set_status(self, mode: str) -> None:
         """Drive the Pi's status LED. Modes: CONNECTED / ERROR / WAITING / OFF."""
         m = (mode or "OFF").upper()
