@@ -24,6 +24,14 @@ def clean_nav_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
+def test_remote_mode_ignored_without_legacy_flag(clean_nav_env, monkeypatch) -> None:
+    """Stale remote+ttyTHS1 footgun: without opt-in, we stay on Jetson GPIO."""
+    monkeypatch.setenv("NINA_NAV_MODE", "remote")
+    monkeypatch.setenv("NINA_NAV_REMOTE_PORT", "/dev/ttyTHS1")
+    s = load_settings(REPO_ROOT)
+    assert s.navigation.mode == "local"
+
+
 def test_local_navigation_defaults_unchanged(clean_nav_env, monkeypatch) -> None:
     monkeypatch.setenv("NINA_NAV_MODE", "local")
     s = load_settings(REPO_ROOT)
@@ -34,6 +42,7 @@ def test_local_navigation_defaults_unchanged(clean_nav_env, monkeypatch) -> None
 
 
 def test_remote_navigation_defaults_match_rpi_tcp_ref(clean_nav_env, monkeypatch) -> None:
+    monkeypatch.setenv("NINA_NAV_LEGACY_PI_BRIDGE", "1")
     monkeypatch.setenv("NINA_NAV_MODE", "remote")
     s = load_settings(REPO_ROOT)
     assert s.navigation.mode == "remote"
@@ -43,6 +52,7 @@ def test_remote_navigation_defaults_match_rpi_tcp_ref(clean_nav_env, monkeypatch
 
 
 def test_remote_defaults_can_be_overridden_by_env(clean_nav_env, monkeypatch) -> None:
+    monkeypatch.setenv("NINA_NAV_LEGACY_PI_BRIDGE", "1")
     monkeypatch.setenv("NINA_NAV_MODE", "remote")
     monkeypatch.setenv("NINA_NAV_SPEED", "9")
     monkeypatch.setenv("NINA_NAV_SETTLE_SEC", "0.15")

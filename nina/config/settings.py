@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 import os
 
 
@@ -14,6 +15,8 @@ def _env_bool(name: str, default: bool) -> bool:
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
 NAV_START_KICK_SEC_MAX = 1.0
+
+_log = logging.getLogger("nina.config.settings")
 
 
 @dataclass(frozen=True)
@@ -232,6 +235,22 @@ def load_settings(repo_root: Path) -> NinaSettings:
     # after STOP before the next move (Android square GAP_MS). Local Jetson-GPIO
     # mode keeps the tighter historical defaults.
     nav_mode = os.environ.get("NINA_NAV_MODE", "local").strip().lower()
+    if nav_mode not in ("local", "remote"):
+        nav_mode = "local"
+    # Jetson production uses GPIO (`local`). Many images still export
+    # NINA_NAV_MODE=remote + NINA_NAV_REMOTE_PORT=/dev/ttyTHS1 from the old Pi
+    # UART bridge — every process then tries ``RemoteNavigationManager`` and
+    # fails to PING. Remote is opt-in: set NINA_NAV_LEGACY_PI_BRIDGE=1 on hosts
+    # that still run ``pi_motor_bridge`` on a Pi.
+    if nav_mode == "remote" and not _env_bool("NINA_NAV_LEGACY_PI_BRIDGE", False):
+        _log.warning(
+            "NINA_NAV_MODE=remote ignored — default is Jetson GPIO (no Pi). "
+            "For the legacy UART motor bridge set NINA_NAV_LEGACY_PI_BRIDGE=1 "
+            "along with NINA_NAV_REMOTE_PORT / baud. "
+            "(This message also appears if you forgot to restart after clearing "
+            "remote from your shell profile.)"
+        )
+        nav_mode = "local"
     remote_bridge = nav_mode == "remote"
     nav_speed_default = "13" if remote_bridge else "8"
     nav_dir_gap_default = "0.1" if remote_bridge else "0.03"

@@ -12,7 +12,8 @@ WorkingDirectory=/
 # NOTE: EnvironmentFile is parsed BEFORE the next lines; we then **re-assert**
 # NINA_NAV_MODE=local so an old navigation.env (remote + /dev/ttyTHS1) cannot
 # silently force the legacy Pi UART bridge. For Pi offload use
-# `systemctl edit nina-link` and set NINA_NAV_MODE=remote (override wins).
+# `systemctl edit nina-link` and set NINA_NAV_MODE=remote plus
+# NINA_NAV_LEGACY_PI_BRIDGE=1 (override wins).
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
