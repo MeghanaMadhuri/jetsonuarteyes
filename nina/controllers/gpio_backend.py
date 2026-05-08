@@ -36,7 +36,7 @@ def _gpio_busy_runtime_error(pin: int, exc: BaseException) -> RuntimeError:
         "and quit stray shells running the GUI / motor_control / nav tests. "
         "If nothing is running, reboot (a crashed process may have skipped "
         f"GPIO.cleanup). Original error: {exc!r}"
-    ) from exc
+    )
 
 
 class GpioBackend(Protocol):
