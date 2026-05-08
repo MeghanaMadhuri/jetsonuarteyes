@@ -570,6 +570,25 @@ class RemoteNavigationManager:
         """Logical brake-off. No-op (chip stays armed at EL HIGH)."""
         log.info("brake released (no-op; ready for next motion command)")
 
+    def diag_symmetric_forward(self, speed_percent: int, hold_sec: float) -> None:
+        """Bench: symmetric forward SET to the Pi (no local nudge path)."""
+        self._require_initialized()
+        speed = max(0, min(100, int(speed_percent)))
+        hold = max(0.0, float(hold_sec))
+        log.info(
+            "diag_symmetric_forward (remote): SET both forward %s%% for %ss",
+            speed,
+            hold,
+        )
+        self.set_wheels(
+            left_dir=self.DIR_FORWARD,
+            left_speed=speed,
+            right_dir=self.DIR_FORWARD,
+            right_speed=speed,
+        )
+        if hold > 0:
+            time.sleep(hold)
+
     def set_status(self, mode: str) -> None:
         """Drive the Pi's status LED. Modes: CONNECTED / ERROR / WAITING / OFF."""
         m = (mode or "OFF").upper()

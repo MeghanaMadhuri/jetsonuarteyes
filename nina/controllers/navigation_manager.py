@@ -306,6 +306,7 @@ class NavigationManager:
       emergency_stop()             # PWM=0, EL drops LOW (chip disabled)
       engage_brake() / release_brake()
       set_status(mode)
+      diag_symmetric_forward(speed_percent, hold_sec)  # bench: raw EL/DIR/PWM
     """
 
     SIDE_LEFT = "left"
@@ -390,6 +391,26 @@ class NavigationManager:
             pins.r_en, pins.r_dir, pins.pwm_r,
             self.config.invert_left_dir, self.config.invert_right_dir,
         )
+
+    def diag_symmetric_forward(self, speed_percent: int, hold_sec: float) -> None:
+        """Bench: both wheels forward using only `_control_speed` (no `stop`/nudge).
+
+        Use when `nav-forward` finishes but hubs do not move. If this still
+        produces no motion, check 24 V, JYQD wiring, and whether a **custom
+        carrier** routes Jetson.GPIO to different pads than the dev-kit table.
+        """
+        self._require_initialized()
+        speed = max(0, min(100, int(speed_percent)))
+        hold = max(0.0, float(hold_sec))
+        log.info(
+            "diag_symmetric_forward: EL+DIR+PWM both forward %s%% for %ss",
+            speed,
+            hold,
+        )
+        self._control_speed(self.SIDE_LEFT, True, speed, self.DIR_FORWARD)
+        self._control_speed(self.SIDE_RIGHT, True, speed, self.DIR_FORWARD)
+        if hold > 0:
+            time.sleep(hold)
 
     def shutdown(self) -> None:
         if not self._is_initialized:

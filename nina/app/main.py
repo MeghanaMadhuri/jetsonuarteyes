@@ -177,6 +177,27 @@ def main() -> None:
         ),
     )
 
+    nav_diag = sub.add_parser(
+        "nav-diag-forward",
+        help=(
+            "Bench: hold both wheels forward with a minimal GPIO path (no stop/nudge). "
+            "Use when nav-forward runs but hubs do not spin — if this also fails, "
+            "check 24 V, wiring, and custom-carrier pin routing."
+        ),
+    )
+    nav_diag.add_argument(
+        "--speed",
+        type=int,
+        default=50,
+        help="PWM duty 0-100 (default 50)",
+    )
+    nav_diag.add_argument(
+        "--hold",
+        type=float,
+        default=3.0,
+        help="Seconds to hold torque (default 3)",
+    )
+
     nav_test = sub.add_parser(
         "nav-test-pin",
         help="Drive a single GPIO pin or PWM output for diagnostics. Probe with a multimeter.",
@@ -342,6 +363,26 @@ def main() -> None:
             print("[OK] Navigation backend initialised.")
             if mode == "remote":
                 print("[OK] PING -> PONG round-trip succeeded.")
+        except Exception as exc:
+            print(f"[FAIL] {exc}")
+            raise SystemExit(1)
+        finally:
+            try:
+                nav.shutdown()
+            except Exception:
+                pass
+        return
+
+    if args.command == "nav-diag-forward":
+        nav = build_navigation(settings)
+        try:
+            nav.initialize()
+            nav.diag_symmetric_forward(int(args.speed), float(args.hold))
+            print(
+                f"[OK] nav-diag-forward: held {int(args.speed)}% symmetric forward "
+                f"for {float(args.hold)}s — if hubs did not move, probe EL/DIR/VR "
+                f"and 24 V (see pi_motor_bridge/PINMAP.md troubleshooting)."
+            )
         except Exception as exc:
             print(f"[FAIL] {exc}")
             raise SystemExit(1)

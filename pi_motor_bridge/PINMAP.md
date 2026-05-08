@@ -83,3 +83,27 @@ If a wheel runs backward from expectation: **`NINA_NAV_INVERT_LEFT=1`** or
 
 Production **L-DIR** is **BCM 6**. The HC-SR04 driver defaults **rear_right TRIG**
 to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
+
+## Troubleshooting: init OK but wheels never move
+
+1. **Motor supply:** JYQD **VCC / battery** (e.g. 24 V) must be present; 5 V from
+   the 40-pin header is **logic only** — without pack voltage the hubs will not
+   turn even if GPIO looks fine.
+2. **Minimal GPIO path:**  
+   `PYTHONPATH=. python3 -m nina.app.main nav-diag-forward --speed 60 --hold 4`  
+   This skips `stop()` + straight-line nudge. If hubs still do not spin, the
+   problem is almost certainly **wiring or carrier pin routing**, not the full
+   `nav-forward` sequence.
+3. **PWM at the screw:**  
+   `python3 -m nina.app.main nav-test-pin --pin 12 --mode pwm --duty 50 --hold 4`  
+   (use your configured left-PWM BCM if not 12). Scope or meter **VR** at the
+   JYQD while this runs.
+4. **Alternate F/R:**  
+   `python3 -m nina.app.main nav-test-direction --side both --speed 80`  
+   If direction phases do nothing, **ZF / EL** may be on the wrong header pins.
+5. **Custom carrier:** Jetson.GPIO’s BCM numbers assume the **dev-kit** strap.
+   A third-party board may route the **40-pin plug** differently — confirm nets
+   with the **carrier schematic**, not only BCM labels.
+6. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
+   backlash nudge when testing `nav-forward` (unlikely to be the root cause if
+   `nav-diag-forward` also fails).
