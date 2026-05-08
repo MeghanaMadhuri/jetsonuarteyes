@@ -4,24 +4,24 @@ This is the single reference for cloning the repo, setting up a brand-new
 Nina bot, and getting from "boxes on the desk" to "GUI drives the wheels"
 on the Jetson 10.1" touchscreen.
 
-The Nina platform is a two-board robot:
+The Nina **production** stack runs entirely on the **Jetson Orin
+Nano**: the same Python navigation code drives the JYQD inputs over
+**Jetson.GPIO / hardware PWM**. `NINA_NAV_MODE` defaults to **`local`**
+in `load_settings()` and in the shipped systemd units
+(`desktop/nina-ui-kiosk.service`, `nina/systemd/nina-link.service`).
 
-* **NVIDIA Jetson Orin Nano** — runs the GUI, vision (YuNet faces +
-  YOLOv8 objects), SLAM (BreezySLAM + RPLIDAR), autonomy, action
-  recording / playback, and audio.
-* **Raspberry Pi 4** — dedicated motor controller. Owns the two
-  JYQD_V7.3E2 BLDC drivers and nothing else.
-
-The two boards talk over a 115 200 8N1 serial link
-(40-pin UART crossover by default; CP2102 / FT232 USB-to-TTL adapter
-also supported).
+**Legacy fleets** may still use a **Raspberry Pi 4** running
+`pi_motor_bridge/` as a serial motor co-processor (`NINA_NAV_MODE=remote`).
+That path is documented in `pi_motor_bridge/README.md` and does **not**
+ship as the default in new images.
 
 For deeper background on a particular subsystem after you finish this
 doc, see:
 
-* `pi_motor_bridge/README.md` — the canonical Pi-side bring-up
-  walkthrough, including every Bookworm pothole.
-* `pi_motor_bridge/PINMAP.md` — JYQD ↔ Pi GPIO wiring table.
+* `pi_motor_bridge/PINMAP.md` — JYQD signal names and **historical** Pi
+  BCM mapping (cross-check **`nina/controllers/navigation_manager.py`
+  `DEFAULT_PINS`** for the **Jetson Orin Nano** remaps on this carrier).
+* `pi_motor_bridge/README.md` — optional Pi daemon bring-up.
 * `sirena_ui/docs/NINA_APP.md` — full feature reference for the GUI
   (every screen, every env var, every tunable).
 
@@ -32,13 +32,13 @@ doc, see:
 | # | Component | Spec / model | Qty | Notes |
 |---|-----------|--------------|-----|-------|
 | 1 | Brain SBC | **NVIDIA Jetson Orin Nano** dev kit, 8 GB | 1 | JetPack 5.x or 6.x. SD or NVMe storage both fine. |
-| 2 | Motor SBC | **Raspberry Pi 4B** (2 GB+) | 1 | Pi 3 / Zero 2 W also work. **Pi 5 is NOT supported** — `pigpio` doesn't run on the Pi 5 GPIO controller. |
+| 2 | Motor offload (optional) | **Raspberry Pi 4B** (2 GB+) | 0–1 | **Not required** for new builds. Legacy `NINA_NAV_MODE=remote` + `pi_motor_bridge`. **Pi 5 not supported** for pigpio offload. |
 | 3 | BLDC drivers | **JYQD_V7.3E2** | 2 | One per wheel. Opto-isolated direction inputs. |
 | 4 | BLDC motors | 24 V hub motors (whatever your build uses) | 2 | Match the JYQD output. |
 | 5 | Motor battery | 24 V LiPo / Li-ion pack | 1 | Powers the JYQDs / motors only. |
-| 6 | Logic supply | USB-C PSU for Jetson + USB-C PSU for Pi | 2 | Independent. Don't try to share rails between Jetson and Pi. |
+| 6 | Logic supply | Jetson PSU + **5 V common** for JYQD opto inputs | — | JYQD **5 V / GND** from Jetson header (or bench 5 V with common GND). **24 V** motor power stays on driver screws only. |
 | 7 | Display | **10.1" HDMI touchscreen, 1024 × 600** | 1 | The GUI is laid out for this exact panel. Larger panels work but are not the design target. |
-| 8 | Serial link | 3× female-female dupont jumpers **OR** CP2102 / FT232 USB-to-TTL adapter | 1 | **Don't buy PL2303 or CH340** — neither chip's driver ships in JetPack's kernel. |
+| 8 | Serial (optional) | 3-wire UART **or** CP2102 / FT232 USB-TTL | 0–1 | **Legacy:** Jetson ↔ Pi @ 115200 if using `pi_motor_bridge`. Lidar/Dynamixel may use `/dev/ttyUSB*`. **No PL2303/CH340** on Jetson. |
 | 9 | USB camera | UVC / V4L2 USB cam | 1 | Used by the Vision screen. Any 720p+ webcam is fine. |
 | 10 | Lidar (optional, for SLAM) | **SLAMTEC RPLIDAR A1M8** | 1 | USB serial, mounted on the head. |
 | 11 | Depth camera (optional, for autonomy) | **Intel RealSense D435** | 1 | USB 3, mounted **below** the RGB camera, tilted **10–15° down**. See §1.1 for the recommended sensor stack. |
@@ -46,8 +46,10 @@ doc, see:
 | 13 | Ultrasonic ring (optional) | **HC-SR04** | 4 | Chassis FL / FR / RL / RR. |
 | 14 | Speaker (optional) | 3.5 mm or USB | 1 | Used by `gTTS` action audio + face-greet announcements. |
 
-Wiring is documented per-component in `pi_motor_bridge/PINMAP.md`
-(JYQDs ↔ Pi) and in `sirena_ui/docs/NINA_APP.md` (sensors ↔ Jetson).
+Wiring: JYQD **EL / DIR / PWM** to the Jetson 40-pin header per
+`pi_motor_bridge/PINMAP.md` **signal names**, using BCM numbers from
+`nina.controllers.navigation_manager.DEFAULT_PINS` (Orin Nano remaps).
+Sensors: `sirena_ui/docs/NINA_APP.md`.
 
 ### 1.1 Sensor stack — recommended physical layout
 
@@ -101,16 +103,15 @@ sensor coverage" — read that before doing your first untethered run.
 | Host | OS | Why this version |
 |------|----|------------------|
 | Jetson Orin Nano | **JetPack 5.x or 6.x** (Ubuntu 20.04 / 22.04) | NVIDIA's official BSP. JetPack ships CUDA + cuDNN + TensorRT, which `ultralytics` auto-uses for FP16 YOLOv8 inference. |
-| Raspberry Pi 4 | **Raspberry Pi OS Bookworm 64-bit** (Lite or Desktop) | Last release with `pigpio`-compatible GPIO controller. |
+| Raspberry Pi 4 | **Raspberry Pi OS Bookworm 64-bit** (Lite or Desktop) | **Motor offload only** — optional legacy with `pigpio` + `pi_motor_bridge`. |
 | Dev workstation | macOS / Linux / Windows | Anything with Python 3.9+; only needed for code editing + offscreen GUI smoke tests. |
 
 ---
 
 ## 3. Account / network requirements
 
-* SSH or local terminal access to **both** the Jetson and the Pi.
-* Each board on the same Wi-Fi (or hard-wired) so you can SSH back and
-  forth during bring-up.
+* SSH or local terminal access to the **Jetson** (and to a **Pi** only
+  if you still run `pi_motor_bridge`).
 * GitHub access to `Sirena-Technologies/Nvidia-jetson-platform` (the
   bring-up scripts `git clone` the repo on each board).
 * Internet on the Jetson at first launch — `gTTS` action-audio
@@ -129,7 +130,7 @@ sensor coverage" — read that before doing your first untethered run.
 
 The repo ships **four** pinned-style requirements files. Install only
 what you actually need on each host — the GUI, the vision stack, and
-the Pi bridge are independent.
+the optional Pi motor daemon are independent.
 
 | File | Where you install it | What it pulls in |
 |------|----------------------|------------------|
@@ -137,7 +138,7 @@ the Pi bridge are independent.
 | `requirements-vision.txt` | Jetson (also CI) | numpy, `opencv-python-headless`, `inference`, `inference-sdk` for the standalone Roboflow vision runtime. |
 | `requirements-ui.txt` | Jetson (only if you use the older FastAPI web UI) | `fastapi`, `uvicorn`, `pydantic`. Not needed for the PyQt5 GUI. |
 | `requirements.txt` | Jetson (full stack) | Pulls in `requirements-vision.txt` plus `pyserial`, `rich`, `ultralytics`. |
-| (apt only) | **Raspberry Pi** | `python3-pigpio`, `python3-serial`, plus `pigpiod` v79 built from source — see Pi section of `pi_motor_bridge/README.md`. The Pi doesn't use any pip requirements file. |
+| (apt only) | **Optional: Raspberry Pi** motor bridge | `python3-pigpio`, `python3-serial`, pigpiod — see `pi_motor_bridge/README.md`. Skip when `NINA_NAV_MODE=local`. |
 
 ### Jetson — recommended install order
 
@@ -208,7 +209,34 @@ sudo systemctl daemon-reload && sudo systemctl enable --now pigpiod
 This is the canonical end-to-end order. Each step links to the deep
 reference if you hit anything weird.
 
-### 5.1 Raspberry Pi (motor controller)
+### 5.1 Jetson Orin Nano — BLDC / JYQD (direct GPIO)
+
+Do this **on the Jetson** before or in parallel with §5.3 GUI install.
+
+1. Flash **JetPack 5.x or 6.x**, create the desktop user, `sudo apt update && sudo apt upgrade -y`.
+2. Add yourself to **`dialout`**: `sudo usermod -aG dialout $USER && newgrp dialout`.
+3. Run **`sudo /opt/nvidia/jetson-io/jetson-io.py`**, enable the header functions
+   needed for **`nina.controllers.navigation_manager.DEFAULT_PINS`** (PWM0/1 on
+   BCM **12** / **13**, and the GPIO outputs used for EL/DIR/status — BCM **6**,
+   **10**, **16**, **20**, **21**, **23**, **24**, **5**, **17**, etc.). Save and reboot
+   if the tool prompts you.
+4. **Power off.** Wire each **JYQD** EL / direction / PWM / 5 V / GND to the
+   Jetson 40-pin header per **`pi_motor_bridge/PINMAP.md`** **signal names**,
+   using the **Jetson BCM numbers** in **`DEFAULT_PINS`** (they intentionally
+   differ from the old Pi column in some rows).
+5. Smoke-test **without the GUI** (`NINA_NAV_MODE` unset or **`local`**):
+   ```bash
+   cd ~/Nvidia-jetson-platform
+   PYTHONPATH=. python3 -m nina.app.motor_direction_test --speed 20 --duration 2
+   ```
+   Forward / backward per wheel should be obvious; set **`NINA_NAV_INVERT_LEFT`**
+   / **`NINA_NAV_INVERT_RIGHT`** if a side spins opposite (match your kiosk
+   unit: `desktop/nina-ui-kiosk.service` ships `NINA_NAV_INVERT_LEFT=1`).
+
+### 5.2 Legacy: Raspberry Pi motor bridge (optional)
+
+Only if you still offload BLDCs with **`NINA_NAV_MODE=remote`** and
+`pi_motor_bridge/` on a Pi:
 
 1. Flash **Bookworm 64-bit** with `rpi-imager`. Set hostname / user /
    SSH / Wi-Fi in the imager's *OS customization* panel.
@@ -236,8 +264,8 @@ reference if you hit anything weird.
    git clone https://github.com/Sirena-Technologies/Nvidia-jetson-platform.git
    cd Nvidia-jetson-platform && git checkout feature/nina-app
    ```
-8. Wire the JYQDs to the Pi per `pi_motor_bridge/PINMAP.md`.
-9. Smoke-test the motors directly (no Jetson involved):
+8. Wire the JYQDs to the **Pi** per `pi_motor_bridge/PINMAP.md`.
+9. Smoke-test the motors on the **Pi** (no Jetson involved):
    ```bash
    cd pi_motor_bridge
    sudo -E python3 -c "
@@ -248,102 +276,62 @@ reference if you hit anything weird.
    nav.set_wheels(20, 'back',  20, 'back');  time.sleep(2)
    nav.emergency_stop()"
    ```
-   Both wheels should run forward, stop, then backward. If a wheel
-   spins the wrong way, set `invert_left` / `invert_right` in
-   `~/.config/sirena/drive_polarity.json`, or use **`NINA_NAV_INVERT_*`**
-   env vars before first run (see `sirena_ui/docs/NINA_APP.md`). The Qt
-   Drive screen no longer has Flip toggles; Android companion / link
-   API can still flip polarity at runtime where supported.
-10. Install the bridge as a systemd service. The installer enables
-    **both** `pigpiod` and `motor-bridge.service` for autostart, so
-    after this one-time step the bridge comes up on every Pi reboot
-    with no further action — including ordering: `motor-bridge.service`
-    waits for `pigpiod` (`After=` + `Wants=` in the unit file), and a
-    crashed bridge auto-restarts after 2 s (`Restart=on-failure`):
-    ```bash
-    sudo bash install_service.sh
-    sudo systemctl status motor-bridge      # expect: active (running)
+10. Install **`install_service.sh`** so **`motor-bridge.service`** autostarts
+    (see `pi_motor_bridge/README.md`).
 
-    # Confirm autostart on next boot (both should print "enabled"):
-    systemctl is-enabled pigpiod
-    systemctl is-enabled motor-bridge
-    ```
+Then on the **Jetson**, set **`NINA_NAV_MODE=remote`**, **`NINA_NAV_REMOTE_PORT`**
+to the USB-UART or **`ttyTHS1`** link, and use **`python3 -m nina.app.nav_bridge_test`**
+for protocol checks.
 
-### 5.2 Jetson Orin Nano (brain + GUI)
+### 5.3 Jetson Orin Nano (GUI + companion)
 
 1. Flash **JetPack 5.x or 6.x** with the SDK Manager. Run through the
-   first-boot wizard, set the desktop user.
+   first-boot wizard, set the desktop user (if you did not already in §5.1).
 2. `sudo apt update && sudo apt upgrade -y`.
 3. Add yourself to `dialout`: `sudo usermod -aG dialout $USER && newgrp dialout`.
-4. **For the direct-UART link** (default): enable UART1 on pins 8/10
-   via `sudo /opt/nvidia/jetson-io/jetson-io.py`, save, reboot.
-   Verify with a multimeter that **pin 8 idles HIGH at ~3.3 V** when
-   transmitting (`pi_motor_bridge/README.md` section 0.3.c).
-5. **For the USB-TTL link**: plug in the CP2102 / FT232 adapter,
-   confirm it bound to `/dev/ttyUSB0` (`ls -l /dev/ttyUSB*`,
-   `dmesg | tail`). PL2303 / CH340 will silently fail — buy a
-   different adapter.
-6. Install Python deps as in section 4 above.
-7. Clone the repo and check out the active branch:
+4. Install Python deps as in section 4 above.
+5. Clone the repo and check out the active branch:
    ```bash
    cd ~
    git clone https://github.com/Sirena-Technologies/Nvidia-jetson-platform.git
    cd Nvidia-jetson-platform && git checkout feature/nina-app
    ```
-8. Wire the **3-wire serial crossover** between the boards (or plug
-   in the USB-TTL adapter):
-   ```
-   Jetson pin  8 (TX) ──> Pi pin 10 (RX, BCM 15)
-   Jetson pin 10 (RX) <── Pi pin  8 (TX, BCM 14)
-   Jetson pin  6 (GND) ↔ Pi pin  6 (GND)
-   ```
-   Both boards powered off while you wire. Don't run any 3.3 V or 5 V
-   wires across.
-9. End-to-end smoke test (no GUI, just the serial protocol):
+6. Install the GUI kiosk autostart so the panel boots straight into
+   the cockpit, fullscreen, on every reboot:
    ```bash
-   cd ~/Nvidia-jetson-platform
-   PYTHONPATH=. python3 -m nina.app.nav_bridge_test --port /dev/ttyTHS1 --ping-only
-   PYTHONPATH=. python3 -m nina.app.nav_bridge_test --port /dev/ttyTHS1 --speed 25 --duration 2
+   sudo apt install -y x11-xserver-utils    # provides xrandr (next step depends on it)
+   ./scripts/install-nina-ui-kiosk.sh
    ```
-   `--ping-only` should print `PONG`. The drive command should spin
-   both wheels forward at 25 % for 2 s, then stop.
-10. Install the GUI kiosk autostart so the panel boots straight into
-    the cockpit, fullscreen, on every reboot:
-    ```bash
-    sudo apt install -y x11-xserver-utils    # provides xrandr (next step depends on it)
-    ./scripts/install-nina-ui-kiosk.sh
-    ```
-    The installer:
-    * drops a systemd user unit at
-      `~/.config/systemd/user/nina-ui-kiosk.service`,
-    * runs `loginctl enable-linger` so the unit survives reboot
-      without a login,
-    * sets `NINA_UI_FULLSCREEN=1`, `NINA_NAV_MODE=remote`,
-      `NINA_NAV_REMOTE_PORT=/dev/ttyTHS1`, `NINA_NAV_INVERT_LEFT=1`,
-    * `apt-get install -y onboard` for the touchscreen on-screen
-      keyboard (Settings password fields, recording renames, etc. all
-      auto-pop the OSK on focus — see `NINA_UI_OSK*` env vars in
-      `sirena_ui/docs/NINA_APP.md` for tuning),
-    * `systemctl --user enable --now`s the unit, so the GUI is on
-      the panel within a few seconds of running it.
+   The installer:
+   * drops a systemd user unit at
+     `~/.config/systemd/user/nina-ui-kiosk.service`,
+   * runs `loginctl enable-linger` so the unit survives reboot
+     without a login,
+   * sets `NINA_UI_FULLSCREEN=1`, **`NINA_NAV_MODE=local`**, **`NINA_NAV_INVERT_LEFT=1`**,
+     **`NINA_NAV_INVERT_RIGHT=0`** (JYQDs on **Jetson** GPIO — override via
+     `systemctl --user edit nina-ui-kiosk` for legacy `remote` + UART),
+   * `apt-get install -y onboard` for the touchscreen on-screen
+     keyboard,
+   * `systemctl --user enable --now`s the unit, so the GUI is on
+     the panel within a few seconds of running it.
 
-    `launch-sirena.sh` runs `xrandr` on the kiosk path **only** to
-    force the panel into a real 1024 × 600 mode before Qt starts. The
-    cheap HDMI 10.1" panels almost universally advertise a 1920 × 1080
-    EDID and rely on their internal scaler — without this step the
-    GUI launches frameless across that virtual surface and the
-    layouts (which are pinned to 1024 × 600 design pixels) end up
-    stretched and clipped.
-11. Verify on the panel: the GUI should be up, fullscreen at
-    1024 × 600. From the **Drive** screen, hold *Forward* — both
-    wheels should turn the same direction. *Back* reverses both.
-    *Left* / *Right* turn in place. *E-STOP* (button or `Esc` key)
-    cuts torque immediately.
+   `launch-sirena.sh` runs `xrandr` on the kiosk path **only** to
+   force the panel into a real 1024 × 600 mode before Qt starts. The
+   cheap HDMI 10.1" panels almost universally advertise a 1920 × 1080
+   EDID and rely on their internal scaler — without this step the
+   GUI launches frameless across that virtual surface and the
+   layouts (which are pinned to 1024 × 600 design pixels) end up
+   stretched and clipped.
+7. Verify on the panel: the GUI should be up, fullscreen at
+   1024 × 600. From the **Drive** screen, hold *Forward* — both
+   wheels should turn the same direction. *Back* reverses both.
+   *Left* / *Right* turn in place. *E-STOP* (button or `Esc` key)
+   cuts torque immediately.
 
-### 5.3 Bring-up: autonomous navigation (lidar + RGB + depth)
+### 5.4 Bring-up: autonomous navigation (lidar + RGB + depth)
 
-This section assumes 5.1 + 5.2 already pass — operator can drive the
-bot manually from the GUI. Goal here is to get the **Autonomous mode**
+This section assumes **§5.1** (motors) and **§5.3** (GUI) already pass —
+operator can drive the bot manually from the GUI. Goal here is to get the **Autonomous mode**
 toggle on the Drive (or Map) screen working.
 
 The autonomy stack is reactive obstacle-avoiding wander, not goto-
@@ -371,7 +359,7 @@ situational awareness only. Adding semantic obstacles ("don't drive
 toward a person", "approach the dog bowl") would mean wiring
 `VisionWorker.detections_changed` into `obstacle_field.fuse()` later.
 
-#### 5.3.1 Mount the sensors
+#### 5.4.1 Mount the sensors
 
 See §1.1 for the recommended height stack. Quick checklist:
 
@@ -396,7 +384,7 @@ See §1.1 for the recommended height stack. Quick checklist:
       lidar, plug the lidar into a separate USB-Ethernet dongle
       and let that dongle hold the 192.168.11.10 static IP.
 
-#### 5.3.2 Install pyrealsense2 on the Jetson
+#### 5.4.2 Install pyrealsense2 on the Jetson
 
 ```bash
 cd ~/Nvidia-jetson-platform
@@ -415,7 +403,7 @@ pyrealsense2"` fails, the installer's `.pth` step didn't pick the
 right Python. Re-run with `PYTHON_EXEC=/path/to/your/venv/python3
 ./scripts/install-realsense-jetson.sh`.
 
-#### 5.3.3 Install breezyslam on the Jetson
+#### 5.4.3 Install breezyslam on the Jetson
 
 `breezyslam` is **not** on PyPI — a bare `pip install breezyslam`
 fails with `No matching distribution found for breezyslam>=0.5.0`.
@@ -461,7 +449,7 @@ rasterised scans in fallback mode).
 > so a plain `pip install -r` will resolve. You still need the
 > apt build deps from step 1 above for the C extension to compile.
 
-#### 5.3.4 Verify the lidar separately
+#### 5.4.4 Verify the lidar separately
 
 For the **Slamtec S2E** (default), run the bring-up script — it sets
 up the host's Ethernet IP, pings the lidar, and runs an end-to-end
@@ -517,7 +505,7 @@ l.close()
 "
 ```
 
-#### 5.3.5 Environment variables that gate the sensors
+#### 5.4.5 Environment variables that gate the sensors
 
 All optional; defaults work for the recommended hardware. Set in
 `desktop/nina-ui-kiosk.service` if you need to override on the bot.
@@ -533,7 +521,7 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 300 | Depth values outside this range are dropped. The lower bound is set to 300 mm (D435's published reliable minimum is ~280 mm); below that the sensor mostly returns IR projector saturation and floor reflections, which on glossy / polished floors look like phantom forward obstacles to the autonomy. |
 | `NINA_DEPTH_MIN_CLUSTER_PX` | 50 | The forward / left / right region "min" requires at least this many pixels at-or-closer than the reported distance before the autonomy treats it as a real obstacle. Single-pixel IR splash from a reflective floor used to hijack `forward_min_mm` (bot spun in place even on an empty hallway); 50 px ≈ 5×10 cluster, comfortably above the noise floor and small enough to still catch a chair leg at typical cruise distance. |
 | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip direct overhead glare. (Was 25% — too aggressive: chest-high tabletops at 1–2 m were masked out, so the bot drove into them.) |
-| `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.6). |
+| `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.4.6). |
 | `NINA_DEPTH_FWD_BAND_FRAC` | `0.74` | Fraction of the middle vertical band (after TOP/BOT skips) used for the **forward** third only, from the **top** of that band. Left/right still use the full band. Steeper down-tilt often pushes floor geometry into the lower part of the middle band; depth then wins `fuse()`'s minimum over lidar and the bot spins. Lower this (e.g. `0.55`–`0.65`) or raise `NINA_DEPTH_BOT_SKIP_PCT` if that happens. `1.0` restores the legacy behaviour (forward uses the same vertical span as left/right). |
 | `NINA_LIDAR_MODEL` | `s2e` | Lidar driver to load. `s2e` = Slamtec S2E (Ethernet/UDP, ~30 m, default), `a1` = legacy RPLIDAR A1M8 (USB-serial, ~12 m), `auto` = probe S2E first then fall back to A1. |
 | `NINA_LIDAR_HOST` | `192.168.11.2` | Slamtec S2E IP address. The factory default; change only if you've reflashed the lidar's IP through the Slamtec SDK or RoboStudio. |
@@ -572,7 +560,7 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_GOTO_TICK_HZ` | 8 | Goto control loop rate. Matches the wander pilot's `NINA_AUTO_TICK_HZ`. |
 | `NINA_GOTO_UNKNOWN_COST` | 1.5 | A* cost multiplier for grey/unknown grid cells. >1 nudges the planner to prefer mapped corridors but still routes into unexplored space when needed. |
 
-#### 5.3.6 First autonomy run
+#### 5.4.6 First autonomy run
 
 1. Place the bot in an open area with at least 1.5 m clearance on all sides.
 2. From the GUI, open **Drive** → **Settings** chip → confirm the
@@ -592,7 +580,7 @@ All optional; defaults work for the recommended hardware. Set in
    pilot stops the wheels and engages the brake within one tick
    (`AutonomySettings.tick_hz`, default 5 Hz → ≤ 200 ms).
 
-#### 5.3.7 First goto-point run
+#### 5.4.7 First goto-point run
 
 1. Drive Nina around the room first with the manual D-pad until
    the SLAM grid has filled in — at least the immediate corridors
@@ -749,7 +737,7 @@ v4l2-ctl -d /dev/video3 --all | head   # confirm the node accepts ioctls
 ffplay /dev/video3                     # full-screen live preview (Ctrl-C to quit)
 ```
 
-#### 5.3.7 Live perception view (LiDAR + RGB + Depth, side-by-side)
+#### 5.4.8 Live perception view (LiDAR + RGB + Depth, side-by-side)
 
 The Nina app ships a dedicated **Perception** screen (sidebar:
 `⊙ Perception`, between Vision and Map) that shows what every
@@ -779,7 +767,7 @@ and a later autonomy-enable doesn't try to re-open the busy device.
 Visualization (cv2 colorize, ~5–10 ms / frame on Jetson Nano) is
 toggled on only while the Perception screen is the visible screen.
 
-#### 5.3.8 Health-screen cross-check
+#### 5.4.9 Health-screen cross-check
 
 Open **Health** while autonomy is running. The new perception rows
 should all show **OK** (or at minimum a useful detail string):
@@ -995,8 +983,8 @@ support.
 │   └── requirements.txt    Jetson-side pip deps for the GUI
 │
 ├── nina/                   Backend the GUI talks to
-│   ├── controllers/        navigation_manager (local Jetson GPIO),
-│   │                       remote_navigation_manager (serial to Pi bridge),
+│   ├── controllers/        navigation_manager (Jetson GPIO — default),
+│   │                       remote_navigation_manager (legacy Pi UART),
 │   │                       dynamixel_manager, action_runner
 │   ├── sensors/            slamtec_s2e (default), rplidar_a1 (legacy),
 │   │                       hcsr04, gp2y0e02b, realsense_d435,
@@ -1006,10 +994,10 @@ support.
 │   ├── app/                CLI entry points (main.py, nav_bridge_test.py, …)
 │   └── config/             NinaSettings + env-var bindings
 │
-├── pi_motor_bridge/        Pi-side daemon. Owns the JYQDs.
-│   ├── motor_bridge.py     serial listener + dispatch
-│   ├── navigation_bldc.py  GPIO/PWM helpers
-│   ├── PINMAP.md           JYQD ↔ Pi wiring table
+├── pi_motor_bridge/        Optional legacy: Pi-side daemon + JYQD pin tables
+│   ├── motor_bridge.py     serial listener + dispatch (when Pi still used)
+│   ├── navigation_bldc.py  GPIO/PWM helpers (pigpio on Pi)
+│   ├── PINMAP.md           JYQD signal ↔ header (**use w/ Jetson DEFAULT_PINS**)
 │   ├── install_service.sh  installs motor-bridge.service into systemd
 │   └── README.md           Pi bring-up walkthrough (Bookworm, pigpio, UART, …)
 │

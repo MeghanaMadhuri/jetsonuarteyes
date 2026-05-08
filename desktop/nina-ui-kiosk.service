@@ -40,12 +40,12 @@ Environment=NINA_UI_FULLSCREEN=1
 # it here too so a stale env from the user session can't override it.
 Environment=QT_QPA_PLATFORM=xcb
 
-# Default the bot to talking to the Pi-side BLDC bridge over UART.
-# Override per-host via `systemctl --user edit nina-ui-kiosk` if a
-# given Jetson uses a USB-TTL adapter or the simulation backend.
-Environment=NINA_NAV_MODE=remote
-Environment=NINA_NAV_REMOTE_PORT=/dev/ttyTHS1
-Environment=NINA_NAV_REMOTE_BAUD=115200
+# BLDC / JYQD: drive GPIOs on this Jetson (default). Wire per
+# nina/controllers/navigation_manager.py DEFAULT_PINS + PINMAP signal
+# names in pi_motor_bridge/PINMAP.md. Legacy Pi offload:
+#   NINA_NAV_MODE=remote NINA_NAV_REMOTE_PORT=/dev/ttyTHS1 ...
+# Override via: systemctl --user edit nina-ui-kiosk
+Environment=NINA_NAV_MODE=local
 
 # Per-wheel polarity correction. The current Nina build has its left
 # BLDC wired the opposite way around from the right one - without this

@@ -22,17 +22,15 @@ class NavigationSettings:
 
     Two backends are supported and chosen via `mode`:
 
-      mode='local'  - drive the JYQDs directly from the Jetson Orin
-                      Nano's GPIOs. Uses `backend_name` and
-                      `pwm_frequency_hz`. This is the historical path.
+      mode='local'  - **default / production:** drive the JYQDs directly from
+                      the Jetson Orin Nano GPIOs (Jetson.GPIO + PWM).
+                      Uses `backend_name` and `pwm_frequency_hz`.
 
-      mode='remote' - send ASCII commands over a serial port to a
-                      Raspberry Pi running
-                      `pi_motor_bridge/motor_bridge.py`. The Pi owns
-                      the JYQDs. Uses `remote_serial_port`,
-                      `remote_baudrate`, `remote_response_timeout_sec`.
-                      `backend_name` / `pwm_frequency_hz` are ignored
-                      in this mode.
+      mode='remote' - **legacy:** send ASCII commands over a serial port to a
+                      Raspberry Pi running `pi_motor_bridge/motor_bridge.py`.
+                      Uses `remote_serial_port`, `remote_baudrate`,
+                      `remote_response_timeout_sec`. `backend_name` /
+                      `pwm_frequency_hz` are ignored in this mode.
 
     `default_speed_percent`, `turn_duration_sec`, `invert_left_dir`,
     and `invert_right_dir` apply to both modes - they live in the

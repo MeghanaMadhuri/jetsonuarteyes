@@ -1,21 +1,22 @@
 """
-Raspberry Pi BLDC navigation module for the Sirena Nina bot.
+Raspberry Pi BLDC navigation module for the Sirena Nina bot (legacy path).
 
-This is the proven, known-working Pi reference build (originally from
-`/Downloads/navigation_bldc.py` in the user's RPi prototype). It runs on
-the *Raspberry Pi* sitting next to the Jetson Orin Nano. The Jetson is
-the brain (vision, autonomy, GUI, sensors); this Pi is the dedicated
-motor controller. The Jetson sends short ASCII commands over a serial
-link and `motor_bridge.py` dispatches into the helpers in this file.
+**Production:** the Jetson Orin Nano drives the same JYQD hardware directly
+via `nina.controllers.navigation_manager` (`NINA_NAV_MODE=local`). This
+file remains the motor backend for **`pi_motor_bridge/motor_bridge.py`**
+when a Pi still runs the serial bridge (**`NINA_NAV_MODE=remote`**).
+
+Originally from `/Downloads/navigation_bldc.py` in the RPi prototype: it
+runs on the Pi and receives ASCII **`SET`** lines from the Jetson over
+UART when using that split-board configuration.
 
 Hardware: two JYQD_V7.3E2 BLDC drivers (one per wheel), powered from a
 24 V battery (driver power) and 5 V from either the Pi or Jetson (logic
-power). The Pi drives EL / DIR / PWM directly via pigpio - the Pi
-GPIOs have enough drive strength to satisfy the JYQD opto-isolated
-inputs cleanly, which is the whole reason we offloaded motor control
-off the Jetson Orin Nano.
+power). On the Pi, EL / DIR / PWM are driven via pigpio.
 
-Pin map (Raspberry Pi 40-pin header, BCM numbering):
+Pin map (Raspberry Pi 40-pin header in **`motor_bridge.py` / this module**;
+**Jetson direct wiring** uses different BCMs — see
+`nina.controllers.navigation_manager.DEFAULT_PINS`):
 
     Function       BCM    Physical pin    Notes
     L-EL           18     12              digital out

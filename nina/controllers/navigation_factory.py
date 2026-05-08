@@ -1,6 +1,6 @@
 """
-Choose between the local (Jetson GPIO direct) and remote (Pi serial
-bridge) navigation manager based on `NavigationSettings.mode`.
+Choose between the local (**Jetson GPIO**, default) and remote (**Pi serial
+bridge**, legacy) navigation manager based on `NavigationSettings.mode`.
 
 Used by `sirena_ui.workers.nina_service` and by the CLI tools so the
 selection logic lives in exactly one place. Tests can pass a fake
@@ -12,10 +12,9 @@ import).
 
 Env var summary (read at settings-load time, see `nina.config.settings`):
 
-    NINA_NAV_MODE=local        # default; drives Jetson GPIOs directly
-    NINA_NAV_MODE=remote       # talks to pi_motor_bridge over serial
-                               # (default speed 13%, DIR settle 0.1 s, chain
-                               # gap after STOP 0.25 s unless env overrides)
+    NINA_NAV_MODE=local         # default — Jetson GPIO drives JYQDs
+    NINA_NAV_MODE=remote        # legacy — serial to pi_motor_bridge on a Pi
+                                # (set NINA_NAV_REMOTE_PORT / BAUD)
     NINA_NAV_REMOTE_PORT       # default /dev/ttyUSB0
     NINA_NAV_REMOTE_BAUD       # default 115200
     NINA_NAV_REMOTE_TIMEOUT_SEC# default 1.2 (allow Pi kick + warm-reverse before OK)

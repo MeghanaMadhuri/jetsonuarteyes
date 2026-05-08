@@ -718,9 +718,9 @@ sirena_ui/                       nina/
 ## Tunable env vars (high-traffic)
 
 ```bash
-# Navigation backend (local Jetson GPIO vs remote Pi serial bridge)
-# See "Remote mode (Pi motor bridge)" above for the full setup.
-export NINA_NAV_MODE=local                     # or 'remote' for the Pi bridge
+# Navigation backend: Jetson GPIO (default) vs legacy Pi serial bridge
+# See "Remote mode (Pi motor bridge)" above for UART offload only.
+export NINA_NAV_MODE=local                     # production: JYQDs on Jetson header
 export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
 export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward

@@ -4,16 +4,19 @@ Sirena Nina motor bridge daemon (Raspberry Pi side).
 
 Architecture:
 
-    Jetson Orin Nano  ----- USB-to-TTL adapter -----> Raspberry Pi UART
-       (brain)          ASCII commands @ 115200 8N1     (motor controller)
+    Jetson Orin Nano  ----- serial (optional / legacy) -----> Raspberry Pi
+       (brain)          ASCII commands @ 115200 8N1             (motor_bridge only)
                                                                 v
                                                           navigation_bldc.py
                                                                 v
                                                           2x JYQD_V7.3E2
 
-The Jetson runs the GUI / vision / autonomy / sensors and sends motor
-commands here. This daemon is the *only* thing on the Pi that touches
-GPIO; it owns pigpio.
+    **Default / production:** omit the Pi — use ``NavigationManager`` on the
+    Jetson with ``NINA_NAV_MODE=local`` (GPIO + PWM on the Jetson header).
+
+When this daemon is deployed, the Jetson runs the GUI / vision / autonomy /
+sensors and **optionally** sends motor commands here over UART. This process
+is the *only* thing on the Pi that touches GPIO; it owns pigpio.
 
 Wire protocol
 -------------

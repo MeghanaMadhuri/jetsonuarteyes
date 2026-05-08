@@ -442,3 +442,39 @@ def test_drive_from_stop_kicks_then_cruises_low(
         )
     finally:
         ctrl.shutdown()
+
+
+def test_drive_left_fwd_extra_pp_env(
+    isolate_polarity_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Optional NINA_DRIVE_LEFT_FWD_EXTRA_PP bumps left forward duty (symmetric to right trim)."""
+    from sirena_ui.workers import drive_controller as dc
+
+    monkeypatch.setenv("NINA_DRIVE_LEFT_FWD_EXTRA_PP", "3")
+    nav = FakeNav()
+    ctrl = _make_controller(nav, default_speed=12)
+    try:
+        ctrl.ensure_hardware()
+        assert _wait_for(lambda: nav.brake_engaged)
+        ctrl.set_brake(False)
+        assert _wait_for(lambda: not nav.brake_engaged)
+        ctrl.drive("forward")
+        assert _wait_for(
+            lambda: len([c for c in nav.calls if c[0] == "set_wheels"]) >= 2
+        )
+        sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
+        kick_sw = sw_calls[0][1]
+        assert kick_sw["left_speed"] == dc.FROM_STOP_KICK_PCT + 3
+        assert (
+            kick_sw["right_speed"]
+            == dc.FROM_STOP_KICK_PCT + dc.RIGHT_WHEEL_EXTRA_START_PP
+        )
+        last_sw = sw_calls[-1][1]
+        assert last_sw["left_speed"] == dc.FROM_STOP_CRUISE_PCT + 3
+        assert (
+            last_sw["right_speed"]
+            == dc.FROM_STOP_CRUISE_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
+        )
+    finally:
+        ctrl.shutdown()

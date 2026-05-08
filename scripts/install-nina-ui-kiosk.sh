@@ -22,7 +22,7 @@
 # Stop / disable later with:
 #   systemctl --user disable --now nina-ui-kiosk.service
 #
-# Edit env vars (e.g. swap UART port to /dev/ttyUSB0) without touching
+# Edit env vars (e.g. `NINA_NAV_MODE=remote` for legacy Pi bridge) without touching
 # the repo:
 #   systemctl --user edit nina-ui-kiosk
 
@@ -160,7 +160,7 @@ Useful commands:
   # disable autostart (one-off testing)
   systemctl --user disable --now nina-ui-kiosk
 
-  # tweak env vars without editing the repo (e.g. switch UART port)
+  # tweak env vars without editing the repo (e.g. NINA_NAV_INVERT_* or legacy remote UART)
   systemctl --user edit nina-ui-kiosk
 
 To verify on the panel right now: the GUI should already be up,

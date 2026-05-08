@@ -1,8 +1,11 @@
-# JYQD <-> Raspberry Pi pin map
+# JYQD <-> GPIO pin map (historical Pi + signal reference for Jetson)
 
-This is the wiring used by the proven prototype. It matches what
-`navigation_bldc.py` in this directory expects. Don't change without
-also changing the constants in that file.
+**Production (Jetson Orin Nano):** connect each **JYQD** screw per the
+**Function** column below using **BCM numbers from**
+`nina/controllers/navigation_manager.py` **`DEFAULT_PINS`** (several
+differ from the Pi BCM column — see code comments A/B/C). This file’s
+**Pi BCM** columns match `pi_motor_bridge/navigation_bldc.py` when a
+**Raspberry Pi** still runs `motor_bridge.py` (**legacy**).
 
 ## Per-wheel signals
 

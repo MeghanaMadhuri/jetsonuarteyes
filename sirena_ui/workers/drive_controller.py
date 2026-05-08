@@ -100,10 +100,12 @@ MAX_SPEED_PCT = 14
 # Single manual-drive duty (no slider): midpoint of the safe envelope.
 FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 
-# When both wheels share the same **forward** direction, optional right duty
-# delta (START / RUN, PWM points). START=0 keeps kick symmetric; RUN=2 makes
-# cruise / held forward-forward right 2% above left. Reverse (both backward),
-# turns, and coast stay symmetric.
+# When both wheels share the same **forward** direction, optional duty deltas
+# (START / RUN, PWM points). Reverse (both backward), turns, and coast stay
+# symmetric.
+# Right: RUN=2 biases cruise / held forward (historical right-hub trim).
+# Left: default 0; some builds need +1..+4 on the left for JYQD breakaway —
+#       set ``NINA_DRIVE_LEFT_FWD_EXTRA_PP`` (see `_left_fwd_extra_pp()`).
 RIGHT_WHEEL_EXTRA_START_PP = 0
 RIGHT_WHEEL_EXTRA_RUN_PP = 2
 
@@ -148,6 +150,22 @@ def _drive_turn_90_duration_sec() -> float:
         return 2.3
 
 
+def _left_fwd_extra_pp() -> int:
+    """Extra left duty when both wheels command **forward** together.
+
+    Mirrors the optional right bias for bots where the left hub/JYQD needs
+    slightly more PWM to start rolling (opposite nudge + low cruise can leave
+    the left side stalled while the right moves). Env-only; default 0.
+    """
+    raw = (os.environ.get("NINA_DRIVE_LEFT_FWD_EXTRA_PP") or "").strip()
+    if raw:
+        try:
+            return max(0, min(20, int(raw)))
+        except ValueError:
+            pass
+    return 0
+
+
 def _drive_turn_90_speed_pct() -> int:
     raw = (os.environ.get("NINA_DRIVE_TURN_90_PCT") or "").strip()
     if raw:
@@ -177,8 +195,8 @@ def _pair_duties_with_right_bias(
     *,
     start_phase: bool,
 ) -> Tuple[int, int]:
-    """Left duty unchanged; right duty + START/RUN delta when both wheels move
-    **forward** together. Reverse (both **backward**), opposite directions
+    """Apply optional left/right forward trim when both wheels move **forward**
+    together. Reverse (both **backward**), opposite directions
     (turn-in-place), and coast (any zero duty) stay symmetric."""
     lb, rb = int(left_base), int(right_base)
     if lb == 0 and rb == 0:
@@ -189,10 +207,13 @@ def _pair_duties_with_right_bias(
         return lb, rb
     if left_dir == NavigationManager.DIR_BACKWARD:
         return lb, rb
-    extra = (
+    extra_l = _left_fwd_extra_pp()
+    extra_r = (
         RIGHT_WHEEL_EXTRA_START_PP if start_phase else RIGHT_WHEEL_EXTRA_RUN_PP
     )
-    return lb, max(0, min(100, int(rb) + int(extra)))
+    lb2 = max(0, min(100, int(lb) + int(extra_l)))
+    rb2 = max(0, min(100, int(rb) + int(extra_r)))
+    return lb2, rb2
 
 # Heartbeat interval for re-issuing the current SET while a D-pad
 # button or arrow key is held. Only matters when the active backend is
