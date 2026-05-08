@@ -395,7 +395,7 @@ class NavigationManager:
         if not self._is_initialized:
             return
         try:
-            self.emergency_stop()
+            self.emergency_stop(routine_shutdown=True)
         finally:
             try:
                 self._backend.shutdown()
@@ -558,9 +558,17 @@ class NavigationManager:
         time.sleep(self.config.settle_delay_sec)
         log.info("stop (EL=HIGH, PWM=0)")
 
-    def emergency_stop(self) -> None:
-        """Mirrors RPi `emergency_stop`: stop then drop EL=LOW on both sides."""
-        log.warning("EMERGENCY STOP requested")
+    def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
+        """Mirrors RPi `emergency_stop`: stop then drop EL=LOW on both sides.
+
+        When ``routine_shutdown=True`` (used from `shutdown()` only), logs at
+        debug so CLI tools do not print a false-alarm "emergency" on every
+        normal GPIO release.
+        """
+        if routine_shutdown:
+            log.debug("Parking BLDC drivers (EL low, PWM 0) before GPIO release")
+        else:
+            log.warning("EMERGENCY STOP requested")
         try:
             self._control_speed(self.SIDE_LEFT, True, 0, self.DIR_FORWARD)
             self._control_speed(self.SIDE_RIGHT, True, 0, self.DIR_FORWARD)

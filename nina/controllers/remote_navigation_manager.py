@@ -260,7 +260,7 @@ class RemoteNavigationManager:
         if not self._is_initialized:
             return
         try:
-            self.emergency_stop()
+            self.emergency_stop(routine_shutdown=True)
         finally:
             self._close_port()
             self._is_initialized = False
@@ -545,9 +545,16 @@ class RemoteNavigationManager:
         self._last_was_symmetric_straight = False
         log.info("stop (PWM=0, EL=HIGH)")
 
-    def emergency_stop(self) -> None:
-        """Hard stop: PWM=0 + EL LOW on both wheels (chip disabled, no torque)."""
-        log.warning("EMERGENCY STOP requested")
+    def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
+        """Hard stop: PWM=0 + EL LOW on both wheels (chip disabled, no torque).
+
+        ``routine_shutdown=True`` skips the operator-facing WARNING log when
+        tearing down after a normal session (see `shutdown()`).
+        """
+        if routine_shutdown:
+            log.debug("Parking Pi bridge (ESTOP) before disconnect")
+        else:
+            log.warning("EMERGENCY STOP requested")
         self._send_command("ESTOP")
         self._last_l_pwm = 0
         self._last_r_pwm = 0
