@@ -52,6 +52,7 @@ from sirena_ui.widgets.common import (
 from sirena_ui.widgets.dpad import DPad
 from sirena_ui.workers.drive_controller import MAX_SPEED_PCT, MIN_SPEED_PCT
 from sirena_ui.workers.nina_service import NinaService
+from sirena_ui.workers.straight_bench_speed import straight_bench_speed_pct
 
 
 # Keyboard map for held-while-pressed driving.
@@ -69,11 +70,7 @@ STRAIGHT_READY_MAX_POLLS = 100
 
 
 def _straight_test_speed_pct() -> int:
-    try:
-        raw = int(os.environ.get("NINA_STRAIGHT_TEST_SPEED_PCT", str(MAX_SPEED_PCT)))
-    except ValueError:
-        raw = MAX_SPEED_PCT
-    return max(MIN_SPEED_PCT, min(100, raw))
+    return straight_bench_speed_pct()
 
 
 def _straight_sequence_spec() -> List[Tuple[str, int]]:

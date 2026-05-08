@@ -1,10 +1,13 @@
-"""Vision screen: USB camera + face / object recognition.
+"""Vision screen: USB camera + face / object recognition + ArUco approach.
 
 Live preview is driven by `service.vision` (a `VisionWorker`) which
 runs the YuNet face detector and the YOLOv8 object detector on a
 worker thread. The screen owns no detection state of its own - it
 just toggles the worker, renders incoming frames, and surfaces the
 worker's status as pills + lists.
+
+ArUco marker approach uses the same preview frames (BGR) to servo toward
+a configured marker ID using Straight-bench drive speeds.
 
 Dev hosts without OpenCV / Ultralytics / a USB camera get a clear
 "Vision unavailable" pill and the rest of the screen still renders
@@ -25,6 +28,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -38,7 +42,7 @@ from sirena_ui.widgets.common import (
     SectionLabel,
 )
 from sirena_ui.widgets.face_enroll_dialog import FaceEnrollDialog
-from sirena_ui.workers.face_follow_controller import FaceFollowController
+from sirena_ui.workers.aruco_follow_controller import ArucoFollowController
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.object_announcer import ObjectAnnouncer
 from sirena_ui.workers.vision_types import KIND_FACE, KIND_OBJECT, Detection
@@ -135,12 +139,11 @@ class VisionScreen(QWidget):
         # button speaks whatever is on screen *right now*.
         self._latest_object_labels: List[str] = []
         self._play_objects_btn: Optional[QPushButton] = None
-        self._follow_combo: Optional[QComboBox] = None
-        self._follow_start_btn: Optional[QPushButton] = None
-        self._follow_stop_btn: Optional[QPushButton] = None
-        self._follow_pill: Optional[Pill] = None
-        self._follow = FaceFollowController(self._service.drive, parent=self)
-        self._follow.face_latched.connect(self._on_follow_face_latched)
+        self._aruco_marker_spin: Optional[QSpinBox] = None
+        self._aruco_start_btn: Optional[QPushButton] = None
+        self._aruco_stop_btn: Optional[QPushButton] = None
+        self._aruco_pill: Optional[Pill] = None
+        self._aruco_follow = ArucoFollowController(self._service.drive, parent=self)
         # Whether on_enter is currently holding a refcount on the
         # vision worker; tracked so on_leave only ever calls one
         # release() per acquire() even if Qt fires on_leave twice.
@@ -166,7 +169,7 @@ class VisionScreen(QWidget):
         body.addWidget(self._build_camera_card(), stretch=62)
         body.addWidget(self._build_recognition_card(), stretch=38)
 
-        self._follow.status_message.connect(self._on_follow_status)
+        self._aruco_follow.status_message.connect(self._on_aruco_status)
         self._wire_signals()
 
     # ---------- entry / exit ----------
@@ -179,7 +182,6 @@ class VisionScreen(QWidget):
         # holder, the camera comes up.
         worker.acquire()
         self._holds_camera = True
-        self._refresh_follow_combo()
         # Sync toggles that default ON so the worker actually starts
         # detectors without requiring an extra click.
         if self._face_toggle is not None and self._face_toggle._btn.isChecked():  # noqa: SLF001
@@ -194,7 +196,7 @@ class VisionScreen(QWidget):
 
     def on_leave(self) -> None:
         self._disconnect_vision_preview_signals()
-        self._follow.stop()
+        self._aruco_follow.stop()
         # Drop our reference on the camera when the user navigates
         # away. Other screens (Drive, Perception) may still hold a
         # reference, in which case the worker keeps running so their
@@ -300,34 +302,45 @@ class VisionScreen(QWidget):
         self._face_toggle = face
         self._object_toggle = obj
 
-        card.add(SectionLabel("Person follow"))
+        card.add(SectionLabel("ArUco marker approach"))
         follow_hint = MutedLabel(
-            "Drives toward a standoff face size, holds when centred, and reverses "
-            "if you move closer—using the same closeness limit for hold and reverse."
+            "Uses the live camera (same resolution as the preview) to find the "
+            "chosen ArUco ID, drives forward at Straight-bench speed "
+            "(NINA_STRAIGHT_TEST_SPEED_PCT), and recentres with gentle turns. "
+            "Stops when the marker fills enough of the frame "
+            "(NINA_ARUCO_STOP_AREA_FRAC). Dictionary: NINA_ARUCO_DICT (default "
+            "DICT_4X4_50)."
         )
         follow_hint.setWordWrap(True)
         card.add(follow_hint)
-        self._follow_combo = QComboBox()
-        self._follow_combo.setMinimumHeight(32)
-        card.add(self._follow_combo)
+        id_row = QHBoxLayout()
+        id_row.setSpacing(8)
+        id_row.addWidget(MutedLabel("Marker ID"))
+        self._aruco_marker_spin = QSpinBox()
+        self._aruco_marker_spin.setRange(0, 999)
+        self._aruco_marker_spin.setValue(0)
+        self._aruco_marker_spin.setMinimumHeight(32)
+        self._aruco_marker_spin.setToolTip("ArUco marker ID to approach (printed on tag).")
+        id_row.addWidget(self._aruco_marker_spin, stretch=1)
+        card.add_layout(id_row)
         follow_row = QHBoxLayout()
         follow_row.setSpacing(6)
         card.add_layout(follow_row)
-        self._follow_start_btn = QPushButton("Start follow")
-        self._follow_start_btn.setObjectName("primaryButton")
-        self._follow_start_btn.setCursor(Qt.PointingHandCursor)
-        self._follow_start_btn.setMinimumHeight(34)
-        self._follow_start_btn.clicked.connect(self._on_follow_start)
-        follow_row.addWidget(self._follow_start_btn, stretch=1)
-        self._follow_stop_btn = QPushButton("Stop follow")
-        self._follow_stop_btn.setObjectName("secondaryButton")
-        self._follow_stop_btn.setCursor(Qt.PointingHandCursor)
-        self._follow_stop_btn.setMinimumHeight(34)
-        self._follow_stop_btn.setEnabled(False)
-        self._follow_stop_btn.clicked.connect(self._on_follow_stop)
-        follow_row.addWidget(self._follow_stop_btn, stretch=1)
-        self._follow_pill = Pill("Follow: off", Pill.KIND_NEUTRAL)
-        card.add(self._follow_pill)
+        self._aruco_start_btn = QPushButton("Start approach")
+        self._aruco_start_btn.setObjectName("primaryButton")
+        self._aruco_start_btn.setCursor(Qt.PointingHandCursor)
+        self._aruco_start_btn.setMinimumHeight(34)
+        self._aruco_start_btn.clicked.connect(self._on_aruco_start)
+        follow_row.addWidget(self._aruco_start_btn, stretch=1)
+        self._aruco_stop_btn = QPushButton("Stop approach")
+        self._aruco_stop_btn.setObjectName("secondaryButton")
+        self._aruco_stop_btn.setCursor(Qt.PointingHandCursor)
+        self._aruco_stop_btn.setMinimumHeight(34)
+        self._aruco_stop_btn.setEnabled(False)
+        self._aruco_stop_btn.clicked.connect(self._on_aruco_stop)
+        follow_row.addWidget(self._aruco_stop_btn, stretch=1)
+        self._aruco_pill = Pill("ArUco: off", Pill.KIND_NEUTRAL)
+        card.add(self._aruco_pill)
 
         # Object confidence floor (0..100%). Anything YOLO scores
         # below this threshold is dropped before it ever reaches the
@@ -445,10 +458,6 @@ class VisionScreen(QWidget):
         worker.status_changed.connect(self._apply_status)
         worker.face_enable_failed.connect(self._on_face_enable_failed)
         worker.object_enable_failed.connect(self._on_object_enable_failed)
-        worker.enrollment_finished.connect(
-            lambda _payload: self._refresh_follow_combo()
-        )
-
         if self._face_toggle is not None:
             self._face_toggle.toggled.connect(worker.set_face_enabled)
         if self._object_toggle is not None:
@@ -490,8 +499,6 @@ class VisionScreen(QWidget):
             pass
 
     def _on_detections_changed(self, detections: List[Detection]) -> None:
-        if self._follow.is_active():
-            self._follow.ingest_detections(detections)
         if not self.isVisible():
             return
         self._render_detections(detections)
@@ -546,11 +553,8 @@ class VisionScreen(QWidget):
     def _on_frame(self, image: QImage) -> None:
         if not self.isVisible():
             return
-        try:
-            w, h = self._service.vision.capture_dimensions()
-            self._follow.set_frame_size(w, h)
-        except Exception:
-            pass
+        if self._aruco_follow.is_active():
+            self._aruco_follow.ingest_frame(image)
         if self._viewport_label is None:
             return
         if (
@@ -757,20 +761,7 @@ class VisionScreen(QWidget):
 
         QMessageBox.warning(self, "Play Objects", reason)
 
-    def _refresh_follow_combo(self) -> None:
-        if self._follow_combo is None:
-            return
-        self._follow_combo.blockSignals(True)
-        self._follow_combo.clear()
-        self._follow_combo.addItem("Largest face (any)", "")
-        try:
-            for n in sorted(self._service.vision.list_faces()):
-                self._follow_combo.addItem(n, n)
-        except Exception:
-            pass
-        self._follow_combo.blockSignals(False)
-
-    def _on_follow_start(self) -> None:
+    def _on_aruco_start(self) -> None:
         from PyQt5.QtWidgets import QMessageBox
 
         worker = self._service.vision
@@ -778,7 +769,7 @@ class VisionScreen(QWidget):
         if not st.camera_open:
             QMessageBox.warning(
                 self,
-                "Follow",
+                "ArUco approach",
                 "Camera is not ready. Wait for the feed or plug in a USB camera.",
             )
             return
@@ -786,70 +777,56 @@ class VisionScreen(QWidget):
         if auto.is_enabled():
             r = QMessageBox.question(
                 self,
-                "Follow",
-                "Autonomy is on. Stop it and start person follow?",
+                "ArUco approach",
+                "Autonomy is on. Stop it and start marker approach?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if r != QMessageBox.Yes:
                 return
             auto.set_enabled(False)
-        # Face detection only — object/YOLO would slow the first frames and
-        # delays locking; follow uses KIND_FACE detections exclusively.
-        if self._face_toggle is not None and not self._face_toggle._btn.isChecked():  # noqa: SLF001
-            self._face_toggle._btn.setChecked(True)  # noqa: SLF001
-        target = self._follow_combo.currentData()
-        if not self._follow.start(target):
+        mid = 0
+        if self._aruco_marker_spin is not None:
+            mid = int(self._aruco_marker_spin.value())
+        if not self._aruco_follow.start(mid):
             return
-        try:
-            w, h = worker.capture_dimensions()
-            self._follow.set_frame_size(w, h)
-        except Exception:
-            pass
-        if self._follow_start_btn is not None:
-            self._follow_start_btn.setEnabled(False)
-        if self._follow_stop_btn is not None:
-            self._follow_stop_btn.setEnabled(True)
+        if self._aruco_start_btn is not None:
+            self._aruco_start_btn.setEnabled(False)
+        if self._aruco_stop_btn is not None:
+            self._aruco_stop_btn.setEnabled(True)
 
-    def _on_follow_stop(self) -> None:
-        self._follow.stop()
+    def _on_aruco_stop(self) -> None:
+        self._aruco_follow.stop()
 
-    def _on_follow_face_latched(self, name: str) -> None:
-        """Speak \"Hello <name>\" when follow locks (same stack as vision greetings)."""
-        _ = self._service.vision
-        greeter = self._service.face_greeter
-        if greeter is None:
-            return
-        greet_key = (name or "").strip() or "friend"
-        greeter.greet_now(greet_key)
-
-    def _on_follow_status(self, msg: str) -> None:
-        if self._follow_pill is None:
+    def _on_aruco_status(self, msg: str) -> None:
+        if self._aruco_pill is None:
             return
         short = msg if len(msg) <= 80 else (msg[:77] + "...")
-        self._follow_pill.setText(short)
+        self._aruco_pill.setText(short)
         low = msg.lower()
-        if "follow: off" in low:
-            self._follow_pill.set_kind(Pill.KIND_NEUTRAL)
-            if self._follow_start_btn is not None:
-                self._follow_start_btn.setEnabled(True)
-            if self._follow_stop_btn is not None:
-                self._follow_stop_btn.setEnabled(False)
-        elif "lost target" in low or "brake on" in low:
-            self._follow_pill.set_kind(Pill.KIND_WARN)
-            if self._follow_start_btn is not None:
-                self._follow_start_btn.setEnabled(True)
-            if self._follow_stop_btn is not None:
-                self._follow_stop_btn.setEnabled(False)
-        elif "lost" in low or "brake" in low:
-            self._follow_pill.set_kind(Pill.KIND_WARN)
+        if "aruco: off" in low:
+            self._aruco_pill.set_kind(Pill.KIND_NEUTRAL)
+            if self._aruco_start_btn is not None:
+                self._aruco_start_btn.setEnabled(True)
+            if self._aruco_stop_btn is not None:
+                self._aruco_stop_btn.setEnabled(False)
+        elif "brake on" in low or "unavailable" in low:
+            self._aruco_pill.set_kind(Pill.KIND_WARN)
+            if self._aruco_start_btn is not None:
+                self._aruco_start_btn.setEnabled(True)
+            if self._aruco_stop_btn is not None:
+                self._aruco_stop_btn.setEnabled(False)
+        elif "arrived" in low:
+            self._aruco_pill.set_kind(Pill.KIND_OK)
+        elif "no marker" in low or "brake" in low:
+            self._aruco_pill.set_kind(Pill.KIND_WARN)
         else:
-            self._follow_pill.set_kind(Pill.KIND_OK)
-        if not self._follow.is_active():
-            if self._follow_start_btn is not None:
-                self._follow_start_btn.setEnabled(True)
-            if self._follow_stop_btn is not None:
-                self._follow_stop_btn.setEnabled(False)
+            self._aruco_pill.set_kind(Pill.KIND_OK)
+        if not self._aruco_follow.is_active():
+            if self._aruco_start_btn is not None:
+                self._aruco_start_btn.setEnabled(True)
+            if self._aruco_stop_btn is not None:
+                self._aruco_stop_btn.setEnabled(False)
 
     # ---------- helpers ----------
 
