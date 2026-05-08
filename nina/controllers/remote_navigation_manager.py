@@ -229,9 +229,11 @@ class RemoteNavigationManager:
         self._close_port()
         raise RuntimeError(
             f"Bridge at {self.config.serial_port} did not reply to PING "
-            f"within {self.config.connect_timeout_sec:.1f}s. Is "
-            "motor_bridge.py running on the Pi? "
-            "(`sudo systemctl status motor-bridge`)"
+            f"within {self.config.connect_timeout_sec:.1f}s. "
+            "If JYQDs are wired to this Jetson (no companion UART bridge), "
+            "set NINA_NAV_MODE=local. "
+            "Otherwise ensure motor_bridge.py is running on the link "
+            "(e.g. `sudo systemctl status motor-bridge` on the bridge host)."
         )
 
     def _reset_pi_motor_bridge_after_connect(self) -> None:

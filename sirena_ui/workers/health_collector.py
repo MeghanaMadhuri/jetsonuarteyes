@@ -358,9 +358,22 @@ def _drive_row(service: NinaService) -> HealthRow:
     # _do_init task). That's normal during the first ~second after the
     # operator opens the Drive tab; reporting WARN is honest because
     # the user can't actually drive yet.
+    nav_mode = "local"
+    remote_port = "/dev/ttyUSB0"
+    nav = getattr(service.settings, "navigation", None)
+    if nav is not None:
+        nav_mode = (getattr(nav, "mode", None) or "local").strip().lower()
+        remote_port = getattr(
+            nav, "remote_serial_port", remote_port
+        ) or remote_port
+    if nav_mode == "remote":
+        backend = f"UART bridge {remote_port}"
+    else:
+        backend = "Jetson GPIO (NINA_NAV_MODE=local)"
+    suffix = f" — {backend}"
     return HealthRow(
         "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
-        msg or "initialising", STATUS_WARN,
+        (msg or "initialising") + suffix, STATUS_WARN,
     )
 
 

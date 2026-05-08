@@ -82,7 +82,7 @@ class NinaService:
         Created on first access so the GUI doesn't pay the GPIO /
         serial-link cost until the user actually navigates to the
         Drive screen. The navigation manager (local Jetson GPIO or
-        remote Pi serial bridge) is chosen by the
+        optional legacy UART motor bridge) is chosen by the
         `nina.controllers.navigation_factory.build_navigation_manager`
         factory based on `NavigationSettings.mode`; both implement the
         same public surface so the rest of the worker is identical.
@@ -95,6 +95,8 @@ class NinaService:
             self._drive = DriveController(
                 nav_manager=nav_manager,
                 default_speed_percent=None,
+                navigation_mode=nav_settings.mode,
+                remote_serial_port=nav_settings.remote_serial_port,
             )
         return self._drive
 

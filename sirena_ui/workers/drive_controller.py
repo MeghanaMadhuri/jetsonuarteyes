@@ -335,6 +335,8 @@ class DriveController(QObject):
         *,
         nav_manager: Optional[NavigationManagerLike] = None,
         default_speed_percent: Optional[int] = None,
+        navigation_mode: str = "local",
+        remote_serial_port: Optional[str] = None,
     ) -> None:
         """Construct the Qt-side facade.
 
@@ -351,6 +353,10 @@ class DriveController(QObject):
              `initialize()` instead of constructing one. Use this from
              `NinaService` when `NINA_NAV_MODE=remote`.
 
+        ``navigation_mode`` / ``remote_serial_port`` mirror
+        ``NavigationSettings`` so the Drive pill and logs describe
+        Jetson GPIO vs legacy UART bridge honestly.
+
         `default_speed_percent` is only needed when using mode (2),
         because we can't read it from a NavigationConfig in that case.
         Defaults to 8% (matches `NavigationConfig.default_speed_percent` /
@@ -362,6 +368,8 @@ class DriveController(QObject):
         self._config = config or NavigationConfig(pins=DEFAULT_PINS)
         self._nav: Optional[NavigationManagerLike] = None
         self._init_attempted = False
+        self._navigation_mode = (navigation_mode or "local").strip().lower()
+        self._remote_serial_port = (remote_serial_port or "").strip() or None
 
         if default_speed_percent is not None:
             initial_speed = _clamp_speed(default_speed_percent)
@@ -386,6 +394,7 @@ class DriveController(QObject):
             "driver_message": "",
             "invert_left": initial_invert_left,
             "invert_right": initial_invert_right,
+            "navigation_mode": self._navigation_mode,
         }
 
         # Last (left_dir, left_speed, right_dir, right_speed) that was
@@ -789,10 +798,15 @@ class DriveController(QObject):
             # is brake engaged + PWM 0, which is what initialize()
             # leaves us in. Make that explicit anyway.
             self._nav.engage_brake()
+            if self._navigation_mode == "remote":
+                port = self._remote_serial_port or "serial"
+                drv_msg = f"BLDC L+R — motor bridge ({port})"
+            else:
+                drv_msg = "BLDC L+R — Jetson GPIO"
             with self._lock:
                 self._state["connected"] = True
-                self._state["driver_message"] = "BLDC L+R connected"
-            log.info("DriveController: BLDC drivers connected")
+                self._state["driver_message"] = drv_msg
+            log.info("DriveController: BLDC drivers connected (%s)", drv_msg)
         except Exception as exc:
             self._nav = None
             with self._lock:

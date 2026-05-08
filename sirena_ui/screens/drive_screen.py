@@ -499,8 +499,11 @@ class DriveScreen(QWidget):
                 QMessageBox.warning(
                     self,
                     "Drive not ready",
-                    "BLDC did not connect in time. Check the link / Pi bridge, "
-                    "wait for the green connected pill, then try Straight again.",
+                    "BLDC did not connect in time. For Jetson-wired JYQDs, "
+                    "confirm NINA_NAV_MODE=local, header PWM (jetson-io), and "
+                    "wiring. Legacy UART bridge mode needs NINA_NAV_MODE=remote "
+                    "and motor_bridge on the link. Wait for the green pill, then "
+                    "try Straight again.",
                 )
                 self._restore_after_straight_test()
                 return
@@ -816,7 +819,7 @@ class DriveScreen(QWidget):
 
         message = state.get("driver_message", "")
         if state["connected"]:
-            self._conn_pill.setText(message or "BLDC L+R connected")
+            self._conn_pill.setText(message or "BLDC connected")
             self._conn_pill.set_kind(Pill.KIND_OK)
         elif message and message.startswith("Simulation"):
             # GPIO backend missing - dev mode; show a warn pill so the
