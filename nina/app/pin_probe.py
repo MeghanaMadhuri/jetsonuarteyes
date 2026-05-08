@@ -14,21 +14,22 @@ touched. The operator probes the multimeter at one point at a time and
 correlates the printed "now HIGH/now LOW" lines with the reading.
 
 Usage:
-    # Probe LEFT direction pin (default L_DIR = BCM 22 = physical pin 15)
-    python3 -m nina.app.pin_probe --pin 22
+    # Production LEFT ZF / L-DIR (BCM 6 = physical pin 31)
+    python3 -m nina.app.pin_probe --pin 6
 
-    # Probe RIGHT direction pin (default R_DIR = BCM 12 = physical pin 32)
-    python3 -m nina.app.pin_probe --pin 12
+    # Production RIGHT ZF / R-DIR (BCM 23 = physical pin 16)
+    python3 -m nina.app.pin_probe --pin 23
 
-    # Faster cadence for scope work
-    python3 -m nina.app.pin_probe --pin 22 --period 0.5
+    # LEFT speed VR uses BCM 12 (physical 32) — enable pwm0 in jetson-io first
+    python3 -m nina.app.pin_probe --pin 12 --period 0.5
 
 Stop with Ctrl-C; the pin is left LOW on exit.
 
 What to do with the readings:
 
-    A) Probe AT THE JETSON HEADER (push the probe directly onto pin 15
-       or pin 32) while the tool is running.
+    A) Probe AT THE JETSON HEADER (push the probe onto the physical pin
+       that matches your BCM — see ``jetson_orin_nano_board_pin`` in
+       ``navigation_manager``) while the tool is running.
        - If you see ~3.3 V during HIGH and ~0 V during LOW: the Jetson
          is fine. Move probe to (B).
        - If you see a constant voltage that doesn't toggle: the Jetson
@@ -52,19 +53,10 @@ import os
 import sys
 import time
 
+from nina.controllers.navigation_manager import jetson_orin_nano_board_pin
+
 
 log = logging.getLogger("nina.pin_probe")
-
-
-_PHYSICAL_BY_BCM = {
-    # Subset of the 40-pin header most likely to be probed; only the
-    # pins we use for navigation. Add more if the operator picks an
-    # exotic pin.
-    4: 7, 5: 29, 6: 31, 7: 26, 8: 24, 9: 21, 10: 19, 11: 23,
-    12: 32, 13: 33, 14: 8, 15: 10, 16: 36, 17: 11, 18: 12,
-    19: 35, 20: 38, 21: 40, 22: 15, 23: 16, 24: 18, 25: 22,
-    26: 37, 27: 13,
-}
 
 
 def main() -> int:
@@ -73,7 +65,7 @@ def main() -> int:
         "--pin",
         type=int,
         required=True,
-        help="BCM pin number to toggle (e.g. 22 for left ZF, 12 for right ZF).",
+        help="BCM GPIO to toggle (e.g. 6 = production L-DIR, 23 = R-DIR).",
     )
     parser.add_argument(
         "--period",
@@ -95,7 +87,8 @@ def main() -> int:
     )
 
     pin = args.pin
-    physical = _PHYSICAL_BY_BCM.get(pin, "?")
+    board_n = jetson_orin_nano_board_pin(pin)
+    physical = board_n if board_n is not None else "?"
     print(
         "\n--------------------------------------------------\n"
         f"  Pin probe: BCM {pin}  (physical pin {physical})\n"

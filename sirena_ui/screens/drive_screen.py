@@ -885,7 +885,18 @@ class DriveScreen(QWidget):
 
         if state["connected"]:
             self._conn_pill.setText(message_raw or "BLDC connected")
-            self._conn_pill.setToolTip("")
+            self._conn_pill.setToolTip(
+                "Software ready: navigation backend initialised (Jetson GPIO/PWM or bridge).\n"
+                "This does not prove the hubs spin — still need motor supply, EL/DIR/VR wiring, "
+                "and Brake OFF before D-pad / Straight sends torque.\n\n"
+                "Same stack as the GUI, from the repo root:\n"
+                "  PYTHONPATH=. python3 -m nina.app.main nav-bridge-ping\n"
+                "  PYTHONPATH=. python3 -m nina.app.main nav-forward --speed 20 --hold 2\n"
+                "Local wiring twitch (multimeter / scope on PWM VR):\n"
+                "  PYTHONPATH=. python3 -m nina.app.main nav-test-pin --pin 12 --mode pwm "
+                "--duty 15 --hold 3"
+                "\n(use your configured left-PWM BCM from NINA_NAV_* if not 12)"
+            )
             self._conn_pill.set_kind(Pill.KIND_OK)
         elif message_raw:
             self._conn_pill.setText(display_msg or "BLDC error")

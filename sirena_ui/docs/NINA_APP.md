@@ -158,9 +158,9 @@ doesn't expose them as plain GPIO — see notes below):
 > carrier (same alt-function-claim class as L-EL above). The JYQD
 > reads 1.5 V as ambiguous and locks the left wheel's direction to
 > whichever side of its threshold it last saw — the wheel can never
-> reverse. BCM 6 / pin 31 is the workaround. Note BCM 6 collides with
-> the default HC-SR04 rear-right TRIG channel; if you wire that
-> ultrasonic sensor, override either pin via env var.
+> reverse. BCM 6 / pin 31 is the workaround. HC-SR04 **rear_right** TRIG
+> defaults to **BCM 27** so it does not collide with L-DIR; override with
+> `NINA_HCSR04_RR_TRIG` if your harness differs.
 
 Both PWM pins must be enabled once via
 `sudo /opt/nvidia/jetson-io/jetson-io.py` (Configure 40-pin Header →
@@ -815,7 +815,7 @@ export NINA_LIDAR_BAUD=115200
 export NINA_HCSR04_FL_TRIG=19 NINA_HCSR04_FL_ECHO=9
 export NINA_HCSR04_FR_TRIG=7  NINA_HCSR04_FR_ECHO=8
 export NINA_HCSR04_RL_TRIG=11 NINA_HCSR04_RL_ECHO=4
-export NINA_HCSR04_RR_TRIG=6  NINA_HCSR04_RR_ECHO=26
+export NINA_HCSR04_RR_TRIG=27 NINA_HCSR04_RR_ECHO=26
 # NINA_HCSR04_DISABLE=1 to skip the ring entirely
 
 # IR cliff

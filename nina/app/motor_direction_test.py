@@ -53,6 +53,7 @@ from pathlib import Path
 from nina.config.settings import load_settings
 from nina.controllers.navigation_manager import (
     DEFAULT_PINS,
+    jetson_orin_nano_board_pin,
     NavigationConfig,
     NavigationManager,
 )
@@ -201,12 +202,16 @@ def main() -> int:
         if args.side in ("right", "both"):
             _exercise_side(nav, NavigationManager.SIDE_RIGHT, args.speed, args.duration)
 
+        def _phys(bcm: int) -> str:
+            board = jetson_orin_nano_board_pin(bcm)
+            return f"physical {board}" if board is not None else "BOARD n/a — check BCM override"
+
         print(
             "\nFinished. If a wheel STILL spins the same way for both phases:\n"
             "  1. With a multimeter on the JYQD's ZF terminal, check that\n"
             "     the voltage actually toggles between phases (~3.3 V vs 0 V).\n"
-            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} (pin 22).\n"
-            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} (pin 15).\n"
+            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} ({_phys(nav.config.pins.l_dir)}).\n"
+            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} ({_phys(nav.config.pins.r_dir)}).\n"
             "  2. If the JYQD ZF pad doesn't track the Jetson pin, the\n"
             "     wire is broken or running through a level shifter that\n"
             "     is mangling the signal - fix the harness.\n"

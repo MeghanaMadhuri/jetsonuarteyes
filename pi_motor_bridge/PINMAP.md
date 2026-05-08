@@ -1,93 +1,80 @@
-# JYQD <-> GPIO pin map (historical Pi + signal reference for Jetson)
+# JYQD ↔ Jetson Orin Nano (Nina production wiring)
 
-**Production (Jetson Orin Nano):** connect each **JYQD** screw per the
-**Function** column below using **BCM numbers from**
-`nina/controllers/navigation_manager.py` **`DEFAULT_PINS`** (several
-differ from the Pi BCM column — see code comments A/B/C). This file’s
-**Pi BCM** columns match `pi_motor_bridge/navigation_bldc.py` when a
-**Raspberry Pi** still runs `motor_bridge.py` (**legacy**).
+This document is the **canonical harness** for driving **2× JYQD V7.3E2**
+controllers from a **Jetson Orin Nano** 40-pin header. BCM numbers and
+physical pins match `nina.controllers.navigation_manager.DEFAULT_PINS` and
+`Jetson.GPIO`’s **Orin Nano** table (same carrier mapping as Orin NX in
+[NVIDIA/jetson-gpio](https://github.com/NVIDIA/jetson-gpio)).
 
-## As-built harness (40-pin physical — one deployment)
+**One-time setup:** enable hardware PWM on the header —  
+`sudo /opt/nvidia/jetson-io/jetson-io.py` → Configure 40-pin Header → manual →
+enable **`pwm0`** (pin 32) and **`pwm2`** (pin 33) → save → reboot.
 
-The following **physical pin numbers** (1–40 J12-style header) and BCM GPIO
-names match a **wired** Nina unit where labels mirror the screw or harness
-names. Map into `NavigationManager` via `NINA_NAV_*` (defaults in code may
-still target a different Orin carrier—set these env vars on the Jetson if
-this is your loom).
+Leave each JYQD **Signal** screw **unconnected**.
 
-| Harness / screw role | Phys pin | BCM | `NavigationManager` | Env override |
-|----------------------|---------:|----:|---------------------|--------------|
-| LEL (left enable)    | 12 | 18 | `l_en`  | `NINA_NAV_L_EN=18` |
-| REL (right enable)   | 19 | 10 | `r_en`  | `NINA_NAV_R_EN=10` |
-| LZF (left direction) | 15 | 22 | `l_dir` | `NINA_NAV_L_DIR=22` |
-| RZF (right direction)| 32 | 12 | `r_dir` | `NINA_NAV_R_DIR=12` |
-| Left VR (PWM) **must use Jetson HW PWM** | **32** | **12** | `pwm_l` | default or `NINA_NAV_L_PWM=12` |
-| Right VR (PWM) **must use Jetson HW PWM** | **33** | **13** | `pwm_r` | default or `NINA_NAV_R_PWM=13` |
-| GND                  | 34, 39 | — | — | — |
+---
 
-**Jetson Orin Nano:** `Jetson.GPIO` only drives speed (VR) reliably on **BCM 12
-& 13** after `jetson-io.py` enables `pwm0` / `pwm2`. If your harness previously
-brought VR to other pads (e.g. phys 18 / 13 as “signal” lines), **run those
-two VR wires to physical 32 and 33** (or add jumpers). Keep EL/DIR mapping via
-`NINA_NAV_L_EN`, `NINA_NAV_L_DIR`, etc. Setting `NINA_NAV_L_PWM=24` (or other
-non-PWM BCMs) will usually **fail BLDC init** in the GUI.
+## Production pin table (Jetson → JYQD)
 
-## Per-wheel signals
+| Role | BCM | Physical (40-pin) | JYQD terminal | Env override |
+|------|-----|-------------------|---------------|--------------|
+| Left EL | 24 | 18 | EL | `NINA_NAV_L_EN` |
+| Left Z/F | 6 | 31 | Z/F | `NINA_NAV_L_DIR` or `NINA_NAV_L_ZF` |
+| Left VR (PWM) | **12** | **32** | VR | `NINA_NAV_L_PWM` |
+| Right EL | 10 | 19 | EL | `NINA_NAV_R_EN` |
+| Right Z/F | 23 | 16 | Z/F | `NINA_NAV_R_DIR` or `NINA_NAV_R_ZF` |
+| Right VR (PWM) | **13** | **33** | VR | `NINA_NAV_R_PWM` |
+| GND | — | e.g. **39** / **34** | GND | — |
+| Logic 5 V | — | **2** or **4** | 5 V | — |
 
-### Left wheel (JYQD-L)
+**VR rule:** Speed inputs **must** use **BCM 12 & 13** (pins 32 & 33) on this
+stack — that is where `Jetson.GPIO` exposes stable hardware PWM after
+`jetson-io`. Wiring VR to other BCMs and only changing `NINA_NAV_*_PWM`
+typically **fails BLDC init** in the GUI.
 
-| JYQD-L screw | Function          | Pi BCM | Pi physical pin |
-|--------------|-------------------|--------|-----------------|
-| EL           | enable / brake     | 18     | 12              |
-| Z/F          | direction          | 25     | 22              |
-| VR           | PWM speed input    | 12     | 32 (PWM0)       |
-| 5V           | logic supply       | -      | 2 or 4          |
-| GND          | logic ground       | -      | 39              |
-| Signal       | (leave unconnected) | -     | -               |
-| VCC (24 V)   | motor supply       | -      | external battery |
+Optional signals implemented in the same module:
 
-### Right wheel (JYQD-R)
+| Role | BCM | Physical | Notes |
+|------|-----|----------|-------|
+| Status RED | 21 | 40 | Active-low LED helper |
+| Status GREEN | 20 | 38 | Active-low LED helper |
+| Status BLUE | 16 | 36 | Active-low LED helper |
+| E-stop 1 | 17 | 11 | Input only (read when wired) |
+| E-stop 2 | 5 | 29 | Input only |
 
-| JYQD-R screw | Function          | Pi BCM | Pi physical pin |
-|--------------|-------------------|--------|-----------------|
-| EL           | enable / brake     | 10     | 19              |
-| Z/F          | direction          | 22     | 15              |
-| VR           | PWM speed input    | 13     | 33 (PWM1)       |
-| 5V           | logic supply       | -      | 2 or 4          |
-| GND          | logic ground       | -      | 34              |
-| Signal       | (leave unconnected) | -     | -               |
-| VCC (24 V)   | motor supply       | -      | external battery |
+Motor **high voltage** is **not** taken from the 40-pin header — connect the
+JYQD **VCC** terminals to your **24 V** battery bus per your mechanical design.
 
-## Status LED (optional, RGB common-anode)
+---
 
-| LED  | Pi BCM | Pi physical pin |
-|------|--------|-----------------|
-| RED  | 21     | 40              |
-| GREEN| 20     | 38              |
-| BLUE | 16     | 36              |
+## Raspberry Pi reference column (legacy bridge only)
 
-The LED helpers in `navigation_bldc.py` are active-low (write 0 to
-turn the LED on).
+If a **Raspberry Pi** runs `pi_motor_bridge/motor_bridge.py` and the Jetson uses
+`NINA_NAV_MODE=remote`, the Pi firmware may still use the **original** BCM map
+(BCM 18 / 25 / 22 for some EL/DIR lines). That map is **not** identical to the
+Jetson `DEFAULT_PINS` above — see `pi_motor_bridge/navigation_bldc.py`.
 
-## Optional E-stop inputs
+| JYQD-L screw | Function | Pi BCM | Pi physical |
+|--------------|----------|--------|-------------|
+| EL | enable | 18 | 12 |
+| Z/F | direction | 25 | 22 |
+| VR | PWM speed | 12 | 32 |
 
-| Signal     | Pi BCM | Pi physical pin |
-|------------|--------|-----------------|
-| ESP1       | 17     | 11              |
-| ESP2       | 5      | 29              |
+| JYQD-R screw | Function | Pi BCM | Pi physical |
+|--------------|----------|--------|-------------|
+| EL | enable | 10 | 19 |
+| Z/F | direction | 22 | 15 |
+| VR | PWM speed | 13 | 33 |
 
-These are read-only; the bridge does not currently act on them. Wire
-them if/when you have a physical E-stop switch.
+## Direction polarity (software convention)
 
-## Direction polarity
+- Left forward → **L_DIR HIGH**
+- Right forward → **R_DIR LOW** (mirrored vs left)
 
-`control_speed("left",  "enable", speed, "front")` -> `L_DIR HIGH`
-`control_speed("right", "enable", speed, "front")` -> `R_DIR LOW`  (mirrored)
+If a wheel runs backward from expectation: **`NINA_NAV_INVERT_LEFT=1`** or
+**`NINA_NAV_INVERT_RIGHT=1`** on the Jetson.
 
-If a wheel spins the wrong way after you swap a motor:
+## Ultrasonic ring collision
 
-* preferred: set `NINA_NAV_INVERT_LEFT=1` (or RIGHT) on the **Jetson**
-  side - the Pi stays unchanged.
-* alternatively: flip the polarity in `control_speed()` for the
-  affected side. (This is the only place in this directory that
-  encodes polarity.)
+Production **L-DIR** is **BCM 6**. The HC-SR04 driver defaults **rear_right TRIG**
+to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).

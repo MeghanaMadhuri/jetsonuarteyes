@@ -5,8 +5,10 @@ This module is a clean port of the proven Sirena Raspberry Pi reference
 build (`/Downloads/navigation_bldc.py` + `motor_control.py` from the Pi
 prototype) onto the Jetson Orin Nano. It drives 2x JYQD_V7.3E2 BLDC
 drivers (one per wheel) with the **exact same pin map and write
-sequence** as the RPi build - the Orin Nano J12 header is Pi-compatible,
-so every BCM number used on the RPi maps to the same physical pin here.
+sequence** as the RPi build - the Orin Nano J12 header shares the same
+40-pin **layout** as the Raspberry Pi header; **BCM numbers still refer to the
+same physical pins**, though Nina's **production EL/DIR BCM choices** differ from
+the original Pi firmware on several lines (see Notes A–C below).
 
 Why a 1:1 port and not a clever Jetson rewrite:
   Earlier Jetson builds tried to be smart about the JYQD ("VR with
@@ -30,9 +32,9 @@ What the RPi reference says about JYQD V7.3E2 in this build:
 - Per-side hardware PWM. L-PWM on BCM 12 (pin 32, PWM0) and R-PWM on
   BCM 13 (pin 33, PWM2). True differential drive is supported.
 
-Pin map (mostly mirrors the RPi reference; three pads remapped
-because the Orin Nano image / carrier doesn't expose them as plain
-GPIO - see notes A, B, C below):
+Pin map — **canonical Nina production wiring** for Jetson Orin Nano (mostly
+mirrors the RPi reference; three pads remapped because the Orin Nano image /
+carrier doesn't expose them as plain GPIO - see notes A, B, C below):
 
     Function       BCM    Physical pin    Notes
     L-EL           24     18              digital out  (see note B below)
@@ -249,6 +251,41 @@ DEFAULT_PINS = NavigationPins(
     estop_1=17,
     estop_2=5,
 )
+
+
+# 40-pin BOARD index for BCM GPIO numbers on Jetson Orin Nano (Jetson.GPIO uses the
+# same JETSON_ORIN_NX_PIN_DEFS table for ORIN_NANO). Used by diagnostics and docs.
+JETSON_ORIN_NANO_BOARD_BY_BCM: dict[int, int] = {
+    4: 7,
+    5: 29,
+    6: 31,
+    7: 26,
+    8: 24,
+    9: 21,
+    10: 19,
+    11: 23,
+    12: 32,
+    13: 33,
+    14: 8,
+    15: 10,
+    16: 36,
+    17: 11,
+    18: 12,
+    19: 35,
+    20: 38,
+    21: 40,
+    22: 15,
+    23: 16,
+    24: 18,
+    25: 22,
+    26: 37,
+    27: 13,
+}
+
+
+def jetson_orin_nano_board_pin(bcm: int) -> int | None:
+    """Return the 40-pin header number for ``bcm``, or ``None`` if not in the table."""
+    return JETSON_ORIN_NANO_BOARD_BY_BCM.get(bcm)
 
 
 class NavigationManager:

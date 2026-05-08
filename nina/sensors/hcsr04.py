@@ -11,7 +11,7 @@ Default mounting on Nina (BCM pin numbers, override via env vars):
     front_left   trig=BCM19  echo=BCM 9
     front_right  trig=BCM 7  echo=BCM 8
     rear_left    trig=BCM11  echo=BCM 4
-    rear_right   trig=BCM 6  echo=BCM26
+    rear_right   trig=BCM27  echo=BCM26
 
 These pin choices avoid the navigation pins for Nina's Orin Nano
 harness (see `nina.controllers.navigation_manager` for why a few of
@@ -24,10 +24,10 @@ Orin Nano device tree or are unusable as plain GPIO on this carrier):
     - Status LEDs      :  BCM 16, 20, 21
     - E-stop           :  BCM 5, 17
 
-WARNING: BCM 6 is now used by L-DIR (see Note C in the navigation
-module). The default `rear_right` TRIG channel below collides with it.
-If you actually wire a rear-right HC-SR04, override that channel via
-env var (e.g. `NINA_HCSR04_REAR_RIGHT_TRIG=27`) or move it elsewhere.
+Production navigation reserves **BCM 6** for left JYQD direction (Z/F).
+The default `rear_right` TRIG is therefore **BCM 27** (physical pin 13)
+to avoid that collision. Override with `NINA_HCSR04_RR_TRIG` if your
+loom uses a different pad.
 
 The JYQD "Signal" screw is intentionally NOT driven on this build (the
 RPi reference proves the chip commutates fine with Signal floating), so
@@ -95,7 +95,7 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     ),
     _Channel(
         position="rear_right",
-        trig=_env_int("NINA_HCSR04_RR_TRIG", 6),
+        trig=_env_int("NINA_HCSR04_RR_TRIG", 27),
         echo=_env_int("NINA_HCSR04_RR_ECHO", 26),
     ),
 )

@@ -216,8 +216,8 @@ Do this **on the Jetson** before or in parallel with §5.3 GUI install.
 1. Flash **JetPack 5.x or 6.x**, create the desktop user, `sudo apt update && sudo apt upgrade -y`.
 2. Add yourself to **`dialout`**: `sudo usermod -aG dialout $USER && newgrp dialout`.
 3. Run **`sudo /opt/nvidia/jetson-io/jetson-io.py`**, enable the header functions
-   needed for **`nina.controllers.navigation_manager.DEFAULT_PINS`** (PWM0/1 on
-   BCM **12** / **13**, and the GPIO outputs used for EL/DIR/status — BCM **6**,
+   needed for **`nina.controllers.navigation_manager.DEFAULT_PINS`** (**pwm0** /
+   **pwm2** on BCM **12** / **13**, and the GPIO outputs used for EL/DIR/status — BCM **6**,
    **10**, **16**, **20**, **21**, **23**, **24**, **5**, **17**, etc.). Save and reboot
    if the tool prompts you.
 4. **Power off.** Wire each **JYQD** EL / direction / PWM / 5 V / GND to the
