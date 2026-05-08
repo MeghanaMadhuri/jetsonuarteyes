@@ -40,20 +40,13 @@ Environment=NINA_UI_FULLSCREEN=1
 # it here too so a stale env from the user session can't override it.
 Environment=QT_QPA_PLATFORM=xcb
 
-# BLDC / JYQD: drive GPIOs on this Jetson (default). Wire per
-# nina/controllers/navigation_manager.py DEFAULT_PINS + PINMAP signal
-# names in pi_motor_bridge/PINMAP.md. Legacy Pi offload:
-#   NINA_NAV_MODE=remote NINA_NAV_REMOTE_PORT=/dev/ttyTHS1 ...
-# Override via: systemctl --user edit nina-ui-kiosk
-Environment=NINA_NAV_MODE=local
-
-# Per-wheel polarity correction. The current Nina build has its left
-# BLDC wired the opposite way around from the right one - without this
-# flag, "Forward" spins the wheels in opposite directions instead of
-# both forward. Flip the matching INVERT_RIGHT instead (or both) on a
-# bot whose wiring is the other way around.
+# BLDC / JYQD: drive GPIOs on this Jetson (default). Optional system-wide
+# pin overrides (same as nina-link): /etc/nina-link/navigation.env
+# Legacy Pi UART: systemctl --user edit nina-ui-kiosk → NINA_NAV_MODE=remote
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
+EnvironmentFile=-/etc/nina-link/navigation.env
+Environment=NINA_NAV_MODE=local
 
 # Lidar selection. Current builds ship with the Slamtec RPLIDAR S2E
 # (Ethernet/UDP, ~30 m). Override to `a1` for legacy bots running

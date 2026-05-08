@@ -106,11 +106,12 @@ Wants=network-online.target
 Type=simple
 # Must exist at systemd parse time; PYTHONPATH + ExecStart pin the repo (avoid /opt vs home mismatches).
 WorkingDirectory=/
-# BLDC: Jetson GPIO direct (same as desktop kiosk). /etc/nina-link/navigation.env overrides.
-Environment=NINA_NAV_MODE=local
+# BLDC: Jetson GPIO direct. navigation.env may set pins; NINA_NAV_MODE=local
+# is re-asserted after the file so stale remote+ttyTHS1 cannot override.
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
+Environment=NINA_NAV_MODE=local
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
