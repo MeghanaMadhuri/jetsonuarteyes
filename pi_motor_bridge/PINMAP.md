@@ -106,11 +106,12 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
 1. **Motor supply:** JYQD **VCC / battery** (e.g. 24 V) must be present; 5 V from
    the 40-pin header is **logic only** — without pack voltage the hubs will not
    turn even if GPIO looks fine.
-2. **Minimal GPIO path:**  
+2. **Minimal straight crawl (matches `forward()` start, not the full `nav-forward` stop/nudge tail):**  
    `PYTHONPATH=. python3 -m nina.app.main nav-diag-forward --speed 60 --hold 4`  
-   This skips `stop()` + straight-line nudge. If hubs still do not spin, the
-   problem is almost certainly **wiring or carrier pin routing**, not the full
-   `nav-forward` sequence.
+   Uses `_start_both_wheels` (kick + DIR settle). If hubs still do not spin, the
+   problem is almost certainly **wiring, EL/VR, 24 V, or carrier pin routing**.  
+   To drop the optional opposite-direction preload pulse:  
+   `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` for that run.
 3. **PWM at the screw:**  
    `python3 -m nina.app.main nav-test-pin --pin 12 --mode pwm --duty 50 --hold 4`  
    (use your configured left-PWM BCM if not 12). Scope or meter **VR** at the

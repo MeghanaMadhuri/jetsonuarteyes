@@ -188,9 +188,10 @@ def main() -> None:
     nav_diag = sub.add_parser(
         "nav-diag-forward",
         help=(
-            "Bench: hold both wheels forward with a minimal GPIO path (no stop/nudge). "
-            "Use when nav-forward runs but hubs do not spin — if this also fails, "
-            "check 24 V, wiring, and custom-carrier pin routing."
+            "Bench: symmetric forward with the same start path as normal forward "
+            "(kick, DIR gap, PWM reassert). If hubs still do not spin, check 24 V "
+            "and wiring. Use NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0 to skip the "
+            "straight preload nudge."
         ),
     )
     nav_diag.add_argument(

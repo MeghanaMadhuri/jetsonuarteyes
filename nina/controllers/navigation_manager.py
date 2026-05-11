@@ -311,7 +311,7 @@ class NavigationManager:
       emergency_stop()             # PWM=0, EL not armed (active-high: LOW)
       engage_brake() / release_brake()
       set_status(mode)
-      diag_symmetric_forward(speed_percent, hold_sec)  # bench: raw EL/DIR/PWM
+      diag_symmetric_forward(speed_percent, hold_sec)  # bench: sym forward + hold
       diag_arm_forward_pwm_zero_hold(hold_sec)  # bench: EL+DIR forward, VR 0 — probe screws
     """
 
@@ -398,22 +398,34 @@ class NavigationManager:
         )
 
     def diag_symmetric_forward(self, speed_percent: int, hold_sec: float) -> None:
-        """Bench: both wheels forward using only `_control_speed` (no `stop`/nudge).
+        """Bench: symmetric forward using the same wheel start path as `forward()`.
 
-        Use when `nav-forward` finishes but hubs do not move. If this still
-        produces no motion, check 24 V, JYQD wiring, and whether a **custom
-        carrier** routes Jetson.GPIO to different pads than the dev-kit table.
+        Historically this used `_control_speed` only and **skipped** the
+        `_start_both_wheels` path (DIR settle, breakaway kick, PWM reassert).
+        JYQDs on the bench often never left that state from rest. This method
+        now calls `_start_both_wheels` so behaviour matches a normal straight
+        crawl.
+
+        For the rawest electrical test (no straight-line nudge before crawl),
+        set ``NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0`` for this process.
+
+        If hubs still do not spin, check 24 V, JYQD wiring, and carrier pin
+        routing (see module notes / ``PINMAP.md``).
         """
         self._require_initialized()
         speed = max(0, min(100, int(speed_percent)))
         hold = max(0.0, float(hold_sec))
         log.info(
-            "diag_symmetric_forward: EL+DIR+PWM both forward %s%% for %ss",
+            "diag_symmetric_forward: same start as forward(), %s%% sym FWD %ss hold",
             speed,
             hold,
         )
-        self._control_speed(self.SIDE_LEFT, True, speed, self.DIR_FORWARD)
-        self._control_speed(self.SIDE_RIGHT, True, speed, self.DIR_FORWARD)
+        self._start_both_wheels(
+            left_dir=self.DIR_FORWARD,
+            left_speed=speed,
+            right_dir=self.DIR_FORWARD,
+            right_speed=speed,
+        )
         if hold > 0:
             time.sleep(hold)
 
