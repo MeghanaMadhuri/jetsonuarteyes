@@ -223,6 +223,10 @@ class NavigationConfig:
     pivot_turn_left_extra_pp: int = 6
     turn_left_prep_back_sec: float = 0.12
     turn_left_prep_fwd_sec: float = 0.12
+    # When True, EL is **active-low**: GPIO LOW arms the JYQD, HIGH disables it
+    # (default is active-high: HIGH armed, LOW disabled). Env:
+    # ``NINA_NAV_EL_ACTIVE_LOW=1``.
+    el_active_low: bool = False
 
 
 # Production Jetson Orin Nano defaults (same protocol as Pi reference;
@@ -302,8 +306,8 @@ class NavigationManager:
       turn_right(speed_percent=None, duration=None)
       drive_continuous(left_dir, right_dir, speed_percent=None, *, right_speed_percent=None)
       set_wheels(left_dir=, left_speed=, right_dir=, right_speed=)
-      stop()                       # PWM=0, EL stays HIGH (RPi-style soft stop)
-      emergency_stop()             # PWM=0, EL drops LOW (chip disabled)
+      stop()                       # PWM=0, EL stays armed (active-high: HIGH)
+      emergency_stop()             # PWM=0, EL not armed (active-high: LOW)
       engage_brake() / release_brake()
       set_status(mode)
       diag_symmetric_forward(speed_percent, hold_sec)  # bench: raw EL/DIR/PWM
@@ -368,12 +372,10 @@ class NavigationManager:
         self._backend.configure_pwm(pins.pwm_l, self.config.pwm_frequency_hz)
         self._backend.configure_pwm(pins.pwm_r, self.config.pwm_frequency_hz)
 
-        # Park: chip disabled (EL=LOW), DIR set to forward defaults,
-        # PWM=0. Mirrors the RPi behaviour: setup_gpio() leaves all
-        # outputs at 0; the first forward()/backward() call drives EL
-        # HIGH and sets a duty cycle.
-        self._backend.write(pins.l_en, 0)
-        self._backend.write(pins.r_en, 0)
+        # Park: chip disabled, DIR forward defaults, PWM=0. EL pin levels
+        # depend on ``el_active_low`` (see ``_el_gpio``).
+        self._backend.write(pins.l_en, self._el_gpio(armed=False))
+        self._backend.write(pins.r_en, self._el_gpio(armed=False))
         self._backend.write(pins.l_dir, 1)   # left forward = HIGH
         self._backend.write(pins.r_dir, 0)   # right forward = LOW (mirrored)
         # LEDs OFF (active-low; HIGH = off).
@@ -386,11 +388,12 @@ class NavigationManager:
             "NavigationManager initialized backend=%s "
             "L_EN=BCM%d L_DIR=BCM%d L_PWM=BCM%d "
             "R_EN=BCM%d R_DIR=BCM%d R_PWM=BCM%d "
-            "invert_left=%s invert_right=%s",
+            "invert_left=%s invert_right=%s el_active_low=%s",
             self._backend.name,
             pins.l_en, pins.l_dir, pins.pwm_l,
             pins.r_en, pins.r_dir, pins.pwm_r,
             self.config.invert_left_dir, self.config.invert_right_dir,
+            self.config.el_active_low,
         )
 
     def diag_symmetric_forward(self, speed_percent: int, hold_sec: float) -> None:
@@ -414,13 +417,17 @@ class NavigationManager:
             time.sleep(hold)
 
     def diag_arm_forward_pwm_zero_hold(self, hold_sec: float) -> None:
-        """Hold both drivers **armed**: EL HIGH, **forward** DIR, **PWM 0** (no torque).
+        """Hold both drivers **armed**: forward DIR, **PWM 0** (no torque).
 
         For multimeter checks at the JYQD **EL** and **Z/F** screws without hubs
-        spinning. Expected (Jetson GND, default polarity, no NINA_NAV_INVERT_*):
+        spinning. Expected (Jetson GND, default polarity, no NINA_NAV_INVERT_*)
+        when **EL is active-high** (default):
 
         - **Left:** EL ~3.3 V, Z/F ~3.3 V (forward = HIGH).
         - **Right:** EL ~3.3 V, Z/F ~0 V (forward = LOW, mirrored).
+
+        With ``NINA_NAV_EL_ACTIVE_LOW=1``, an armed driver holds **EL low**
+        (~0 V); parked / estop holds **EL high**.
         """
         self._require_initialized()
         hold = max(0.0, float(hold_sec))
@@ -585,11 +592,11 @@ class NavigationManager:
         )
 
     def stop(self) -> None:
-        """Soft stop matching the RPi reference: PWM=0, EL stays HIGH.
+        """Soft stop matching the RPi reference: PWM=0, EL stays **armed**.
 
         The JYQD samples DIR continuously, so direction changes work
         without dropping EL. `emergency_stop()` is the variant that
-        drops EL=LOW for a true chip-disabled state.
+        disables the driver (active-high EL: pin LOW; active-low EL: pin HIGH).
         """
         self._start_both_wheels(
             left_dir=self.DIR_FORWARD,
@@ -598,17 +605,20 @@ class NavigationManager:
             right_speed=0,
         )
         time.sleep(self.config.settle_delay_sec)
-        log.info("stop (EL=HIGH, PWM=0)")
+        log.info(
+            "stop (PWM=0, EL %s)",
+            "LOW (armed)" if self.config.el_active_low else "HIGH (armed)",
+        )
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
-        """Mirrors RPi `emergency_stop`: stop then drop EL=LOW on both sides.
+        """Mirrors RPi `emergency_stop`: PWM=0 then disable both drivers (EL not armed).
 
         When ``routine_shutdown=True`` (used from `shutdown()` only), logs at
         debug so CLI tools do not print a false-alarm "emergency" on every
         normal GPIO release.
         """
         if routine_shutdown:
-            log.debug("Parking BLDC drivers (EL low, PWM 0) before GPIO release")
+            log.debug("Parking BLDC drivers (EL disabled, PWM 0) before GPIO release")
         else:
             log.warning("EMERGENCY STOP requested")
         try:
@@ -638,8 +648,8 @@ class NavigationManager:
     def release_brake(self) -> None:
         """Logical 'brake off'. No-op for the RPi-mirror config.
 
-        EL stays HIGH whenever the manager is initialised; PWM=0 IS the
-        brake. Kept on the API so existing GUI / CLI callers don't need
+        JYQD has no separate brake pin; ``stop()`` leaves drivers armed with
+        PWM=0. Kept on the API so existing GUI / CLI callers don't need
         to change.
         """
         log.info("brake released (no-op; ready for next motion command)")
@@ -660,8 +670,14 @@ class NavigationManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _el_gpio(self, *, armed: bool) -> int:
+        """GPIO level for EL: ``armed`` True = driver should be enabled."""
+        if self.config.el_active_low:
+            return 0 if armed else 1
+        return 1 if armed else 0
+
     def _prepare_side_motion(self, side: str, direction: str) -> None:
-        """Arm one driver: EL HIGH, DIR set, PWM 0.
+        """Arm one driver: EL armed, DIR set, PWM 0.
 
         Used together with `_apply_side_pwm`: program both sides to
         their directions with zero torque first, then raise both duties
@@ -681,14 +697,14 @@ class NavigationManager:
             level = 1 if forward else 0
             if self._effective_invert_left():
                 level = 0 if level else 1
-            self._backend.write(pins.l_en, 1)
+            self._backend.write(pins.l_en, self._el_gpio(armed=True))
             self._backend.write(pins.l_dir, level)
             self._backend.set_duty(pins.pwm_l, 0.0)
         else:
             level = 0 if forward else 1
             if self._effective_invert_right():
                 level = 0 if level else 1
-            self._backend.write(pins.r_en, 1)
+            self._backend.write(pins.r_en, self._el_gpio(armed=True))
             self._backend.write(pins.r_dir, level)
             self._backend.set_duty(pins.pwm_r, 0.0)
 
@@ -991,7 +1007,7 @@ class NavigationManager:
             level = 1 if forward else 0
             if self._effective_invert_left():
                 level = 0 if level else 1
-            self._backend.write(pins.l_en, 1 if enable else 0)
+            self._backend.write(pins.l_en, self._el_gpio(armed=enable))
             self._backend.write(pins.l_dir, level)
             self._backend.set_duty(pins.pwm_l, duty)
         else:
@@ -999,7 +1015,7 @@ class NavigationManager:
             level = 0 if forward else 1
             if self._effective_invert_right():
                 level = 0 if level else 1
-            self._backend.write(pins.r_en, 1 if enable else 0)
+            self._backend.write(pins.r_en, self._el_gpio(armed=enable))
             self._backend.write(pins.r_dir, level)
             self._backend.set_duty(pins.pwm_r, duty)
 

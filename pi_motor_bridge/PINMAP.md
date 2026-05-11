@@ -79,6 +79,9 @@ Jetson `DEFAULT_PINS` above — see `pi_motor_bridge/navigation_bldc.py`.
 If a wheel runs backward from expectation: **`NINA_NAV_INVERT_LEFT=1`** or
 **`NINA_NAV_INVERT_RIGHT=1`** on the Jetson.
 
+Some JYQD harnesses treat **EL as active-low** (GPIO low = armed). For
+direct Jetson drive use **`NINA_NAV_EL_ACTIVE_LOW=1`** (local mode only).
+
 ## Ultrasonic ring collision
 
 Production **L-DIR** is **BCM 6**. The HC-SR04 driver defaults **rear_right TRIG**

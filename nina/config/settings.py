@@ -39,6 +39,10 @@ class NavigationSettings:
     and `invert_right_dir` apply to both modes - they live in the
     Jetson side regardless of who actually toggles GPIOs.
 
+    `el_active_low` applies only when ``mode='local'`` (Jetson drives EL).
+    Remote / Pi firmware continues to use its own EL polarity until changed
+    there.
+
     `start_kick_percent` / `start_kick_sec` apply when both wheels were
     at PWM 0 and a new command requests motion: each non-zero side
     briefly runs at at least the kick duty to overcome static friction,
@@ -74,6 +78,8 @@ class NavigationSettings:
     turn_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
+    # Local mode only: GPIO LOW arms JYQD EL (HIGH disables). Default is active-high.
+    el_active_low: bool = False
     start_kick_percent: int = 14
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
     # Local + remote: delay after DIR+EL before torque (local GPIO). Remote
@@ -267,6 +273,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
+        el_active_low=_env_bool("NINA_NAV_EL_ACTIVE_LOW", False),
         start_kick_percent=int(os.environ.get("NINA_NAV_START_KICK_PCT", "14")),
         start_kick_sec=min(
             NAV_START_KICK_SEC_MAX,

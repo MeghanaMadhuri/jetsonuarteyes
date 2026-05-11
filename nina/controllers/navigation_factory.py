@@ -28,6 +28,7 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP # default 6; symmetric +% both wheels turn_left
     NINA_NAV_TURN_LEFT_PREP_BACK_SEC # default 0.12; 0=skip straight-back prime
     NINA_NAV_TURN_LEFT_PREP_FWD_SEC  # default 0.12; 0=skip straight-fwd prime
+    NINA_NAV_EL_ACTIVE_LOW     # local only: GPIO LOW arms EL, HIGH disables
     NINA_NAV_SETTLE_SEC        # local default 0.1; remote default 0.25
     NINA_NAV_SPEED             # local default 8; remote default 13 (RPi TCP ref)
 """
@@ -92,6 +93,7 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
         turn_duration_sec=settings.turn_duration_sec,
         invert_left_dir=settings.invert_left_dir,
         invert_right_dir=settings.invert_right_dir,
+        el_active_low=settings.el_active_low,
         start_kick_percent=settings.start_kick_percent,
         start_kick_sec=settings.start_kick_sec,
         dir_pwm_gap_sec=settings.dir_pwm_gap_sec,

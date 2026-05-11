@@ -427,17 +427,28 @@ def main() -> None:
                     f"  Right: EL=BCM{pins.r_en}  Z/F=BCM{pins.r_dir}  "
                     f"VR=BCM{pins.pwm_r}"
                 )
+                print(
+                    f"  NINA_NAV_EL_ACTIVE_LOW={int(settings.navigation.el_active_low)} "
+                    f"(from env or default)"
+                )
             else:
                 print(
                     "Remote mode: Pi owns EL/DIR/PWM — use the "
                     "`pi_motor_bridge/PINMAP.md` **Raspberry Pi reference** "
                     "column at the JYQD screws."
                 )
-            print(
-                "Expected while held: Left EL high, Z/F high (forward); "
-                "Right EL high, Z/F low (forward, mirrored). "
-                "VR lines should stay at 0% duty."
-            )
+            if mode == "local" and settings.navigation.el_active_low:
+                print(
+                    "Expected while held (active-low EL): both EL ~0 V (armed); "
+                    "Left Z/F high; Right Z/F low (forward, mirrored). "
+                    "VR lines ~0% duty."
+                )
+            else:
+                print(
+                    "Expected while held (default active-high EL): Left EL high, "
+                    "Z/F high (forward); Right EL high, Z/F low (forward, mirrored). "
+                    "VR lines should stay at 0% duty."
+                )
             nav.diag_arm_forward_pwm_zero_hold(float(args.hold))
             print(
                 f"[OK] nav-probe-eldir: held forward + 0% speed for "

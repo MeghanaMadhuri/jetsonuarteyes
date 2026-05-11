@@ -80,6 +80,7 @@ def _build_nav() -> NavigationManager:
         turn_duration_sec=settings.turn_duration_sec,
         invert_left_dir=settings.invert_left_dir,
         invert_right_dir=settings.invert_right_dir,
+        el_active_low=settings.el_active_low,
     )
     return NavigationManager(cfg)
 
