@@ -8,7 +8,12 @@ physical pins match `nina.controllers.navigation_manager.DEFAULT_PINS` and
 
 **One-time setup:** enable hardware PWM on the header —  
 `sudo /opt/nvidia/jetson-io/jetson-io.py` → Configure 40-pin Header → manual →
-enable **`pwm0`** (pin 32) and **`pwm2`** (pin 33) → save → reboot.
+enable the PWM lines that drive **physical pin 32** and **physical pin 33** (on
+many Orin Nano images jetson-io labels these **`pwm7` (pin 32)** and
+**`pwm5` (pin 33)**; older docs sometimes say pwm0/pwm2 — use whatever the
+tool lists for **32** and **33**) → save → reboot.  
+`Jetson.GPIO` still uses **BCM 12** (pin 32) and **BCM 13** (pin 33) for those VR
+signals in code.
 
 Leave each JYQD **Signal** screw **unconnected**.
 
