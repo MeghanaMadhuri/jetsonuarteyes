@@ -32,6 +32,30 @@ stack — that is where `Jetson.GPIO` exposes stable hardware PWM after
 `jetson-io`. Wiring VR to other BCMs and only changing `NINA_NAV_*_PWM`
 typically **fails BLDC init** in the GUI.
 
+### Legacy harness (still on RPi **physical** pins 12 / 22 / 15)
+
+Some builds wire **L-EL → pin 12**, **L-Z/F → pin 22**, **R-Z/F → pin 15** (original
+Raspberry Pi reference). That is **not** the Jetson production table above: it
+maps to **BCM 18 / 25 / 22**, while this repo’s defaults use **BCM 24 / 6 / 23**
+(phys **18 / 31 / 16**). PWM (pins **32 / 33**) and **R-EL (pin 19)** usually
+still match.
+
+**Recommendation:** **Move the three wires** (left EL, left Z/F, right Z/F) to the
+**production** pads in the table. On many Orin Nano images, phys **12 / 22 / 15**
+are **claimed or marginal as GPIO outputs** (marginal levels, “only a short
+works”) — see Notes A–C in `nina.controllers.navigation_manager`.
+
+**Temporary software-only alignment** (keeps old wires; use only if you must):
+
+```bash
+export NINA_NAV_L_EN=18
+export NINA_NAV_L_DIR=25
+export NINA_NAV_R_DIR=22
+```
+
+Start a **new** `python3 -m nina.app.main ...` in that shell so `DEFAULT_PINS`
+picks up env at import; confirm with `nav-print-config`.
+
 Optional signals implemented in the same module:
 
 | Role | BCM | Physical | Notes |
