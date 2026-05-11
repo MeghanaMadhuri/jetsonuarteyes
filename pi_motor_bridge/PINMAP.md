@@ -126,13 +126,21 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
    Arms both sides **forward** with **PWM 0** so you can meter **EL** and **Z/F**
    without motion. Expect left Z/F high and right Z/F low for “forward” (see
    **Direction polarity** above) when not using `NINA_NAV_INVERT_*`.
-7. **DIR / Z-F short to ground:** If wheels only run when **Z/F (direction)** is
-   shorted to GND, the driver is not seeing the **forward** DIR level the
-   software thinks it is driving. Re-check **Z/F** wiring to the configured
-   **L_DIR / R_DIR** BCMs, then flip **`NINA_NAV_INVERT_LEFT`** /
-   **`NINA_NAV_INVERT_RIGHT`** — do **not** infer **EL** active-low from this
-   symptom (use **`NINA_NAV_EL_ACTIVE_LOW`** only when the **EL** pin’s ARM/DISARM
-   sense matches active-low in the JYQD doc).
+7. **Accidental “short Z/F or VR to GND” while commanding motion:**  
+   **Do not do this on purpose** with motor pack present — it can destroy the
+   Jetson, JYQD, or wiring. If you already saw behavior: tying **Z/F (DIR)** to
+   GND forces **LOW** on that input. Default software uses **left Z/F HIGH**
+   and **right Z/F LOW** for logical forward. If **forward** only makes sense
+   when Z/F is dragged **LOW**, that often means the **left** channel should
+   use the **same** sense as the right for “forward” — set
+   **`NINA_NAV_INVERT_LEFT=1`** so logical forward drives **left Z/F LOW** (no
+   short). If **both** drivers were built for **HIGH** on Z/F for forward, use
+   **`NINA_NAV_INVERT_RIGHT=1`** instead or as well — use
+   **`nav-print-config`** after each `export` to confirm flags.  
+   **Shorting VR to GND** is **not** a direction test: it wrecks the speed
+   reference (near 0 % duty). Any spin or “reverse” versus the Z/F-short case is
+   **undefined** (faulty PWM path, coupling, or one side dominating) — fix VR
+   wiring and use **`nav-test-pin`** on the **PWM BCM** with `--mode pwm`.
 8. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
    backlash nudge when testing `nav-forward` (unlikely to be the root cause if
    `nav-diag-forward` also fails).
