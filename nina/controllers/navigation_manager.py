@@ -225,7 +225,8 @@ class NavigationConfig:
     turn_left_prep_fwd_sec: float = 0.12
     # When True, EL is **active-low**: GPIO LOW arms the JYQD, HIGH disables it
     # (default is active-high: HIGH armed, LOW disabled). Env:
-    # ``NINA_NAV_EL_ACTIVE_LOW=1``.
+    # ``NINA_NAV_EL_ACTIVE_LOW=1``. This applies to **EL** only; wrong **Z/F**
+    # levels need ``invert_*_dir`` / wiring checks, not this flag.
     el_active_low: bool = False
 
 

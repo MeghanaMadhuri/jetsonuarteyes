@@ -81,6 +81,11 @@ If a wheel runs backward from expectation: **`NINA_NAV_INVERT_LEFT=1`** or
 
 Some JYQD harnesses treat **EL as active-low** (GPIO low = armed). For
 direct Jetson drive use **`NINA_NAV_EL_ACTIVE_LOW=1`** (local mode only).
+That flag only changes **EL** behavior — it does **not** fix wrong **Z/F
+(direction)** levels. If motion only appears when **Z/F (DR) is pulled to
+GND**, treat it as a **direction polarity or wiring** issue: confirm the
+**Z/F** screw is on the intended BCM, then try **`NINA_NAV_INVERT_LEFT=1`**
+and/or **`NINA_NAV_INVERT_RIGHT=1`** (see above).
 
 ## Ultrasonic ring collision
 
@@ -112,6 +117,13 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
    Arms both sides **forward** with **PWM 0** so you can meter **EL** and **Z/F**
    without motion. Expect left Z/F high and right Z/F low for “forward” (see
    **Direction polarity** above) when not using `NINA_NAV_INVERT_*`.
-7. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
+7. **DIR / Z-F short to ground:** If wheels only run when **Z/F (direction)** is
+   shorted to GND, the driver is not seeing the **forward** DIR level the
+   software thinks it is driving. Re-check **Z/F** wiring to the configured
+   **L_DIR / R_DIR** BCMs, then flip **`NINA_NAV_INVERT_LEFT`** /
+   **`NINA_NAV_INVERT_RIGHT`** — do **not** infer **EL** active-low from this
+   symptom (use **`NINA_NAV_EL_ACTIVE_LOW`** only when the **EL** pin’s ARM/DISARM
+   sense matches active-low in the JYQD doc).
+8. **Optional:** `NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0` disables the straight-line
    backlash nudge when testing `nav-forward` (unlikely to be the root cause if
    `nav-diag-forward` also fails).

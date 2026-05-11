@@ -79,6 +79,8 @@ class NavigationSettings:
     invert_left_dir: bool
     invert_right_dir: bool
     # Local mode only: GPIO LOW arms JYQD EL (HIGH disables). Default is active-high.
+    # Use only when the datasheet defines EL that way — not when motion changes
+    # only if Z/F (direction) is pulled; use invert_left/right_dir for DIR.
     el_active_low: bool = False
     start_kick_percent: int = 14
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
