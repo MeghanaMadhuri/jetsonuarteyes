@@ -138,6 +138,12 @@ fi
 # Ensure the repo is importable even if the user has nuked PYTHONPATH.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
+# Legacy Pi UART bridge vars — remove so GUI / children never inherit stale
+# NINA_NAV_MODE=remote from ~/.bashrc or old navigation.env (Jetson is GPIO-only).
+unset NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD \
+    NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC \
+    NINA_NAV_LEGACY_PI_BRIDGE 2>/dev/null || true
+
 # ---------------------------------------------------------------------
 # Kiosk-mode panel: force 1024 x 600 on the connected display.
 #

@@ -590,8 +590,7 @@ class NavigationManager:
         where each tick wants to nudge the duty cycle without re-running
         the stop/settle sequence. Direction is sampled level-sensitive
         by the JYQD, so changing DIR mid-spin is safe. Both wheels are
-        armed at PWM 0 before duties are applied back-to-back (local GPIO
-        only — remote mode sends one SET frame).
+        armed at PWM 0 before duties are applied back-to-back.
         """
         if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid left_dir '{left_dir}'")

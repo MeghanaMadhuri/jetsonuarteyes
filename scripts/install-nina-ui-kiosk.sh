@@ -160,7 +160,7 @@ Useful commands:
   # disable autostart (one-off testing)
   systemctl --user disable --now nina-ui-kiosk
 
-  # tweak env vars without editing the repo (e.g. NINA_NAV_INVERT_* or legacy remote UART)
+  # tweak env vars without editing the repo (e.g. NINA_NAV_INVERT_* or pin overrides)
   systemctl --user edit nina-ui-kiosk
 
 To verify on the panel right now: the GUI should already be up,

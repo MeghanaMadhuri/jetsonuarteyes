@@ -12,6 +12,7 @@ WorkingDirectory=/
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
+UnsetEnvironment=NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC NINA_NAV_LEGACY_PI_BRIDGE
 
 Environment=PYTHONPATH=/opt/nvidia-jetson-platform
 Environment=NINA_LINK_BOOT_AP=1

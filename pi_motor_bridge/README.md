@@ -308,19 +308,11 @@ cd Nvidia-jetson-platform
 git checkout feature/nina-app
 ```
 
-#### g) Optional: serial client env (legacy bench only)
+#### g) Serial test client (bench)
 
-Production **Nina** on the Jetson drives wheels via GPIO; you **do not** set
-these for the PyQt app. Keep this section only if you are deliberately
-running a **UART motor co-processor** and a small test client on the Jetson:
-
-```bash
-# Example: point a manual pyserial script at the Pi (not used by Nina GUI):
-# export NINA_BRIDGE_JETSON_PORT=/dev/ttyTHS1   # your own tooling only
-```
-
-For interactive moves over the wire use ``pi_motor_bridge/serial_test.py client``
-from the machine that holds the USB-UART or ``ttyTHS1`` (see §0.5).
+Production **Nina** on the Jetson drives wheels via GPIO. For interactive UART
+exercise of a Pi running ``motor_bridge.py``, use ``pi_motor_bridge/serial_test.py client``
+from the host that owns the serial port (see §0.5).
 
 ### 0.4 Wire the Jetson <-> Pi serial link
 

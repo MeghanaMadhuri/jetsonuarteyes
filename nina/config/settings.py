@@ -18,6 +18,32 @@ NAV_START_KICK_SEC_MAX = 1.0
 
 _log = logging.getLogger("nina.config.settings")
 
+# Removed with Pi UART bridge — drop from process env so stale /etc or .bashrc
+# cannot make tooling report "remote" after reboot.
+_OBSOLETE_NAV_ENV_KEYS = (
+    "NINA_NAV_MODE",
+    "NINA_NAV_REMOTE_PORT",
+    "NINA_NAV_REMOTE_BAUD",
+    "NINA_NAV_REMOTE_TIMEOUT_SEC",
+    "NINA_NAV_REMOTE_TURN_TICK_SEC",
+    "NINA_NAV_LEGACY_PI_BRIDGE",
+)
+_scrub_obsolete_nav_env_logged = False
+
+
+def _scrub_obsolete_navigation_env() -> None:
+    """Pop legacy Pi-bridge keys from ``os.environ`` (once-per-process log)."""
+    global _scrub_obsolete_nav_env_logged
+    removed = [k for k in _OBSOLETE_NAV_ENV_KEYS if k in os.environ]
+    for k in _OBSOLETE_NAV_ENV_KEYS:
+        os.environ.pop(k, None)
+    if removed and not _scrub_obsolete_nav_env_logged:
+        _log.info(
+            "Cleared obsolete Pi UART navigation env vars: %s",
+            ", ".join(removed),
+        )
+        _scrub_obsolete_nav_env_logged = True
+
 
 @dataclass(frozen=True)
 class NavigationSettings:
@@ -169,6 +195,8 @@ class NinaSettings:
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
+    _scrub_obsolete_navigation_env()
+
     actions_dir = repo_root / "nina" / "actions"
     recordings_dir = repo_root / "nina" / "actions" / "recordings"
     manifest_path = actions_dir / "manifest.json"

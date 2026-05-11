@@ -5,7 +5,7 @@ simultaneously — both compete for GPIO / the navigation manager.
 
 Momentary moves run on a worker thread so FastAPI returns immediately.
 Navigation init is validated **synchronously** before queuing motion so HTTP clients
-see ``ok: false`` when the UART/Pi bridge is down instead of a silent no-op.
+see ``ok: false`` when GPIO init fails instead of a silent no-op.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def peek_last_drive_error() -> Optional[str]:
 
 
 def warmup_robot_navigation() -> None:
-    """Background init so the first tablet tap does not pay UART/PING latency.
+    """Background init so the first tablet tap does not pay first-touch GPIO latency.
 
     Safe to call multiple times; failures are logged (companion still sees status).
     """

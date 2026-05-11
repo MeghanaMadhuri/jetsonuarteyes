@@ -81,6 +81,28 @@ ok()  { printf '  [\033[32mOK\033[0m] %s\n' "$*"; }
 bad() { printf '  [\033[31m!!\033[0m] %s\n' "$*"; }
 warn(){ printf '  [\033[33m!!\033[0m] %s\n' "$*"; }
 
+# Remove legacy Pi UART bridge keys from /etc/nina-link/navigation.env (backup if changed).
+_scrub_obsolete_nav_env_file() {
+    local f="$1"
+    local SUDO=(sudo)
+    if [[ "$(id -u)" -eq 0 ]]; then
+        SUDO=()
+    fi
+    [[ -f "$f" ]] || return 0
+    local tmp
+    tmp="$(mktemp)"
+    grep -vE '^(NINA_NAV_MODE|NINA_NAV_REMOTE_PORT|NINA_NAV_REMOTE_BAUD|NINA_NAV_REMOTE_TIMEOUT_SEC|NINA_NAV_REMOTE_TURN_TICK_SEC|NINA_NAV_LEGACY_PI_BRIDGE)=' \
+        "$f" > "$tmp" || true
+    if cmp -s "$f" "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
+    fi
+    local bak="${f}.bak.scrub-$(date +%Y%m%d%H%M%S)"
+    "${SUDO[@]}" cp -a "$f" "$bak" 2>/dev/null || true
+    "${SUDO[@]}" mv "$tmp" "$f"
+    ok "Stripped obsolete Pi-UART keys from ${f} (backup: ${bak})"
+}
+
 # Writes /etc/systemd/system/nina-link.service — AP on boot via NINA_LINK_BOOT_AP in unit + daemon.
 _install_nina_link_systemd() {
     local SUDO=(sudo)
@@ -110,6 +132,7 @@ WorkingDirectory=/
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
+UnsetEnvironment=NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC NINA_NAV_LEGACY_PI_BRIDGE
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
@@ -144,8 +167,12 @@ EOF
         else
             ok "Keeping existing ${NAV_ENV_DST}"
         fi
+        _scrub_obsolete_nav_env_file "${NAV_ENV_DST}" || true
     else
         warn "Missing ${NAV_ENV_EX} — create ${NAV_ENV_DST} manually for BLDC parity with Sirena UI"
+        if [[ -f "${NAV_ENV_DST}" ]]; then
+            _scrub_obsolete_nav_env_file "${NAV_ENV_DST}" || true
+        fi
     fi
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable nina-link.service
