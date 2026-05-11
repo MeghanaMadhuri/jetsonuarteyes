@@ -9,6 +9,7 @@ from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.controllers.navigation_factory import build_navigation_manager
+from nina.controllers.navigation_manager import DEFAULT_PINS
 from nina.services.audio_player import AudioPlayer
 from nina.services.startup_service import StartupService
 
@@ -174,6 +175,13 @@ def main() -> None:
             "connectivity check. In remote mode this PINGs the Pi "
             "bridge over serial; in local mode it just confirms the "
             "Jetson backend can be initialised."
+        ),
+    )
+    sub.add_parser(
+        "nav-print-config",
+        help=(
+            "Print resolved navigation mode, invert flags, EL polarity, and BCM "
+            "pin map for this process (no GPIO). Use to verify env vars are seen."
         ),
     )
 
@@ -387,6 +395,45 @@ def main() -> None:
                 pass
         return
 
+    if args.command == "nav-print-config":
+        n = settings.navigation
+        p = DEFAULT_PINS
+        l_zf_fwd = "LOW" if n.invert_left_dir else "HIGH"
+        r_zf_fwd = "HIGH" if n.invert_right_dir else "LOW"
+        print(
+            "Navigation config for this Python process.\n"
+            "Export NINA_NAV_* in the **same shell** before "
+            "`python3 -m nina.app.main ...` so values apply.\n"
+        )
+        print(f"  mode:                {n.mode}")
+        print(f"  backend:             {n.backend_name}")
+        print(f"  pwm_frequency_hz:    {n.pwm_frequency_hz}")
+        print(f"  invert_left_dir:     {n.invert_left_dir}  (NINA_NAV_INVERT_LEFT)")
+        print(f"  invert_right_dir:    {n.invert_right_dir}  (NINA_NAV_INVERT_RIGHT)")
+        print(f"  el_active_low:       {n.el_active_low}  (NINA_NAV_EL_ACTIVE_LOW)")
+        if n.mode == "remote":
+            print(
+                f"  remote_serial_port:  {n.remote_serial_port}  "
+                f"(NINA_NAV_REMOTE_PORT)"
+            )
+            print(f"  remote_baudrate:     {n.remote_baudrate}")
+        print(
+            "\nBCM map (from DEFAULT_PINS at import; override with "
+            "NINA_NAV_L_EN / L_DIR / L_PWM / R_*):\n"
+        )
+        print(
+            f"  L_EN={p.l_en}  L_DIR(Z/F)={p.l_dir}  L_PWM={p.pwm_l}\n"
+            f"  R_EN={p.r_en}  R_DIR(Z/F)={p.r_dir}  R_PWM={p.pwm_r}"
+        )
+        print(
+            "\nLogical **forward**: default soft convention is left Z/F "
+            f"{l_zf_fwd}, right Z/F {r_zf_fwd} "
+            "(right is mirrored vs left unless invert_right flips it).\n"
+            "`NINA_NAV_INVERT_*` only swaps those levels — it does not fix "
+            "missing EL, VR, 24 V, or a dead DIR wire."
+        )
+        return
+
     if args.command == "nav-diag-forward":
         nav = build_navigation(settings)
         try:
@@ -480,14 +527,15 @@ def main() -> None:
             print(
                 f"Direction test on {sides_label} side(s). "
                 f"L_ZF/DIR=BCM{pins.l_dir} R_ZF/DIR=BCM{pins.r_dir}. "
-                f"Watch the wheel(s) - they should physically reverse between phases."
+                f"effective_invert L={nav.get_invert_left()} R={nav.get_invert_right()}. "
+                f"Watch the wheel(s) — they should physically reverse between phases."
             )
             for cycle in range(args.cycles):
                 for direction in ("forward", "backward"):
                     dir_const = nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD
                     if args.side in ("left", "both"):
                         zf_level = (1 if direction == "forward" else 0)
-                        if nav.config.invert_left_dir:
+                        if nav.get_invert_left():
                             zf_level = 0 if zf_level else 1
                         print(
                             f"[cycle {cycle + 1}/{args.cycles}] LEFT -> {direction} @ {args.speed}% "
@@ -498,7 +546,7 @@ def main() -> None:
                         # Right wheel polarity is mirrored on the RPi
                         # reference: forward = LOW on R_DIR.
                         zf_level = (0 if direction == "forward" else 1)
-                        if nav.config.invert_right_dir:
+                        if nav.get_invert_right():
                             zf_level = 0 if zf_level else 1
                         print(
                             f"[cycle {cycle + 1}/{args.cycles}] RIGHT -> {direction} @ {args.speed}% "
@@ -511,12 +559,18 @@ def main() -> None:
         finally:
             nav.shutdown()
         print(
-            "Direction test done. If the wheel kept spinning the same way:\n"
-            "  1. Confirm JYQD ZF input is wired to the BCM pin shown above.\n"
-            "  2. Probe that pin with 'nav-test-pin --pin <BCM> --mode high/low' to confirm the level.\n"
-            "  3. JYQD ZF threshold is ~3V; Jetson 3.3V should be fine but check with a meter.\n"
-            "  4. If the level toggles correctly but the motor doesn't reverse, set\n"
-            "     NINA_NAV_INVERT_LEFT=1 / NINA_NAV_INVERT_RIGHT=1 (some motors swing the other way)."
+            "Direction test done.\n"
+            "  If hubs **never** spun: `NINA_NAV_INVERT_*` will not change that — "
+            "fix EL, VR (PWM), 24 V, and Z/F wiring first. Run "
+            "`python3 -m nina.app.main nav-print-config` in the same shell you "
+            "`export` vars in to confirm flags.\n"
+            "  If the wheel spun the **same way** in both phases:\n"
+            "  1. Confirm JYQD Z/F is wired to the BCM pin printed above.\n"
+            "  2. `nav-test-pin --pin <BCM> --mode high` then `low` — meter at the screw.\n"
+            "  3. JYQD Z/F threshold is ~3 V; Jetson 3.3 V should be fine.\n"
+            "  4. Try `NINA_NAV_INVERT_LEFT=1` or `NINA_NAV_INVERT_RIGHT=1` if "
+            "levels toggle but F/R is wrong (two identical drivers may need "
+            "`INVERT_RIGHT=1` so both sides use HIGH for forward — see PINMAP)."
         )
         return
 

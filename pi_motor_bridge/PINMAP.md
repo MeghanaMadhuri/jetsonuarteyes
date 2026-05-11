@@ -76,6 +76,10 @@ Jetson `DEFAULT_PINS` above — see `pi_motor_bridge/navigation_bldc.py`.
 - Left forward → **L_DIR HIGH**
 - Right forward → **R_DIR LOW** (mirrored vs left)
 
+If **both** JYQDs were wired for the **same** direction sense (e.g. both
+expect **HIGH** for forward), set **`NINA_NAV_INVERT_RIGHT=1`** so logical
+forward drives **R_DIR HIGH** to match the left side.
+
 If a wheel runs backward from expectation: **`NINA_NAV_INVERT_LEFT=1`** or
 **`NINA_NAV_INVERT_RIGHT=1`** on the Jetson.
 
@@ -94,6 +98,11 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
 
 ## Troubleshooting: init OK but wheels never move
 
+0. **Confirm this process sees your env:**  
+   `python3 -m nina.app.main nav-print-config`  
+   Run it in the **same** shell after `export NINA_NAV_INVERT_*=1`. If the
+   printed `invert_*` stays `False`, the CLI never received the variable
+   (systemd unit, typo, or different user session).
 1. **Motor supply:** JYQD **VCC / battery** (e.g. 24 V) must be present; 5 V from
    the 40-pin header is **logic only** — without pack voltage the hubs will not
    turn even if GPIO looks fine.
