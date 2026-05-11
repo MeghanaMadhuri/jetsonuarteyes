@@ -145,10 +145,8 @@ Systemd example: [`nina/systemd/nina-link.service`](../nina/systemd/nina-link.se
 
 ### BLDC / Jetson GPIO parity with Sirena UI
 
-Stock **`nina-link.service`** and **`desktop/nina-ui-kiosk.service`** use
-**`NINA_NAV_MODE=local`** (Jetson drives JYQDs via `NavigationManager`).
-Set **`NINA_NAV_MODE=remote`**, **`NINA_NAV_REMOTE_PORT`**, and baud only if
-you still use **`pi_motor_bridge`** on a Pi.
+Stock **`nina-link.service`** and **`desktop/nina-ui-kiosk.service`** run
+**Jetson GPIO** navigation (`NavigationManager`).
 
 The **same `NINA_NAV_*` polarity vars** must be visible to **`nina-link`**
 (for `/v1/robot/drive/status`, companion drive) and to the Qt kiosk, or

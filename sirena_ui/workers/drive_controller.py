@@ -1,14 +1,10 @@
 """
 Real BLDC drive controller for the Drive screen.
 
-Wraps a navigation manager (either
-`nina.controllers.navigation_manager.NavigationManager` driving the
-JYQDs from Jetson GPIOs, or
-`nina.controllers.remote_navigation_manager.RemoteNavigationManager`
-sending commands over serial to a Raspberry Pi running
-`pi_motor_bridge`) with a Qt-friendly worker so the UI never blocks
-on GPIO / serial calls. The public surface mirrors the old `DriveStub`
-exactly, so it is a drop-in replacement:
+Wraps `nina.controllers.navigation_manager.NavigationManager` (Jetson GPIO
+JYQD control) with a Qt-friendly worker so the UI never blocks on GPIO calls.
+The public surface mirrors the old `DriveStub` exactly, so it is a drop-in
+replacement:
 
   state_changed(dict)  signal
   state()              snapshot
@@ -61,8 +57,7 @@ from nina.controllers.navigation_manager import (
 )
 from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 
-# Type alias only; the remote manager is imported lazily by the factory
-# so this file stays usable on dev machines without pyserial.
+# `nav_manager` may be any object with the navigation surface (tests use fakes).
 NavigationManagerLike = object
 
 
@@ -122,7 +117,7 @@ FROM_STOP_CRUISE_PCT = 5
 
 # In-place pivot duty: D-pad A/D from rest and Drive "Turn left/right" buttons
 # (unless overridden by env). Using the straight-line cruise (~5%) or the tiny
-# manual midpoint (~11%) often fails to spin both hubs on the Pi bridge.
+# manual midpoint (~11%) often fails to spin both hubs from rest.
 DEFAULT_PIVOT_SPEED_PCT = 20
 
 
@@ -217,22 +212,13 @@ def _pair_duties_with_right_bias(
     return lb2, rb2
 
 # Heartbeat interval for re-issuing the current SET while a D-pad
-# button or arrow key is held. Only matters when the active backend is
-# the remote Pi bridge - the bridge has a safety watchdog (default
-# 1.5 s) that calls soft_stop() if no command arrives while the wheels
-# are commanded to non-zero PWM. We tick well under that so a held
-# button doesn't time out.
-#
-# Local Jetson-GPIO mode doesn't have a watchdog (PWM stays asserted
-# until we change it) but a re-issued SET in the same direction is
-# essentially free - it just re-writes the same duty cycle - so we
-# leave the heartbeat on for both backends to keep the code path
-# uniform.
+# button or arrow key is held. Re-writing the same duty is cheap on
+# Jetson GPIO; the loop keeps one code path for held presses.
 _HEARTBEAT_INTERVAL_SEC = 0.3
 # If the worker queue already has more than this many commands
 # pending, we skip enqueueing the next heartbeat tick instead of
-# piling up. Prevents runaway growth if the bridge / serial link
-# stalls and SETs start taking longer than the heartbeat interval.
+# piling up. Prevents runaway growth if the worker stalls and heartbeats
+# start landing slower than `_HEARTBEAT_INTERVAL_SEC`.
 _HEARTBEAT_MAX_QUEUED = 2
 
 
@@ -336,32 +322,18 @@ class DriveController(QObject):
         *,
         nav_manager: Optional[NavigationManagerLike] = None,
         default_speed_percent: Optional[int] = None,
-        navigation_mode: str = "local",
-        remote_serial_port: Optional[str] = None,
     ) -> None:
         """Construct the Qt-side facade.
 
         Two construction modes are supported:
 
-          1. Local (legacy / default): pass a `NavigationConfig` (or
-             nothing, to get the env-driven defaults). DriveController
-             will instantiate `NavigationManager` itself when the
-             worker thread runs `_do_init`.
+          1. Local (legacy): pass a `NavigationConfig` (or nothing, to get
+             env-driven defaults). DriveController instantiates
+             `NavigationManager` itself when the worker thread runs `_do_init`.
 
-          2. Factory-injected: pass a pre-built `nav_manager` (any
-             object implementing the NavigationManager surface, e.g.
-             `RemoteNavigationManager`). `_do_init` will call its
-             `initialize()` instead of constructing one. Use this from
-             `NinaService` when `NINA_NAV_MODE=remote`.
-
-        ``navigation_mode`` / ``remote_serial_port`` mirror
-        ``NavigationSettings`` so the Drive pill and logs describe
-        Jetson GPIO vs legacy UART bridge honestly.
-
-        `default_speed_percent` is only needed when using mode (2),
-        because we can't read it from a NavigationConfig in that case.
-        Defaults to 8% (matches `NavigationConfig.default_speed_percent` /
-        `NINA_NAV_SPEED` when unset).
+          2. Factory-injected: pass a pre-built `nav_manager`. `_do_init` calls
+             its `initialize()` instead of constructing one. Use this from
+             `NinaService`.
         """
         super().__init__(parent)
 
@@ -369,8 +341,6 @@ class DriveController(QObject):
         self._config = config or NavigationConfig(pins=DEFAULT_PINS)
         self._nav: Optional[NavigationManagerLike] = None
         self._init_attempted = False
-        self._navigation_mode = (navigation_mode or "local").strip().lower()
-        self._remote_serial_port = (remote_serial_port or "").strip() or None
 
         if default_speed_percent is not None:
             initial_speed = _clamp_speed(default_speed_percent)
@@ -395,7 +365,6 @@ class DriveController(QObject):
             "driver_message": "",
             "invert_left": initial_invert_left,
             "invert_right": initial_invert_right,
-            "navigation_mode": self._navigation_mode,
         }
 
         # Last (left_dir, left_speed, right_dir, right_speed) that was
@@ -420,9 +389,7 @@ class DriveController(QObject):
         self._worker.start()
 
         # Heartbeat thread: while a direction is active and the brake
-        # is off, re-issues the current SET at _HEARTBEAT_INTERVAL_SEC
-        # so the remote bridge's watchdog never trips during a held
-        # button press / arrow key. See `_heartbeat_loop` for details.
+        # is off, re-issues the current SET at _HEARTBEAT_INTERVAL_SEC.
         self._heartbeat_stop = threading.Event()
         self._heartbeat = threading.Thread(
             target=self._heartbeat_loop,
@@ -723,21 +690,13 @@ class DriveController(QObject):
     def _heartbeat_loop(self) -> None:
         """Re-issue the most recent SET while the wheels are active.
 
-        The remote Pi bridge has a safety watchdog (default 1.5 s) that
-        calls `soft_stop()` if no command arrives while the wheels are
-        commanded to non-zero PWM, so a single press-and-hold from the
-        D-pad / arrow keys would otherwise coast to a stop after ~1.5 s.
-        We tick at `_HEARTBEAT_INTERVAL_SEC` (well under the watchdog)
-        and enqueue `_do_heartbeat_tick` only when there's actually a
-        live SET to maintain.
+        Held D-pad / arrow keys enqueue `_do_heartbeat_tick` at
+        `_HEARTBEAT_INTERVAL_SEC`. If the worker queue already has more than
+        `_HEARTBEAT_MAX_QUEUED` pending commands, we skip the enqueue so a
+        stalled worker cannot grow the queue without bound.
 
-        We also skip the enqueue if the worker queue already has more
-        than `_HEARTBEAT_MAX_QUEUED` pending commands, so a stalled
-        bridge / serial link can't make us pile up SETs faster than the
-        worker can drain them.
-
-        `wait()` returns True only when shutdown has been requested,
-        so this loop exits cleanly.
+        `wait()` returns True only when shutdown has been requested, so this
+        loop exits cleanly.
         """
         while not self._heartbeat_stop.wait(_HEARTBEAT_INTERVAL_SEC):
             with self._lock:
@@ -801,11 +760,7 @@ class DriveController(QObject):
             # leaves us in. Make that explicit anyway.
             nav.engage_brake()
             self._init_attempted = True
-            if self._navigation_mode == "remote":
-                port = self._remote_serial_port or "serial"
-                drv_msg = f"BLDC L+R — motor bridge ({port})"
-            else:
-                drv_msg = "BLDC L+R — Jetson GPIO"
+            drv_msg = "BLDC L+R — Jetson GPIO"
             with self._lock:
                 self._state["connected"] = True
                 self._state["driver_message"] = drv_msg
@@ -954,9 +909,9 @@ class DriveController(QObject):
         except Exception as exc:
             log.exception("turn_90(%s) failed: %s", which, exc)
         finally:
-            # Timed turn already ends with stop(), but on error or bridge
-            # glitch ensure PWM is parked so the next Straight/drive_wheels
-            # sequence does not inherit stale nav bookkeeping.
+            # Timed turn already ends with stop(); on error ensure PWM is parked
+            # so the next Straight/drive_wheels sequence does not inherit stale
+            # nav bookkeeping.
             try:
                 self._nav.stop()
             except Exception:
@@ -1151,7 +1106,7 @@ class DriveController(QObject):
                 # Bench "Straight" and the first autonomy forward/reverse tick
                 # used to call only set_wheels(); D-pad W/S use drive_continuous +
                 # kick/cruise from rest. Without that sequence, the first straight
-                # after app/bridge start often does nothing until a later command.
+                # after app start often does nothing until a later command.
                 kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
                 kick = max(kick, int(left_speed))
                 kick = min(100, kick)

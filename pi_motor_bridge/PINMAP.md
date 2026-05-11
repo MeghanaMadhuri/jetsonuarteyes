@@ -78,8 +78,8 @@ JYQD **VCC** terminals to your **24 V** battery bus per your mechanical design.
 
 ## Raspberry Pi reference column (legacy bridge only)
 
-If a **Raspberry Pi** runs `pi_motor_bridge/motor_bridge.py` and the Jetson uses
-`NINA_NAV_MODE=remote`, the Pi firmware may still use the **original** BCM map
+If a **Raspberry Pi** runs `pi_motor_bridge/motor_bridge.py` with the JYQDs
+wired per the **Pi** column below, the Pi firmware uses the **original** BCM map
 (BCM 18 / 25 / 22 for some EL/DIR lines). That map is **not** identical to the
 Jetson `DEFAULT_PINS` above — see `pi_motor_bridge/navigation_bldc.py`.
 

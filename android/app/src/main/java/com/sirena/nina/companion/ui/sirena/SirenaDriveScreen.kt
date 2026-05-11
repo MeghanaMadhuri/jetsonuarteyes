@@ -359,11 +359,11 @@ fun SirenaDriveScreen(
                     ),
             ) {
                 Text(
-                    "BLDC not reachable from nina-link (Pi UART bridge). Only one process may use " +
-                        "that serial port — close the desktop Sirena Drive screen if it is open. " +
-                        "Stock robots use remote mode on /dev/ttyTHS1 (defaults are in nina-link.service); " +
-                        "for another device, set NINA_NAV_REMOTE_PORT in /etc/nina-link/navigation.env " +
-                        "and restart nina-link.",
+                    "BLDC not reachable from nina-link. Only one process may use the " +
+                        "navigation backend — close the desktop Sirena Drive screen " +
+                        "if it is open. Stock robots use Jetson GPIO; check jetson-io " +
+                        "PWM and `/etc/nina-link/navigation.env` for `NINA_NAV_*` pin overrides, " +
+                        "then restart nina-link.",
                     Modifier.padding(12.dp),
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                     style = MaterialTheme.typography.bodySmall,

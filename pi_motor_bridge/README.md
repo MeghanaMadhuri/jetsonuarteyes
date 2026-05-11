@@ -1,19 +1,20 @@
 # Sirena Nina motor bridge (Raspberry Pi)
 
-This directory contains the Raspberry-Pi-side software for the Nina bot.
-The Pi is the **dedicated motor controller**: it owns the two
-JYQD_V7.3E2 BLDC drivers and nothing else. All other logic (GUI,
-vision, autonomy, sensors) stays on the Jetson Orin Nano. The Jetson
-sends short ASCII commands over a serial link, and `motor_bridge.py`
-on the Pi executes them.
+This directory contains Raspberry-Pi-side software for bench / legacy setups
+where a **Pi** runs `motor_bridge.py` and owns the JYQD GPIOs.
+
+**Production Nina** on the **Jetson** uses `NavigationManager` on the 40-pin
+header; the Jetson GUI and CLI **do not** talk to this bridge. If you still
+use UART from another machine, exercise the wire with ``serial_test.py`` or
+any pyserial client — see §0 below.
 
 ```
 ┌──────────────────────────┐                     ┌──────────────────────┐
-│ Jetson Orin Nano         │                     │ Raspberry Pi         │
-│   GUI / vision / nav     │  ──── serial ───>   │   pigpiod            │
-│   sensors / SLAM         │     115200 8N1      │   motor_bridge.py    │
+│ Jetson (or USB-TTL host) │                     │ Raspberry Pi         │
+│   optional UART client   │  ──── serial ───>   │   pigpiod            │
+│                          │     115200 8N1      │   motor_bridge.py    │
 │                          │                     │   navigation_bldc.py │
-│   RemoteNavigationMgr    │  <── ack/event ──   │   ─────► JYQD x2     │
+│                          │  <── ack/event ──   │   ─────► JYQD x2     │
 └──────────────────────────┘                     └──────────────────────┘
 ```
 
@@ -307,34 +308,19 @@ cd Nvidia-jetson-platform
 git checkout feature/nina-app
 ```
 
-#### g) Set the navigation env vars permanently
+#### g) Optional: serial client env (legacy bench only)
 
-For the **direct-UART** path:
-
-```bash
-{
-  echo ''
-  echo '# Sirena Nina - talk to Pi motor bridge over the 40-pin UART'
-  echo 'export NINA_NAV_MODE=remote'
-  echo 'export NINA_NAV_REMOTE_PORT=/dev/ttyTHS1'
-  echo 'export NINA_NAV_REMOTE_BAUD=115200'
-} >> ~/.bashrc
-source ~/.bashrc
-```
-
-For the **USB-TTL** path, swap the port:
+Production **Nina** on the Jetson drives wheels via GPIO; you **do not** set
+these for the PyQt app. Keep this section only if you are deliberately
+running a **UART motor co-processor** and a small test client on the Jetson:
 
 ```bash
-echo 'export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0' >> ~/.bashrc
+# Example: point a manual pyserial script at the Pi (not used by Nina GUI):
+# export NINA_BRIDGE_JETSON_PORT=/dev/ttyTHS1   # your own tooling only
 ```
 
-Add wheel-direction inverts later if you find a wheel spins backwards
-during section 0.5 below:
-
-```bash
-echo 'export NINA_NAV_INVERT_LEFT=1'  >> ~/.bashrc      # only if needed
-echo 'export NINA_NAV_INVERT_RIGHT=1' >> ~/.bashrc      # only if needed
-```
+For interactive moves over the wire use ``pi_motor_bridge/serial_test.py client``
+from the machine that holds the USB-UART or ``ttyTHS1`` (see §0.5).
 
 ### 0.4 Wire the Jetson <-> Pi serial link
 
@@ -438,8 +424,8 @@ You may see `b'READY\n'` first (boot greeting); re-run for the `PONG`.
 **Jetson** (Pi bridge still running):
 
 ```bash
-cd ~/Nvidia-jetson-platform
-PYTHONPATH=. python3 -m nina.app.nav_bridge_test --port /dev/ttyTHS1 --speed 25 --duration 3
+cd ~/Nvidia-jetson-platform/pi_motor_bridge
+python3 serial_test.py client --port /dev/ttyTHS1
 ```
 
 Sequence: ping -> forward 3s -> stop -> backward 3s -> stop ->
@@ -730,7 +716,8 @@ isn't busy from the Pi's own side):
 So instead, on the Jetson:
 
 ```bash
-python3 -m nina.app.nav_bridge_test --port /dev/ttyUSB0 --speed 25 --duration 3
+cd ~/Nvidia-jetson-platform/pi_motor_bridge
+python3 serial_test.py client --port /dev/ttyUSB0
 ```
 
 This pings, then forward 3 s, stop, backward 3 s, stop, left turn,

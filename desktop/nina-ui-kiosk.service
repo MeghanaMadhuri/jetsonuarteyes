@@ -42,12 +42,9 @@ Environment=QT_QPA_PLATFORM=xcb
 
 # BLDC / JYQD: drive GPIOs on this Jetson (default). Optional system-wide
 # pin overrides (same as nina-link): /etc/nina-link/navigation.env
-# Legacy Pi UART: systemctl --user edit nina-ui-kiosk → NINA_NAV_MODE=remote
-# and NINA_NAV_LEGACY_PI_BRIDGE=1
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
-Environment=NINA_NAV_MODE=local
 
 # Lidar selection. Current builds ship with the Slamtec RPLIDAR S2E
 # (Ethernet/UDP, ~30 m). Override to `a1` for legacy bots running

@@ -1033,7 +1033,7 @@ class NavigationManager:
             self._backend.set_duty(pins.pwm_r, duty)
 
     # ------------------------------------------------------------------
-    # Runtime polarity controls. Same surface as RemoteNavigationManager
+    # Runtime polarity controls (exposed for GUI toggles / tests).
     # so DriveController can call them without caring which backend is
     # active. Effective on the next per-wheel write.
     # ------------------------------------------------------------------

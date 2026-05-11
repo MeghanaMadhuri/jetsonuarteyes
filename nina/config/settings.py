@@ -21,56 +21,13 @@ _log = logging.getLogger("nina.config.settings")
 
 @dataclass(frozen=True)
 class NavigationSettings:
-    """Tunables for the BLDC navigation manager.
+    """Tunables for Jetson GPIO navigation (`NavigationManager`).
 
-    Two backends are supported and chosen via `mode`:
+    Drives 2× JYQD from the 40-pin header (``backend_name``, ``pwm_frequency_hz``,
+    pins from ``DEFAULT_PINS`` / ``NINA_NAV_*`` env).
 
-      mode='local'  - **default / production:** drive the JYQDs directly from
-                      the Jetson Orin Nano GPIOs (Jetson.GPIO + PWM).
-                      Uses `backend_name` and `pwm_frequency_hz`.
-
-      mode='remote' - **legacy:** send ASCII commands over a serial port to a
-                      Raspberry Pi running `pi_motor_bridge/motor_bridge.py`.
-                      Uses `remote_serial_port`, `remote_baudrate`,
-                      `remote_response_timeout_sec`. `backend_name` /
-                      `pwm_frequency_hz` are ignored in this mode.
-
-    `default_speed_percent`, `turn_duration_sec`, `invert_left_dir`,
-    and `invert_right_dir` apply to both modes - they live in the
-    Jetson side regardless of who actually toggles GPIOs.
-
-    `el_active_low` applies only when ``mode='local'`` (Jetson drives EL).
-    Remote / Pi firmware continues to use its own EL polarity until changed
-    there.
-
-    `start_kick_percent` / `start_kick_sec` apply when both wheels were
-    at PWM 0 and a new command requests motion: each non-zero side
-    briefly runs at at least the kick duty to overcome static friction,
-    then drops to the commanded speed. Keep kick near the GUI top speed
-    (`MAX_SPEED_PCT`); a much higher kick (historically 35%) makes low
-    slider/autonomy speeds feel broken. Set either to 0 to disable
-    (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC). SEC is clamped
-    to at most NAV_START_KICK_SEC_MAX (default when unset = that max).
-
-    `straight_opposite_nudge_sec` (+ `NUDGE_PCT`, `OPPOSITE_ZERO_SETTLE_SEC`)
-    apply only to symmetric straight crawls (same dir and speed on
-    both sides). The opposite jog runs from rest, when reversing
-    straight F<->B while moving, or when transitioning from a turn /
-    curve (non-symmetric motion) to symmetric straight while PWM is
-    still non-zero. Set NUDGE_SEC to 0 to disable.
-
-    `pivot_turn_left_extra_pp` adds the same extra PWM **on both wheels** for
-    symmetric turn_left pivots (L=back, R=forward). On this bot both of those
-    directions share the same marginal DIR drive; boosting only one wheel was
-    insufficient in the field. Env: ``NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP`` (0..20,
-    default 6). Legacy alias: ``NINA_NAV_PIVOT_R_FWD_EXTRA_PP`` (used if the new
-    name is unset).
-
-    ``turn_left_prep_back_sec`` / ``turn_left_prep_fwd_sec`` (default **0.12** s
-    each) run a **symmetric straight** back pulse then forward pulse before an
-    in-place **turn_left** (timed turn or first ``drive_continuous`` left pivot).
-    Set to **0** to skip. Env: ``NINA_NAV_TURN_LEFT_PREP_BACK_SEC``,
-    ``NINA_NAV_TURN_LEFT_PREP_FWD_SEC`` (clamped ~0..0.5 s).
+    Kick, straight nudge, pivot prep, and settle delays are documented on each
+    field group; most are overridden via ``NINA_NAV_*`` env in ``load_settings``.
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -78,37 +35,18 @@ class NavigationSettings:
     turn_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
-    # Local mode only: GPIO LOW arms JYQD EL (HIGH disables). Default is active-high.
-    # Use only when the datasheet defines EL that way — not when motion changes
-    # only if Z/F (direction) is pulled; use invert_left/right_dir for DIR.
     el_active_low: bool = False
     start_kick_percent: int = 14
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
-    # Local + remote: delay after DIR+EL before torque (local GPIO). Remote
-    # uses the same value as a sleep between protocol steps when mirroring.
-    # See `load_settings()`: default is 0.03 s (local); 0.1 s when remote
-    # (matches RPi prototype ``navigation_bldc`` disable→enable settle).
     dir_pwm_gap_sec: float = 0.03
     pwm_reassert_sec: float = 0.02
-    # Straight-line only: brief opposite jog before crawling (0 sec = off).
     straight_opposite_nudge_sec: float = 0.5
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.04
-    # Pause after soft stop / between stop and fresh motion (`stop()`,
-    # `drive_continuous`). Matches `NavigationConfig.settle_delay_sec`.
-    # See `load_settings()`: default is 0.1 s (local GPIO); 0.25 s when
-    # ``NINA_NAV_MODE=remote`` (Android square pattern inter-segment gap).
     settle_delay_sec: float = 0.1
-    # In-place turn_left (L=back R=fwd): symmetric +% on both sides for breakaway.
     pivot_turn_left_extra_pp: int = 6
-    # Before turn_left: brief straight back then straight forward (0 = skip).
     turn_left_prep_back_sec: float = 0.12
     turn_left_prep_fwd_sec: float = 0.12
-    # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
-    mode: str = "local"
-    remote_serial_port: str = "/dev/ttyUSB0"
-    remote_baudrate: int = 115200
-    remote_response_timeout_sec: float = 1.2
 
 
 @dataclass(frozen=True)
@@ -237,39 +175,10 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     recordings_dir.mkdir(parents=True, exist_ok=True)
 
-    # When talking to pi_motor_bridge over serial, default tunables match the
-    # proven Sirena_Humanoid-2 / UBOT_app stack: ~13% cruise (see
-    # global_variables.f_speed), 100 ms DIR/EL settle before PWM, 250 ms pause
-    # after STOP before the next move (Android square GAP_MS). Local Jetson-GPIO
-    # mode keeps the tighter historical defaults.
-    nav_mode = os.environ.get("NINA_NAV_MODE", "local").strip().lower()
-    if nav_mode not in ("local", "remote"):
-        nav_mode = "local"
-    # Jetson production uses GPIO (`local`). Many images still export
-    # NINA_NAV_MODE=remote + NINA_NAV_REMOTE_PORT=/dev/ttyTHS1 from the old Pi
-    # UART bridge — every process then tries ``RemoteNavigationManager`` and
-    # fails to PING. Remote is opt-in: set NINA_NAV_LEGACY_PI_BRIDGE=1 on hosts
-    # that still run ``pi_motor_bridge`` on a Pi.
-    if nav_mode == "remote" and not _env_bool("NINA_NAV_LEGACY_PI_BRIDGE", False):
-        _log.warning(
-            "NINA_NAV_MODE=remote ignored — default is Jetson GPIO (no Pi). "
-            "For the legacy UART motor bridge set NINA_NAV_LEGACY_PI_BRIDGE=1 "
-            "along with NINA_NAV_REMOTE_PORT / baud. "
-            "(This message also appears if you forgot to restart after clearing "
-            "remote from your shell profile.)"
-        )
-        nav_mode = "local"
-    remote_bridge = nav_mode == "remote"
-    nav_speed_default = "13" if remote_bridge else "8"
-    nav_dir_gap_default = "0.1" if remote_bridge else "0.03"
-    nav_settle_default = "0.25" if remote_bridge else "0.1"
-
     navigation = NavigationSettings(
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
-        # Local: 8% matches the GUI manual floor (MIN_SPEED_PCT). Remote/Pi
-        # bridge: 13% aligns with the old RPi bench (f_speed≈13, TCP motions 15).
-        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", nav_speed_default)),
+        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "8")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         # Flip if a wheel spins opposite of what the GUI expects (the
         # JYQD ZF level for "forward" depends on motor wiring polarity).
@@ -288,9 +197,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
                 ),
             ),
         ),
-        dir_pwm_gap_sec=float(
-            os.environ.get("NINA_NAV_DIR_SETTLE_SEC", nav_dir_gap_default)
-        ),
+        dir_pwm_gap_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03")),
         pwm_reassert_sec=float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02")),
         straight_opposite_nudge_sec=float(
             os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.5")
@@ -301,9 +208,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         opposite_zero_settle_sec=float(
             os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
         ),
-        settle_delay_sec=float(
-            os.environ.get("NINA_NAV_SETTLE_SEC", nav_settle_default)
-        ),
+        settle_delay_sec=float(os.environ.get("NINA_NAV_SETTLE_SEC", "0.1")),
         pivot_turn_left_extra_pp=max(
             0,
             min(
@@ -334,15 +239,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
                     os.environ.get("NINA_NAV_TURN_LEFT_PREP_FWD_SEC", "0.12")
                 ),
             ),
-        ),
-        # 'local'  -> Jetson GPIOs drive the JYQDs directly.
-        # 'remote' -> commands are sent over serial to a Raspberry Pi
-        #             running pi_motor_bridge/motor_bridge.py.
-        mode=nav_mode,
-        remote_serial_port=os.environ.get("NINA_NAV_REMOTE_PORT", "/dev/ttyUSB0"),
-        remote_baudrate=int(os.environ.get("NINA_NAV_REMOTE_BAUD", "115200")),
-        remote_response_timeout_sec=float(
-            os.environ.get("NINA_NAV_REMOTE_TIMEOUT_SEC", "1.2")
         ),
     )
 

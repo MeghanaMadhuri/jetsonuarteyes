@@ -4,9 +4,10 @@ Nina is a wheeled robot built on an **NVIDIA Jetson Orin Nano**: one
 SBC runs the GUI, vision, SLAM, autonomy, action playback **and**
 direct GPIO/PWM to the two **JYQD_V7.3E2** BLDC wheel drivers.
 
-**Legacy:** a **Raspberry Pi** running `pi_motor_bridge` can still
-offload the JYQDs (`NINA_NAV_MODE=remote` + UART). New production wiring
-connects JYQD logic lines to the **Jetson** 40-pin header per
+**`pi_motor_bridge/`** on a **Raspberry Pi** remains in-tree for bench /
+bring-up of the same JYQD hardware with pigpio, but **Nina on the Jetson**
+always drives wheels from GPIO/PWM on the 40-pin header. New production
+wiring connects JYQD logic lines per
 `nina/controllers/navigation_manager.py` (`DEFAULT_PINS`) and
 `pi_motor_bridge/PINMAP.md` (signal names).
 

@@ -1,26 +1,15 @@
 """
-Choose between the local (**Jetson GPIO**, default) and remote (**Pi serial
-bridge**, legacy) navigation manager based on `NavigationSettings.mode`.
+Build a Jetson GPIO `NavigationManager` from `NavigationSettings`.
 
-Used by `sirena_ui.workers.nina_service` and by the CLI tools so the
-selection logic lives in exactly one place. Tests can pass a fake
-settings object to assert the routing.
-
-The factory returns an *un-initialised* manager - the caller is still
-responsible for `initialize()` (so we don't open serial ports on
-import).
+Used by `sirena_ui.workers.nina_service` and by CLI tools so construction
+lives in one place. The factory returns an *un-initialised* manager —
+the caller must still call `initialize()`.
 
 Env var summary (read at settings-load time, see `nina.config.settings`):
 
-    NINA_NAV_MODE=local         # default — Jetson GPIO drives JYQDs
-    NINA_NAV_MODE=remote        # legacy Pi UART — **also** set NINA_NAV_LEGACY_PI_BRIDGE=1
-                                # or remote is ignored (stale ttyTHS1 footgun).
-    NINA_NAV_REMOTE_PORT       # default /dev/ttyUSB0
-    NINA_NAV_REMOTE_BAUD       # default 115200
-    NINA_NAV_REMOTE_TIMEOUT_SEC# default 1.2 (allow Pi kick + warm-reverse before OK)
     NINA_NAV_START_KICK_PCT    # default 14; 0 = no breakaway pulse (was 35 — dominated low cruise)
     NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
-    NINA_NAV_DIR_SETTLE_SEC    # local default 0.03; remote 0.1; DIR+EL before PWM; 0 = off
+    NINA_NAV_DIR_SETTLE_SEC    # default 0.03; DIR+EL before PWM; 0 = off
     NINA_NAV_PWM_REASSERT_SEC  # default 0.02; 2nd PWM write from rest; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.5; straight crawl only; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT # default 20 (% of cmd speed for opposite jog)
@@ -28,14 +17,12 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP # default 6; symmetric +% both wheels turn_left
     NINA_NAV_TURN_LEFT_PREP_BACK_SEC # default 0.12; 0=skip straight-back prime
     NINA_NAV_TURN_LEFT_PREP_FWD_SEC  # default 0.12; 0=skip straight-fwd prime
-    NINA_NAV_EL_ACTIVE_LOW     # local only: GPIO LOW arms EL, HIGH disables
-    NINA_NAV_SETTLE_SEC        # local default 0.1; remote default 0.25
-    NINA_NAV_SPEED             # local default 8; remote default 13 (RPi TCP ref)
+    NINA_NAV_EL_ACTIVE_LOW     # GPIO LOW arms EL, HIGH disables
+    NINA_NAV_SETTLE_SEC        # default 0.1
+    NINA_NAV_SPEED             # default 8
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from nina.config.settings import NavigationSettings
 from nina.controllers.navigation_manager import (
@@ -45,47 +32,9 @@ from nina.controllers.navigation_manager import (
 )
 
 
-def build_navigation_manager(settings: NavigationSettings) -> Any:
-    """Return either a `NavigationManager` (local) or a
-    `RemoteNavigationManager` (remote), un-initialised.
-
-    The return type is `Any` because the two managers don't share a
-    common base class, but they both implement the same public
-    surface (initialize, shutdown, forward, backward, turn_left,
-    turn_right, drive_continuous, set_wheels, stop, emergency_stop,
-    engage_brake, release_brake, set_status). All callers in the
-    codebase only touch this surface.
-    """
-    if settings.mode == "remote":
-        # Lazy import so the rest of the app doesn't pay the pyserial
-        # import cost when running purely local.
-        from nina.controllers.remote_navigation_manager import (
-            RemoteNavigationConfig,
-            RemoteNavigationManager,
-        )
-        cfg = RemoteNavigationConfig(
-            serial_port=settings.remote_serial_port,
-            baudrate=settings.remote_baudrate,
-            response_timeout_sec=settings.remote_response_timeout_sec,
-            default_speed_percent=settings.default_speed_percent,
-            turn_duration_sec=settings.turn_duration_sec,
-            invert_left_dir=settings.invert_left_dir,
-            invert_right_dir=settings.invert_right_dir,
-            start_kick_percent=settings.start_kick_percent,
-            start_kick_sec=settings.start_kick_sec,
-            dir_pwm_gap_sec=settings.dir_pwm_gap_sec,
-            straight_opposite_nudge_sec=settings.straight_opposite_nudge_sec,
-            straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
-            opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
-            settle_delay_sec=settings.settle_delay_sec,
-            pwm_reassert_sec=settings.pwm_reassert_sec,
-            pivot_turn_left_extra_pp=settings.pivot_turn_left_extra_pp,
-            turn_left_prep_back_sec=settings.turn_left_prep_back_sec,
-            turn_left_prep_fwd_sec=settings.turn_left_prep_fwd_sec,
-        )
-        return RemoteNavigationManager(cfg)
-
-    cfg_local = NavigationConfig(
+def build_navigation_manager(settings: NavigationSettings) -> NavigationManager:
+    """Return an un-initialised `NavigationManager`."""
+    cfg = NavigationConfig(
         pins=DEFAULT_PINS,
         backend_name=settings.backend_name,
         pwm_frequency_hz=settings.pwm_frequency_hz,
@@ -106,4 +55,4 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
         turn_left_prep_back_sec=settings.turn_left_prep_back_sec,
         turn_left_prep_fwd_sec=settings.turn_left_prep_fwd_sec,
     )
-    return NavigationManager(cfg_local)
+    return NavigationManager(cfg)

@@ -11,12 +11,11 @@ Architecture:
                                                                 v
                                                           2x JYQD_V7.3E2
 
-    **Default / production:** omit the Pi — use ``NavigationManager`` on the
-    Jetson with ``NINA_NAV_MODE=local`` (GPIO + PWM on the Jetson header).
+    **Default / production:** the Jetson runs `NavigationManager` (GPIO + PWM
+    on the Jetson header); the Pi is not in the loop.
 
-When this daemon is deployed, the Jetson runs the GUI / vision / autonomy /
-sensors and **optionally** sends motor commands here over UART. This process
-is the *only* thing on the Pi that touches GPIO; it owns pigpio.
+When this daemon is deployed on a Pi for bench tests, it owns pigpio and
+touches GPIO only from this process.
 
 Wire protocol
 -------------

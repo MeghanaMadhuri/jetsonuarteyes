@@ -48,11 +48,7 @@ def build_app():
 
 
 def build_navigation(settings):
-    """Return a NavigationManager (local) or RemoteNavigationManager (Pi bridge).
-
-    Selection is made by `NavigationSettings.mode`, driven by the
-    `NINA_NAV_MODE` env var. See `nina.controllers.navigation_factory`.
-    """
+    """Return an un-initialised Jetson GPIO `NavigationManager`."""
     return build_navigation_manager(settings.navigation)
 
 
@@ -171,17 +167,15 @@ def main() -> None:
     sub.add_parser(
         "nav-bridge-ping",
         help=(
-            "Open the configured navigation backend and run a quick "
-            "connectivity check. In remote mode this PINGs the Pi "
-            "bridge over serial; in local mode it just confirms the "
-            "Jetson backend can be initialised."
+            "Open the Jetson GPIO navigation backend and run a quick "
+            "initialisation check."
         ),
     )
     sub.add_parser(
         "nav-print-config",
         help=(
-            "Print resolved navigation mode, invert flags, EL polarity, and BCM "
-            "pin map for this process (no GPIO). Use to verify env vars are seen."
+            "Print resolved invert flags, EL polarity, and BCM pin map for this "
+            "process (no GPIO). Use to verify env vars are seen."
         ),
     )
     nav_probe_wiring = sub.add_parser(
@@ -393,18 +387,10 @@ def main() -> None:
 
     if args.command == "nav-bridge-ping":
         nav = build_navigation(settings)
-        mode = settings.navigation.mode
-        print(f"[INIT] Navigation mode: {mode}")
-        if mode == "remote":
-            print(
-                f"[INIT] Bridge target : {settings.navigation.remote_serial_port} "
-                f"@ {settings.navigation.remote_baudrate}"
-            )
+        print("[INIT] Navigation: Jetson GPIO")
         try:
             nav.initialize()
             print("[OK] Navigation backend initialised.")
-            if mode == "remote":
-                print("[OK] PING -> PONG round-trip succeeded.")
         except Exception as exc:
             print(f"[FAIL] {exc}")
             raise SystemExit(1)
@@ -425,18 +411,11 @@ def main() -> None:
             "Export NINA_NAV_* in the **same shell** before "
             "`python3 -m nina.app.main ...` so values apply.\n"
         )
-        print(f"  mode:                {n.mode}")
         print(f"  backend:             {n.backend_name}")
         print(f"  pwm_frequency_hz:    {n.pwm_frequency_hz}")
         print(f"  invert_left_dir:     {n.invert_left_dir}  (NINA_NAV_INVERT_LEFT)")
         print(f"  invert_right_dir:    {n.invert_right_dir}  (NINA_NAV_INVERT_RIGHT)")
         print(f"  el_active_low:       {n.el_active_low}  (NINA_NAV_EL_ACTIVE_LOW)")
-        if n.mode == "remote":
-            print(
-                f"  remote_serial_port:  {n.remote_serial_port}  "
-                f"(NINA_NAV_REMOTE_PORT)"
-            )
-            print(f"  remote_baudrate:     {n.remote_baudrate}")
         print(
             "\nBCM map (from DEFAULT_PINS at import; override with "
             "NINA_NAV_L_EN / L_DIR / L_PWM / R_*):\n"
@@ -466,11 +445,6 @@ def main() -> None:
         return
 
     if args.command == "nav-probe-wiring":
-        if settings.navigation.mode != "local":
-            raise SystemExit(
-                "nav-probe-wiring toggles Jetson GPIOs and only works in local mode.\n"
-                f"NINA_NAV_MODE is currently '{settings.navigation.mode}'.\n"
-            )
         from nina.controllers.gpio_backend import create_backend
 
         n = settings.navigation
@@ -553,35 +527,27 @@ def main() -> None:
 
     if args.command == "nav-probe-eldir":
         nav = build_navigation(settings)
-        mode = settings.navigation.mode
         try:
             nav.initialize()
-            print(f"[INIT] Navigation mode: {mode}")
-            if mode == "local":
-                pins = nav.config.pins
-                print(
-                    "Jetson BCM (probe vs header GND; default polarity, no "
-                    "NINA_NAV_INVERT_*):"
-                )
-                print(
-                    f"  Left:  EL=BCM{pins.l_en}  Z/F=BCM{pins.l_dir}  "
-                    f"VR=BCM{pins.pwm_l}"
-                )
-                print(
-                    f"  Right: EL=BCM{pins.r_en}  Z/F=BCM{pins.r_dir}  "
-                    f"VR=BCM{pins.pwm_r}"
-                )
-                print(
-                    f"  NINA_NAV_EL_ACTIVE_LOW={int(settings.navigation.el_active_low)} "
-                    f"(from env or default)"
-                )
-            else:
-                print(
-                    "Remote mode: Pi owns EL/DIR/PWM — use the "
-                    "`pi_motor_bridge/PINMAP.md` **Raspberry Pi reference** "
-                    "column at the JYQD screws."
-                )
-            if mode == "local" and settings.navigation.el_active_low:
+            print("[INIT] Navigation: Jetson GPIO")
+            pins = nav.config.pins
+            print(
+                "Jetson BCM (probe vs header GND; default polarity, no "
+                "NINA_NAV_INVERT_*):"
+            )
+            print(
+                f"  Left:  EL=BCM{pins.l_en}  Z/F=BCM{pins.l_dir}  "
+                f"VR=BCM{pins.pwm_l}"
+            )
+            print(
+                f"  Right: EL=BCM{pins.r_en}  Z/F=BCM{pins.r_dir}  "
+                f"VR=BCM{pins.pwm_r}"
+            )
+            print(
+                f"  NINA_NAV_EL_ACTIVE_LOW={int(settings.navigation.el_active_low)} "
+                f"(from env or default)"
+            )
+            if settings.navigation.el_active_low:
                 print(
                     "Expected while held (active-low EL): both EL ~0 V (armed); "
                     "Left Z/F high; Right Z/F low (forward, mirrored). "
@@ -609,13 +575,6 @@ def main() -> None:
         return
 
     if args.command == "nav-test-direction":
-        if settings.navigation.mode != "local":
-            raise SystemExit(
-                "nav-test-direction probes Jetson GPIOs directly and only\n"
-                "works in local mode. NINA_NAV_MODE is currently\n"
-                f"'{settings.navigation.mode}'. For the remote (Pi bridge)\n"
-                "path use:  python3 -m nina.app.nav_bridge_test\n"
-            )
         nav = build_navigation(settings)
         nav.initialize()
         pins = nav.config.pins
@@ -672,12 +631,6 @@ def main() -> None:
         return
 
     if args.command == "nav-test-pin":
-        if settings.navigation.mode != "local":
-            raise SystemExit(
-                "nav-test-pin drives a Jetson GPIO directly and only works\n"
-                "in local mode. NINA_NAV_MODE is currently\n"
-                f"'{settings.navigation.mode}'.\n"
-            )
         from nina.controllers.gpio_backend import create_backend
         backend = create_backend(settings.navigation.backend_name)
         backend.setup()

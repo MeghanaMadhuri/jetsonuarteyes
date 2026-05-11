@@ -514,10 +514,8 @@ class DriveScreen(QWidget):
                     self,
                     "Drive not ready",
                     "BLDC did not connect in time. For Jetson-wired JYQDs, "
-                    "confirm NINA_NAV_MODE=local, header PWM (jetson-io), and "
-                    "wiring. Legacy UART bridge mode needs NINA_NAV_MODE=remote "
-                    "and motor_bridge on the link. Wait for the green pill, then "
-                    "try Straight again.",
+                    "confirm header PWM (jetson-io) and wiring. Wait for the "
+                    "green pill, then try Straight again.",
                 )
                 self._restore_after_straight_test()
                 return
@@ -844,13 +842,13 @@ class DriveScreen(QWidget):
             elif dm:
                 self._manual_hint.setText(
                     "Motors did not come up — read the BLDC pill (hover for full text if truncated). "
-                    "Typical fixes: NINA_NAV_MODE=local, jetson-io PWM on BCM 12+13, and matching "
+                    "Typical fixes: jetson-io PWM on BCM 12+13, and matching "
                     "NINA_NAV_* pin env vars."
                 )
             else:
                 self._manual_hint.setText(
                     "Motors not ready — wait for the green BLDC pill. "
-                    "Check NINA_NAV_MODE=local, Jetson-IO PWM, and wiring."
+                    "Check Jetson-IO PWM and wiring."
                 )
             self._manual_hint.show()
         elif state["brake"]:

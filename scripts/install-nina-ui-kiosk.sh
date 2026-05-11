@@ -22,7 +22,7 @@
 # Stop / disable later with:
 #   systemctl --user disable --now nina-ui-kiosk.service
 #
-# Edit env vars (e.g. `NINA_NAV_MODE=remote` for legacy Pi bridge) without touching
+# Edit env vars (e.g. `NINA_NAV_INVERT_*` or pin overrides) without touching
 # the repo:
 #   systemctl --user edit nina-ui-kiosk
 

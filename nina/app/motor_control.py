@@ -5,18 +5,8 @@ Run with the package path so imports resolve correctly:
 
     python3 -m nina.app.motor_control
 
-Two backends are supported, chosen via `NINA_NAV_MODE`:
-
-  NINA_NAV_MODE=local   (default) - drive the JYQDs directly from the
-                          Jetson Orin Nano's GPIOs. `NINA_NAV_BACKEND`
-                          picks 'jetson' or 'pigpio' inside this mode.
-
-  NINA_NAV_MODE=remote  - send commands over serial to a Raspberry Pi
-                          running `pi_motor_bridge/motor_bridge.py`.
-                          Use this when the Pi is wired to the JYQDs.
-                          Set `NINA_NAV_REMOTE_PORT` (default
-                          /dev/ttyUSB0) and `NINA_NAV_REMOTE_BAUD`
-                          (default 115200).
+Drives the JYQDs from the Jetson Orin Nano GPIOs. `NINA_NAV_BACKEND`
+picks 'jetson' or 'pigpio'.
 
 All other tunables (default_speed_percent, invert_*_dir, etc.) come
 from `nina.config.settings.load_settings()` so this CLI behaves
@@ -54,12 +44,7 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     nav_settings = load_settings(repo_root).navigation
-    print(f"[INIT] Navigation mode: {nav_settings.mode}")
-    if nav_settings.mode == "remote":
-        print(
-            f"[INIT] Bridge target : {nav_settings.remote_serial_port} "
-            f"@ {nav_settings.remote_baudrate}"
-        )
+    print("[INIT] Navigation: Jetson GPIO")
     nav = build_navigation_manager(nav_settings)
     try:
         nav.initialize()
