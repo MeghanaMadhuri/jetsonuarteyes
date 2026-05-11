@@ -9,7 +9,7 @@ from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.controllers.navigation_factory import build_navigation_manager
-from nina.controllers.navigation_manager import DEFAULT_PINS
+from nina.controllers.navigation_manager import DEFAULT_PINS, jetson_orin_nano_board_pin
 from nina.services.audio_player import AudioPlayer
 from nina.services.startup_service import StartupService
 
@@ -183,6 +183,25 @@ def main() -> None:
             "Print resolved navigation mode, invert flags, EL polarity, and BCM "
             "pin map for this process (no GPIO). Use to verify env vars are seen."
         ),
+    )
+    nav_probe_wiring = sub.add_parser(
+        "nav-probe-wiring",
+        help=(
+            "Local only: slow HIGH/LOW on each EL + Z/F BCM, then PWM on both VR "
+            "BCMs. Meter header then JYQD screw each step to find harness breaks."
+        ),
+    )
+    nav_probe_wiring.add_argument(
+        "--dwell",
+        type=float,
+        default=4.0,
+        help="Seconds per HIGH/LOW phase on digital lines (default 4)",
+    )
+    nav_probe_wiring.add_argument(
+        "--pwm-duty",
+        type=float,
+        default=50.0,
+        help="VR PWM duty 0-100 during PWM phase (default 50)",
     )
 
     nav_diag = sub.add_parser(
@@ -443,6 +462,72 @@ def main() -> None:
         print(
             "\n`NINA_NAV_INVERT_*` only swaps forward vs backward Z/F sense — not "
             "missing EL, VR PWM, 24 V, or a misrouted DIR wire."
+        )
+        return
+
+    if args.command == "nav-probe-wiring":
+        if settings.navigation.mode != "local":
+            raise SystemExit(
+                "nav-probe-wiring toggles Jetson GPIOs and only works in local mode.\n"
+                f"NINA_NAV_MODE is currently '{settings.navigation.mode}'.\n"
+            )
+        from nina.controllers.gpio_backend import create_backend
+
+        n = settings.navigation
+        p = DEFAULT_PINS
+        dwell = max(1.0, min(30.0, float(args.dwell)))
+        pwm_d = max(0.0, min(100.0, float(args.pwm_duty)))
+        phys = jetson_orin_nano_board_pin
+
+        print(
+            "\nnav-probe-wiring — one signal at a time (no NavigationManager).\n"
+            "For each step: meter **Jetson header** (BCM→physical below), then "
+            "**JYQD screw**.\n"
+            "Expect ~3.3 V HIGH / ~0 V LOW on digital lines; VR ~time-averaged "
+            "voltage at partial duty.\n"
+            "Remove any `NINA_NAV_L_EN=18` / legacy overrides unless that is "
+            "still your harness.\n"
+        )
+        print(
+            f"  L_EL={p.l_en} phys{phys(p.l_en) or '?'}  "
+            f"L_ZF={p.l_dir} phys{phys(p.l_dir) or '?'}  "
+            f"L_VR={p.pwm_l} phys{phys(p.pwm_l) or '?'}"
+        )
+        print(
+            f"  R_EL={p.r_en} phys{phys(p.r_en) or '?'}  "
+            f"R_ZF={p.r_dir} phys{phys(p.r_dir) or '?'}  "
+            f"R_VR={p.pwm_r} phys{phys(p.pwm_r) or '?'}\n"
+        )
+        backend = create_backend(n.backend_name)
+        backend.setup()
+        try:
+            for label, pin in (
+                ("L_EL", p.l_en),
+                ("L_ZF", p.l_dir),
+                ("R_EL", p.r_en),
+                ("R_ZF", p.r_dir),
+            ):
+                print(f"\n--- {label} BCM{pin}: HIGH {dwell}s — probe now ---")
+                backend.configure_output(pin)
+                backend.write(pin, 1)
+                time.sleep(dwell)
+                print(f"--- {label} BCM{pin}: LOW {dwell}s — probe now ---")
+                backend.write(pin, 0)
+                time.sleep(dwell)
+            for label, pin in (("L_VR", p.pwm_l), ("R_VR", p.pwm_r)):
+                print(
+                    f"\n--- {label} BCM{pin}: PWM {pwm_d}% @ {n.pwm_frequency_hz}Hz "
+                    f"for {dwell}s — probe VR screw ---"
+                )
+                backend.configure_pwm(pin, n.pwm_frequency_hz)
+                backend.set_duty(pin, pwm_d)
+                time.sleep(dwell)
+                backend.set_duty(pin, 0.0)
+        finally:
+            backend.shutdown()
+        print(
+            "\n[OK] Sequence complete. If header is clean but JYQD screw is not, "
+            "the harness is still wrong or the screw is the wrong net."
         )
         return
 

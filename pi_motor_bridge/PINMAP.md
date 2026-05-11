@@ -172,7 +172,15 @@ to **BCM 27** so it does not share that pin (`nina/sensors/hcsr04.py`).
    `python3 -m nina.app.main nav-print-config`  
    Run it in the **same** shell after `export NINA_NAV_INVERT_*=1`. If the
    printed `invert_*` stays `False`, the CLI never received the variable
-   (systemd unit, typo, or different user session).
+   (systemd unit, typo, or different user session). After a harness change,
+   unset legacy overrides (`NINA_NAV_L_EN=18`, etc.) so BCMs match **phys 18 /
+   31 / 16** for EL / Z/F (see production table).
+0b. **One-pin-at-a-time sweep (find open / swapped wires):**  
+   `python3 -m nina.app.main nav-probe-wiring --dwell 4`  
+   Toggles each EL and Z/F HIGH/LOW slowly, then PWM on both VR lines. Meter
+   **header** then **JYQD screw** each on-screen step. Clean at header but
+   dead at screw ⇒ harness; stuck on header ⇒ wrong BCM, alt-function, or
+   `NINA_JETSON_MODEL`.
 1. **Motor supply:** JYQD **VCC / battery** (e.g. 24 V) must be present; 5 V from
    the 40-pin header is **logic only** — without pack voltage the hubs will not
    turn even if GPIO looks fine.
