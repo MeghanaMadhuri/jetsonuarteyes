@@ -398,8 +398,8 @@ def main() -> None:
     if args.command == "nav-print-config":
         n = settings.navigation
         p = DEFAULT_PINS
-        l_zf_fwd = "LOW" if n.invert_left_dir else "HIGH"
-        r_zf_fwd = "HIGH" if n.invert_right_dir else "LOW"
+        l_lvl = "LOW" if n.invert_left_dir else "HIGH"
+        r_lvl = "HIGH" if n.invert_right_dir else "LOW"
         print(
             "Navigation config for this Python process.\n"
             "Export NINA_NAV_* in the **same shell** before "
@@ -426,11 +426,22 @@ def main() -> None:
             f"  R_EN={p.r_en}  R_DIR(Z/F)={p.r_dir}  R_PWM={p.pwm_r}"
         )
         print(
-            "\nLogical **forward**: default soft convention is left Z/F "
-            f"{l_zf_fwd}, right Z/F {r_zf_fwd} "
-            "(right is mirrored vs left unless invert_right flips it).\n"
-            "`NINA_NAV_INVERT_*` only swaps those levels — it does not fix "
-            "missing EL, VR, 24 V, or a dead DIR wire."
+            "\nLogical **forward** with **these** invert flags: "
+            f"left Z/F → {l_lvl}, right Z/F → {r_lvl}."
+        )
+        if l_lvl == r_lvl:
+            print(
+                "  Both sides use the same level for forward "
+                "(common with twin JYQD wiring + `NINA_NAV_INVERT_LEFT=1`)."
+            )
+        else:
+            print(
+                "  Baseline with no inverts is left HIGH / right LOW for forward; "
+                "each `NINA_NAV_INVERT_*` flips that wheel only."
+            )
+        print(
+            "\n`NINA_NAV_INVERT_*` only swaps forward vs backward Z/F sense — not "
+            "missing EL, VR PWM, 24 V, or a misrouted DIR wire."
         )
         return
 
