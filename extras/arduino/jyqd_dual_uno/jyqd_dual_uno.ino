@@ -1,23 +1,30 @@
 /*
  * Dual BLDC hub motors (JYQD_V7.3E2) + Arduino Uno
  *
- * Z/F matches Nina / NavigationManager (mirrored per side):
- *   forward      : left ZF HIGH,  right ZF LOW
- *   backward     : left ZF LOW,   right ZF HIGH
- *   turn left     : both ZF LOW   (left reverse, right forward — Nina pivot)
- *   turn right    : both ZF HIGH  (left forward, right reverse)
+ * This sketch does **not** require any pull-up resistor on Z/F — only the
+ * Arduino pins drive the lines. A ~4.7k to V+ is an optional *hardware*
+ * tweak for weak opto inputs; it is not assumed here.
  *
- * SERIAL FLOW (Serial Monitor 115200, line ending: Newline or CR+LF)
- *   1) Send F, B, L, or R  -> board asks for speed
- *   2) Type speed 0-255 and press Enter  -> motors run at that PWM until stop
- *   3) Send S  -> stop (only S stops motion; there is no auto timeout)
+ * Default Z/F matches Nina / NavigationManager:
+ *   forward    : left HIGH,  right LOW
+ *   backward   : left LOW,   right HIGH
+ *   turn left  : both LOW   (pivot)
+ *   turn right : both HIGH  (pivot)
  *
- * Optional while running: + / - nudge PWM (same direction kept).
+ * If hubs do not spin with default polarity, set at compile time:
+ *   #define JYQD_LEGACY_ZF_POLARITY 1
+ * before the #ifndef block below — this uses the older bench table
+ * (forward = left LOW, right HIGH). Motion also uses a short Z/F settle +
+ * breakaway PWM kick (similar to Nina).
+ *
+ * SERIAL (115200, line ending Newline or CR+LF)
+ *   F/B/L/R -> enter speed 0-255 -> runs until S.
+ *   +/- nudge PWM; ? help.
  *
  * WIRING
- *   Left:  GND->GND, EL->D8, ZF->D4, VR->D10 PWM, Signal->NC, 5V per manual
- *   Right: GND->GND, EL->D9, ZF->D5, VR->D11 PWM, Signal->NC
- *   24 V only to motor drivers; common GND with Uno; VR may need RC low-pass per driver.
+ *   Left:  GND, EL D8, ZF D4, VR D10 PWM, Signal NC, 5V per manual
+ *   Right: GND, EL D9, ZF D5, VR D11 PWM, Signal NC
+ *   24 V to drivers only; common GND with Uno.
  */
 
 #include <Arduino.h>
@@ -32,6 +39,18 @@
 #define PIN_RIGHT_VR  11
 
 #define SERIAL_BAUD   115200
+
+/* 1 = forward left LOW / right HIGH (older sketch / some harnesses). */
+#ifndef JYQD_LEGACY_ZF_POLARITY
+#define JYQD_LEGACY_ZF_POLARITY 0
+#endif
+
+/** ms: Z/F stable before EL + PWM (JYQD is level-sensitive; allow opto slew). */
+static const uint8_t kZfSettleMs = 8;
+/** If commanded PWM is lower, use at least this for a breakaway pulse (0-255). */
+static const uint8_t kKickMinPwm = 48;
+/** ms to hold breakaway duty before final speed. */
+static const uint16_t kKickHoldMs = 280;
 
 enum MotionMode : uint8_t {
   MODE_STOPPED = 0,
@@ -83,51 +102,70 @@ static void applyMotor(uint8_t pinEl, uint8_t pinZf, uint8_t pinVr,
   }
 }
 
-/** Nina forward: left ZF HIGH, right ZF LOW (set both before enabling EL/VR). */
+/** Z/F first, settle, EL on, VR 0, then breakaway kick then commanded speed. */
+static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t spd) {
+  digitalWrite(PIN_LEFT_ZF, leftZfHigh ? HIGH : LOW);
+  digitalWrite(PIN_RIGHT_ZF, rightZfHigh ? HIGH : LOW);
+  delay(kZfSettleMs);
+  digitalWrite(PIN_LEFT_EL, HIGH);
+  digitalWrite(PIN_RIGHT_EL, HIGH);
+  analogWrite(PIN_LEFT_VR, 0);
+  analogWrite(PIN_RIGHT_VR, 0);
+  delay(2);
+  const uint8_t kick = spd < kKickMinPwm ? kKickMinPwm : spd;
+  analogWrite(PIN_LEFT_VR, kick);
+  analogWrite(PIN_RIGHT_VR, kick);
+  delay(kKickHoldMs);
+  analogWrite(PIN_LEFT_VR, spd);
+  analogWrite(PIN_RIGHT_VR, spd);
+}
+
 static void forwardApply() {
   logFmt2(F("RUN forward  VR PWM = "), g_speedPwm);
-  digitalWrite(PIN_LEFT_ZF, HIGH);
-  digitalWrite(PIN_RIGHT_ZF, LOW);
-  applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, true, true, g_speedPwm);
-  applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, true, false, g_speedPwm);
+#if JYQD_LEGACY_ZF_POLARITY
+  enableBothMotorsWithKick(false, true, g_speedPwm);
+#else
+  enableBothMotorsWithKick(true, false, g_speedPwm);
+#endif
 }
 
-/** Nina backward: left ZF LOW, right ZF HIGH. */
 static void backwardApply() {
   logFmt2(F("RUN backward VR PWM = "), g_speedPwm);
-  digitalWrite(PIN_LEFT_ZF, LOW);
-  digitalWrite(PIN_RIGHT_ZF, HIGH);
-  applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, true, false, g_speedPwm);
-  applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, true, true, g_speedPwm);
+#if JYQD_LEGACY_ZF_POLARITY
+  enableBothMotorsWithKick(true, false, g_speedPwm);
+#else
+  enableBothMotorsWithKick(false, true, g_speedPwm);
+#endif
 }
 
-/**
- * Nina turn_right: left forward (HIGH), right backward (HIGH) — both ZF HIGH.
- */
 static void turnRightApply() {
   logFmt2(F("RUN turnRight VR PWM = "), g_speedPwm);
-  digitalWrite(PIN_LEFT_ZF, HIGH);
-  digitalWrite(PIN_RIGHT_ZF, HIGH);
-  applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, true, true, g_speedPwm);
-  applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, true, true, g_speedPwm);
+#if JYQD_LEGACY_ZF_POLARITY
+  enableBothMotorsWithKick(true, false, g_speedPwm);
+#else
+  enableBothMotorsWithKick(true, true, g_speedPwm);
+#endif
 }
 
-/**
- * Nina turn_left: left backward (LOW), right forward (LOW) — both ZF LOW.
- */
 static void turnLeftApply() {
   logFmt2(F("RUN turnLeft  VR PWM = "), g_speedPwm);
-  digitalWrite(PIN_LEFT_ZF, LOW);
-  digitalWrite(PIN_RIGHT_ZF, LOW);
-  applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, true, false, g_speedPwm);
-  applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, true, false, g_speedPwm);
+#if JYQD_LEGACY_ZF_POLARITY
+  enableBothMotorsWithKick(false, true, g_speedPwm);
+#else
+  enableBothMotorsWithKick(false, false, g_speedPwm);
+#endif
 }
 
 static void stopMotors() {
-  logLine(F("[JYQD] STOP (EL off, VR 0; ZF parked forward: L=H R=L)"));
-  // Park direction lines like Nina initialize: left forward HIGH, right forward LOW.
+#if JYQD_LEGACY_ZF_POLARITY
+  logLine(F("[JYQD] STOP (EL off; ZF park legacy FWD: L=L R=H)"));
+  applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, false, false, 0);
+  applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, false, true, 0);
+#else
+  logLine(F("[JYQD] STOP (EL off; ZF park Nina FWD: L=H R=L)"));
   applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, false, true, 0);
   applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, false, false, 0);
+#endif
   g_runningMode = MODE_STOPPED;
 }
 
@@ -204,6 +242,11 @@ static void printHelp() {
   logLine(F("  S = stop (only way to end continuous motion)"));
   logLine(F("  + / - = nudge PWM while running"));
   logLine(F("  ? = help. Use a line ending with Newline."));
+#if JYQD_LEGACY_ZF_POLARITY
+  logLine(F("  Build: JYQD_LEGACY_ZF_POLARITY=1 (try 0 if F/B seem swapped)."));
+#else
+  logLine(F("  Build: Nina Z/F; set JYQD_LEGACY_ZF_POLARITY=1 if hubs do not move."));
+#endif
 }
 
 static void processCharWhileIdle(uint8_t c) {
