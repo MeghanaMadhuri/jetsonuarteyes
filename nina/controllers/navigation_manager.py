@@ -312,6 +312,7 @@ class NavigationManager:
       engage_brake() / release_brake()
       set_status(mode)
       diag_symmetric_forward(speed_percent, hold_sec)  # bench: sym forward + hold
+      diag_single_side_forward(side, speed_percent, hold_sec)  # bench: one hub; other EL off
       diag_arm_forward_pwm_zero_hold(hold_sec)  # bench: EL+DIR forward, VR 0 — probe screws
     """
 
@@ -426,6 +427,80 @@ class NavigationManager:
             right_dir=self.DIR_FORWARD,
             right_speed=speed,
         )
+        if hold > 0:
+            time.sleep(hold)
+
+    def diag_single_side_forward(
+        self, drive_side: str, speed_percent: int, hold_sec: float
+    ) -> None:
+        """Bench: forward on **one** wheel only; the other driver's EL is **off** (PWM 0).
+
+        Use when only one hub/JYQD is wired for bring-up so the idle side does
+        not stay armed at zero speed. Motion uses the same DIR gap, start kick,
+        and PWM reassert timing as `_start_both_wheels`, but skips straight-line
+        opposite nudges (those require both wheels).
+
+        ``drive_side`` must be ``SIDE_LEFT`` or ``SIDE_RIGHT``.
+        """
+        self._require_initialized()
+        if drive_side not in (self.SIDE_LEFT, self.SIDE_RIGHT):
+            raise ValueError(
+                f"drive_side must be '{self.SIDE_LEFT}' or '{self.SIDE_RIGHT}', "
+                f"got {drive_side!r}"
+            )
+        speed = max(0, min(100, int(speed_percent)))
+        hold = max(0.0, float(hold_sec))
+        inactive = (
+            self.SIDE_RIGHT if drive_side == self.SIDE_LEFT else self.SIDE_LEFT
+        )
+        log.info(
+            "diag_single_side_forward: %s only %s%% FWD %ss hold (other side EL off)",
+            drive_side,
+            speed,
+            hold,
+        )
+        self._control_speed(inactive, False, 0, self.DIR_FORWARD)
+        was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
+        moving_now = speed > 0
+        self._prepare_side_motion(drive_side, self.DIR_FORWARD)
+        cfg = self.config
+        if was_rest and moving_now:
+            gap = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap > 0:
+                time.sleep(gap)
+        kp = max(0, min(100, int(cfg.start_kick_percent)))
+        ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(cfg.start_kick_sec)))
+
+        def _kick_duty(cmd: int) -> int:
+            if cmd <= 0 or kp <= 0 or ks <= 0:
+                return cmd
+            return max(cmd, kp)
+
+        k_cmd = _kick_duty(speed)
+        need_kick = (
+            was_rest
+            and moving_now
+            and kp > 0
+            and ks > 0
+            and k_cmd > speed
+        )
+        if need_kick:
+            self._apply_side_pwm(drive_side, k_cmd)
+            time.sleep(ks)
+        self._apply_side_pwm(drive_side, speed)
+        if was_rest and moving_now and speed > 0:
+            rar = max(0.0, min(0.1, float(cfg.pwm_reassert_sec)))
+            if rar > 0:
+                time.sleep(rar)
+                self._apply_side_pwm(drive_side, speed)
+        if drive_side == self.SIDE_LEFT:
+            self._last_l_pwm = speed
+            self._last_r_pwm = 0
+        else:
+            self._last_l_pwm = 0
+            self._last_r_pwm = speed
+        self._last_straight_sign = None
+        self._last_was_symmetric_straight = False
         if hold > 0:
             time.sleep(hold)
 

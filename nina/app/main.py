@@ -204,7 +204,17 @@ def main() -> None:
             "Bench: symmetric forward with the same start path as normal forward "
             "(kick, DIR gap, PWM reassert). If hubs still do not spin, check 24 V "
             "and wiring. Use NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC=0 to skip the "
-            "straight preload nudge."
+            "straight preload nudge. Use --side left|right to run one hub only "
+            "(other driver's EL off) for bring-up."
+        ),
+    )
+    nav_diag.add_argument(
+        "--side",
+        choices=("left", "right", "both"),
+        default="both",
+        help=(
+            "Which wheel: both (default, symmetric), or one side with the other "
+            "JYQD disabled (EL off, PWM 0)."
         ),
     )
     nav_diag.add_argument(
@@ -509,12 +519,22 @@ def main() -> None:
         nav = build_navigation(settings)
         try:
             nav.initialize()
-            nav.diag_symmetric_forward(int(args.speed), float(args.hold))
-            print(
-                f"[OK] nav-diag-forward: held {int(args.speed)}% symmetric forward "
-                f"for {float(args.hold)}s — if hubs did not move, probe EL/DIR/VR "
-                f"and 24 V (see pi_motor_bridge/PINMAP.md troubleshooting)."
-            )
+            if args.side == "both":
+                nav.diag_symmetric_forward(int(args.speed), float(args.hold))
+                print(
+                    f"[OK] nav-diag-forward: held {int(args.speed)}% symmetric forward "
+                    f"for {float(args.hold)}s — if hubs did not move, probe EL/DIR/VR "
+                    f"and 24 V (see pi_motor_bridge/PINMAP.md troubleshooting)."
+                )
+            else:
+                nav.diag_single_side_forward(
+                    args.side, int(args.speed), float(args.hold)
+                )
+                print(
+                    f"[OK] nav-diag-forward: held {int(args.speed)}% forward on "
+                    f"{args.side} wheel only ({float(args.hold)}s); other side EL off — "
+                    "probe that hub's EL/DIR/VR and 24 V."
+                )
         except Exception as exc:
             print(f"[FAIL] {exc}")
             raise SystemExit(1)
