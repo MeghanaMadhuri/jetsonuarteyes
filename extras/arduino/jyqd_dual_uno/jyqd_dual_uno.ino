@@ -5,7 +5,8 @@
  * need stronger HIGH — fix marginal LOW at the screw with wiring/buffer first.
  *
  * Z/F (see JYQD_LEGACY_ZF_POLARITY below):
- *   LEGACY=1 (default): forward L LOW R HIGH; backward L HIGH R LOW; turns complementary.
+ *   LEGACY=1 (default): forward L LOW R HIGH; backward L HIGH R LOW;
+ *                       pivot L: both HIGH (L back, R fwd); pivot R: both LOW.
  *   LEGACY=0 (Nina):    forward L HIGH R LOW; backward L LOW R HIGH; pivot both LOW / both HIGH.
  *
  * If forward is reliable on one side only and backward swaps which side is good,
@@ -288,7 +289,8 @@ static void backwardApply() {
 static void turnRightApply() {
   logFmt2(F("RUN turnRight VR PWM = "), g_speedPwm);
 #if JYQD_LEGACY_ZF_POLARITY
-  enableBothMotorsWithKick(true, false, g_speedPwm);
+  /* Pivot right: L forward (LOW), R backward (LOW) — not straight-back pair. */
+  enableBothMotorsWithKick(false, false, g_speedPwm);
 #else
   enableBothMotorsWithKick(true, true, g_speedPwm);
 #endif
@@ -297,7 +299,8 @@ static void turnRightApply() {
 static void turnLeftApply() {
   logFmt2(F("RUN turnLeft  VR PWM = "), g_speedPwm);
 #if JYQD_LEGACY_ZF_POLARITY
-  enableBothMotorsWithKick(false, true, g_speedPwm);
+  /* Pivot left: L backward (HIGH), R forward (HIGH) — not straight-fwd pair. */
+  enableBothMotorsWithKick(true, true, g_speedPwm);
 #else
   enableBothMotorsWithKick(false, false, g_speedPwm);
 #endif
