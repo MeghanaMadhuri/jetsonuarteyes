@@ -15,8 +15,8 @@
  *
  * SERIAL 115200 / Newline. F B L R -> speed 0-255 -> S stop. +/-
  *
- * Stiction / manual nudge: hub + JYQD often need a stronger **breakaway** pulse
- * and/or a brief **opposite-direction blip** from rest. Tune kKick*, JYQD_OPPOSITE_*.
+ * Stiction: opposite blip + **EL edge kick** (`navigation_bldc.kick_and_set`). Tune
+ * kJyqd*, kKick*; disable edge kick with JYQD_USE_EL_EDGE_KICK 0.
  *
  * WIRING: L: GND EL D8 ZF D4 VR D10 | R: GND EL D9 ZF D5 VR D11 | 24 V drivers | common GND.
  */
@@ -71,6 +71,21 @@ static const uint16_t kKickHoldMs = 1150U;
 static const uint8_t kPwmReassertGapMs = 95U;
 /** ms after VR=0 in stop before parking Z/F. */
 static const uint8_t kStopVrZeroMs = 22U;
+
+/**
+ * Pi `navigation_bldc.kick_and_set` EL/PWM edge sequence. JYQD_V7.3E2 often
+ * will not commutate from rest without: warm PWM while EL high, EL falling with
+ * PWM->0, EL rising with 0->N on PWM. Set JYQD_USE_EL_EDGE_KICK 0 to compare.
+ */
+#ifndef JYQD_USE_EL_EDGE_KICK
+#define JYQD_USE_EL_EDGE_KICK 1
+#endif
+/** Step-1 "warm" duty (~Pi KICK_PWM_PERCENT 15%); edge prep, not cruise torque. */
+static const uint8_t kJyqdWarmPwm = 48U;
+/** ms each for warm dwell and EL-low dwell (Pi ~100ms). */
+static const uint16_t kJyqdEdgeDwellMs = 140U;
+/** After EL rising, before first power PWM. */
+static const uint8_t kJyqdElRiseSettleMs = 14U;
 
 enum MotionMode : uint8_t {
   MODE_STOPPED = 0,
@@ -165,7 +180,42 @@ static void writeZfHardened(bool leftZfHigh, bool rightZfHigh) {
   delay(kZfReassertMs);
 }
 
-/** Z/F hardened, optional opposite blip, EL on, kick, cruise + PWM reassert. */
+/**
+ * JYQD reliable start: warm PWM @ EL high -> EL low + PWM 0 -> EL high +
+ * PWM 0->kick->cruise (see navigation_bldc.kick_and_set).
+ */
+static void jyqdElEdgeKickThenCruise(uint8_t finalSpd) {
+  const uint8_t cruiseKick = finalSpd < kKickMinPwm ? kKickMinPwm : finalSpd;
+  digitalWrite(PIN_LEFT_EL, HIGH);
+  digitalWrite(PIN_RIGHT_EL, HIGH);
+  analogWrite(PIN_LEFT_VR, 0);
+  analogWrite(PIN_RIGHT_VR, 0);
+  delay(kVrZeroMs);
+  analogWrite(PIN_LEFT_VR, kJyqdWarmPwm);
+  analogWrite(PIN_RIGHT_VR, kJyqdWarmPwm);
+  delay(kJyqdEdgeDwellMs);
+  analogWrite(PIN_LEFT_VR, 0);
+  analogWrite(PIN_RIGHT_VR, 0);
+  digitalWrite(PIN_LEFT_EL, LOW);
+  digitalWrite(PIN_RIGHT_EL, LOW);
+  delay(kJyqdEdgeDwellMs);
+  digitalWrite(PIN_LEFT_EL, HIGH);
+  digitalWrite(PIN_RIGHT_EL, HIGH);
+  delay(kJyqdElRiseSettleMs);
+  analogWrite(PIN_LEFT_VR, cruiseKick);
+  analogWrite(PIN_RIGHT_VR, cruiseKick);
+  delay(kKickHoldMs);
+  analogWrite(PIN_LEFT_VR, finalSpd);
+  analogWrite(PIN_RIGHT_VR, finalSpd);
+  delay(kPwmReassertGapMs);
+  analogWrite(PIN_LEFT_VR, finalSpd);
+  analogWrite(PIN_RIGHT_VR, finalSpd);
+  delay(kPwmReassertGapMs);
+  analogWrite(PIN_LEFT_VR, finalSpd);
+  analogWrite(PIN_RIGHT_VR, finalSpd);
+}
+
+/** Z/F hardened, optional opposite blip, then EL-edge kick + cruise. */
 static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t spd) {
   refreshMotorPins();
   parkDriversFull();
@@ -194,6 +244,9 @@ static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t 
 #endif
   writeZfHardened(leftZfHigh, rightZfHigh);
   delay(kElAfterZfMs);
+#if JYQD_USE_EL_EDGE_KICK
+  jyqdElEdgeKickThenCruise(spd);
+#else
   digitalWrite(PIN_LEFT_EL, HIGH);
   digitalWrite(PIN_RIGHT_EL, HIGH);
   analogWrite(PIN_LEFT_VR, 0);
@@ -211,6 +264,7 @@ static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t 
   delay(kPwmReassertGapMs);
   analogWrite(PIN_LEFT_VR, spd);
   analogWrite(PIN_RIGHT_VR, spd);
+#endif
 }
 
 static void forwardApply() {
@@ -256,6 +310,7 @@ static void stopMotors() {
   analogWrite(PIN_LEFT_VR, 0);
   analogWrite(PIN_RIGHT_VR, 0);
   delay(kStopVrZeroMs);
+#if JYQD_LEGACY_ZF_POLARITY
   logLine(F("[JYQD] STOP (EL off; ZF park legacy FWD: L=L R=H)"));
   applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, false, false, 0);
   applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, false, true, 0);
@@ -341,7 +396,7 @@ static void printHelp() {
   logLine(F("  + / - = nudge PWM while running"));
   logLine(F("  ? = help. Use a line ending with Newline."));
   logLine(F("  Try speed >= 100 for tests; raise kKickMinPwm/kKickHoldMs if stiction."));
-  logLine(F("  Opposite blip: JYQD_OPPOSITE_BLIP_MS (0=off), JYQD_OPPOSITE_BLIP_PWM."));
+  logLine(F("  EL edge kick: JYQD_USE_EL_EDGE_KICK (Pi kick_and_set); kJyqdEdgeDwellMs."));
 #if JYQD_LEGACY_ZF_POLARITY
   logLine(F("  Build: LEGACY Z/F (F=L low R high); set 0 for Nina table."));
 #else
