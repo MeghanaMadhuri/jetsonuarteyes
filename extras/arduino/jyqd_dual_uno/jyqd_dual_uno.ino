@@ -41,32 +41,36 @@
 
 /** 0 = disabled. Else ms: brief opposite ZF + PWM blip after park (Nina-style preload). */
 #ifndef JYQD_OPPOSITE_BLIP_MS
-#define JYQD_OPPOSITE_BLIP_MS 150U
+#define JYQD_OPPOSITE_BLIP_MS 280U
 #endif
 #ifndef JYQD_OPPOSITE_BLIP_PWM
-#define JYQD_OPPOSITE_BLIP_PWM 60U
+#define JYQD_OPPOSITE_BLIP_PWM 95U
 #endif
 /** ms pause after blip before commanding target direction. */
 #ifndef JYQD_POST_BLIP_SETTLE_MS
-#define JYQD_POST_BLIP_SETTLE_MS 55U
+#define JYQD_POST_BLIP_SETTLE_MS 100U
 #endif
 
+/** ms between complementary Z/F half-steps (HIGH net, then LOW net). */
+static const uint8_t kZfStaggerMs = 12U;
 /** Full park: EL off, VR 0, before every start (lets JYQD re-sample DIR). */
-static const uint8_t kParkMs = 25U;
+static const uint8_t kParkMs = 48U;
 /** After complementary Z/F writes, let optos settle before EL. */
-static const uint8_t kZfSettleMs = 28U;
+static const uint8_t kZfSettleMs = 48U;
 /** Second Z/F rewrite hold (re-latch weak lines). */
-static const uint8_t kZfReassertMs = 10U;
+static const uint8_t kZfReassertMs = 24U;
 /** After Z/F valid, wait before asserting EL. */
-static const uint8_t kElAfterZfMs = 15U;
+static const uint8_t kElAfterZfMs = 32U;
 /** VR stays 0 with EL on (JYQD path like Nina). */
-static const uint8_t kVrZeroMs = 6U;
+static const uint8_t kVrZeroMs = 14U;
 /** Breakaway pulse floor (0-255); increase if hubs still need a shove from rest. */
-static const uint8_t kKickMinPwm = 118U;
+static const uint8_t kKickMinPwm = 175U;
 /** Hold breakaway before dropping to commanded duty. */
-static const uint16_t kKickHoldMs = 700U;
-/** After final PWM, brief pause then second analogWrite (clears stuck low duty). */
-static const uint8_t kPwmReassertGapMs = 45U;
+static const uint16_t kKickHoldMs = 1150U;
+/** After final PWM, pause then repeat analogWrite (clears stuck low duty). */
+static const uint8_t kPwmReassertGapMs = 95U;
+/** ms after VR=0 in stop before parking Z/F. */
+static const uint8_t kStopVrZeroMs = 22U;
 
 enum MotionMode : uint8_t {
   MODE_STOPPED = 0,
@@ -144,11 +148,11 @@ static void writeZfHardened(bool leftZfHigh, bool rightZfHigh) {
   if (leftZfHigh != rightZfHigh) {
     if (leftZfHigh) {
       digitalWrite(PIN_LEFT_ZF, HIGH);
-      delay(4);
+      delay(kZfStaggerMs);
       digitalWrite(PIN_RIGHT_ZF, LOW);
     } else {
       digitalWrite(PIN_RIGHT_ZF, HIGH);
-      delay(4);
+      delay(kZfStaggerMs);
       digitalWrite(PIN_LEFT_ZF, LOW);
     }
   } else {
@@ -204,6 +208,9 @@ static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t 
   delay(kPwmReassertGapMs);
   analogWrite(PIN_LEFT_VR, spd);
   analogWrite(PIN_RIGHT_VR, spd);
+  delay(kPwmReassertGapMs);
+  analogWrite(PIN_LEFT_VR, spd);
+  analogWrite(PIN_RIGHT_VR, spd);
 }
 
 static void forwardApply() {
@@ -248,8 +255,7 @@ static void stopMotors() {
   digitalWrite(PIN_RIGHT_EL, LOW);
   analogWrite(PIN_LEFT_VR, 0);
   analogWrite(PIN_RIGHT_VR, 0);
-  delay(4);
-#if JYQD_LEGACY_ZF_POLARITY
+  delay(kStopVrZeroMs);
   logLine(F("[JYQD] STOP (EL off; ZF park legacy FWD: L=L R=H)"));
   applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, false, false, 0);
   applyMotor(PIN_RIGHT_EL, PIN_RIGHT_ZF, PIN_RIGHT_VR, false, true, 0);
