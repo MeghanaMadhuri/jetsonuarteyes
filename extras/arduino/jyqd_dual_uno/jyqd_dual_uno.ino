@@ -15,6 +15,9 @@
  *
  * SERIAL 115200 / Newline. F B L R -> speed 0-255 -> S stop. +/-
  *
+ * Stiction / manual nudge: hub + JYQD often need a stronger **breakaway** pulse
+ * and/or a brief **opposite-direction blip** from rest. Tune kKick*, JYQD_OPPOSITE_*.
+ *
  * WIRING: L: GND EL D8 ZF D4 VR D10 | R: GND EL D9 ZF D5 VR D11 | 24 V drivers | common GND.
  */
 
@@ -36,6 +39,18 @@
 #define JYQD_LEGACY_ZF_POLARITY 1
 #endif
 
+/** 0 = disabled. Else ms: brief opposite ZF + PWM blip after park (Nina-style preload). */
+#ifndef JYQD_OPPOSITE_BLIP_MS
+#define JYQD_OPPOSITE_BLIP_MS 150U
+#endif
+#ifndef JYQD_OPPOSITE_BLIP_PWM
+#define JYQD_OPPOSITE_BLIP_PWM 60U
+#endif
+/** ms pause after blip before commanding target direction. */
+#ifndef JYQD_POST_BLIP_SETTLE_MS
+#define JYQD_POST_BLIP_SETTLE_MS 55U
+#endif
+
 /** Full park: EL off, VR 0, before every start (lets JYQD re-sample DIR). */
 static const uint8_t kParkMs = 25U;
 /** After complementary Z/F writes, let optos settle before EL. */
@@ -46,10 +61,12 @@ static const uint8_t kZfReassertMs = 10U;
 static const uint8_t kElAfterZfMs = 15U;
 /** VR stays 0 with EL on (JYQD path like Nina). */
 static const uint8_t kVrZeroMs = 6U;
-/** Breakaway pulse floor (0-255); raise if hubs slip from rest. */
-static const uint8_t kKickMinPwm = 72U;
-/** Hold breakaway before final duty. */
-static const uint16_t kKickHoldMs = 400U;
+/** Breakaway pulse floor (0-255); increase if hubs still need a shove from rest. */
+static const uint8_t kKickMinPwm = 118U;
+/** Hold breakaway before dropping to commanded duty. */
+static const uint16_t kKickHoldMs = 700U;
+/** After final PWM, brief pause then second analogWrite (clears stuck low duty). */
+static const uint8_t kPwmReassertGapMs = 45U;
 
 enum MotionMode : uint8_t {
   MODE_STOPPED = 0,
@@ -144,10 +161,33 @@ static void writeZfHardened(bool leftZfHigh, bool rightZfHigh) {
   delay(kZfReassertMs);
 }
 
-/** Z/F hardened, settle, EL on, VR 0, breakaway kick, then commanded speed. */
+/** Z/F hardened, optional opposite blip, EL on, kick, cruise + PWM reassert. */
 static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t spd) {
   refreshMotorPins();
   parkDriversFull();
+#if JYQD_OPPOSITE_BLIP_MS > 0
+  {
+    const bool oL = !leftZfHigh;
+    const bool oR = !rightZfHigh;
+    writeZfHardened(oL, oR);
+    delay(kElAfterZfMs);
+    digitalWrite(PIN_LEFT_EL, HIGH);
+    digitalWrite(PIN_RIGHT_EL, HIGH);
+    analogWrite(PIN_LEFT_VR, 0);
+    analogWrite(PIN_RIGHT_VR, 0);
+    delay(kVrZeroMs);
+    const uint8_t bpwm = static_cast<uint8_t>(
+        (JYQD_OPPOSITE_BLIP_PWM > 255) ? 255 : JYQD_OPPOSITE_BLIP_PWM);
+    analogWrite(PIN_LEFT_VR, bpwm);
+    analogWrite(PIN_RIGHT_VR, bpwm);
+    delay(JYQD_OPPOSITE_BLIP_MS);
+    analogWrite(PIN_LEFT_VR, 0);
+    analogWrite(PIN_RIGHT_VR, 0);
+    digitalWrite(PIN_LEFT_EL, LOW);
+    digitalWrite(PIN_RIGHT_EL, LOW);
+    delay(JYQD_POST_BLIP_SETTLE_MS);
+  }
+#endif
   writeZfHardened(leftZfHigh, rightZfHigh);
   delay(kElAfterZfMs);
   digitalWrite(PIN_LEFT_EL, HIGH);
@@ -159,6 +199,9 @@ static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t 
   analogWrite(PIN_LEFT_VR, kick);
   analogWrite(PIN_RIGHT_VR, kick);
   delay(kKickHoldMs);
+  analogWrite(PIN_LEFT_VR, spd);
+  analogWrite(PIN_RIGHT_VR, spd);
+  delay(kPwmReassertGapMs);
   analogWrite(PIN_LEFT_VR, spd);
   analogWrite(PIN_RIGHT_VR, spd);
 }
@@ -291,7 +334,8 @@ static void printHelp() {
   logLine(F("  S = stop (only way to end continuous motion)"));
   logLine(F("  + / - = nudge PWM while running"));
   logLine(F("  ? = help. Use a line ending with Newline."));
-  logLine(F("  Try speed >= 100 for tests; raise kKickMinPwm if needed."));
+  logLine(F("  Try speed >= 100 for tests; raise kKickMinPwm/kKickHoldMs if stiction."));
+  logLine(F("  Opposite blip: JYQD_OPPOSITE_BLIP_MS (0=off), JYQD_OPPOSITE_BLIP_PWM."));
 #if JYQD_LEGACY_ZF_POLARITY
   logLine(F("  Build: LEGACY Z/F (F=L low R high); set 0 for Nina table."));
 #else
