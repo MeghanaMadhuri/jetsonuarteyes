@@ -1,30 +1,21 @@
 /*
  * Dual BLDC hub motors (JYQD_V7.3E2) + Arduino Uno
  *
- * This sketch does **not** require any pull-up resistor on Z/F — only the
- * Arduino pins drive the lines. A ~4.7k to V+ is an optional *hardware*
- * tweak for weak opto inputs; it is not assumed here.
+ * No pull-up required in software; optional ~4.7k hardware tweak only if optos
+ * need stronger HIGH — fix marginal LOW at the screw with wiring/buffer first.
  *
- * Default Z/F matches Nina / NavigationManager:
- *   forward    : left HIGH,  right LOW
- *   backward   : left LOW,   right HIGH
- *   turn left  : both LOW   (pivot)
- *   turn right : both HIGH  (pivot)
+ * Z/F (see JYQD_LEGACY_ZF_POLARITY below):
+ *   LEGACY=1 (default): forward L LOW R HIGH; backward L HIGH R LOW; turns complementary.
+ *   LEGACY=0 (Nina):    forward L HIGH R LOW; backward L LOW R HIGH; pivot both LOW / both HIGH.
  *
- * If hubs do not spin with default polarity, set at compile time:
- *   #define JYQD_LEGACY_ZF_POLARITY 1
- * before the #ifndef block below — this uses the older bench table
- * (forward = left LOW, right HIGH). Motion also uses a short Z/F settle +
- * breakaway PWM kick (similar to Nina).
+ * If forward is reliable on one side only and backward swaps which side is good,
+ * the failing net is often **not reaching a solid LOW** at the JYQD. This sketch
+ * **parks** (EL off, VR=0), re-asserts pinMode(OUTPUT), writes **HIGH Z/F before LOW**
+ * when levels are complementary, then long Z/F settle before EL+PWM.
  *
- * SERIAL (115200, line ending Newline or CR+LF)
- *   F/B/L/R -> enter speed 0-255 -> runs until S.
- *   +/- nudge PWM; ? help.
+ * SERIAL 115200 / Newline. F B L R -> speed 0-255 -> S stop. +/-
  *
- * WIRING
- *   Left:  GND, EL D8, ZF D4, VR D10 PWM, Signal NC, 5V per manual
- *   Right: GND, EL D9, ZF D5, VR D11 PWM, Signal NC
- *   24 V to drivers only; common GND with Uno.
+ * WIRING: L: GND EL D8 ZF D4 VR D10 | R: GND EL D9 ZF D5 VR D11 | 24 V drivers | common GND.
  */
 
 #include <Arduino.h>
@@ -40,17 +31,25 @@
 
 #define SERIAL_BAUD   115200
 
-/* 1 = forward left LOW / right HIGH (older sketch / some harnesses). */
+/* 1 = complementary L/R table (Uno bench default). 0 = Nina Jetson mirror. */
 #ifndef JYQD_LEGACY_ZF_POLARITY
-#define JYQD_LEGACY_ZF_POLARITY 0
+#define JYQD_LEGACY_ZF_POLARITY 1
 #endif
 
-/** ms: Z/F stable before EL + PWM (JYQD is level-sensitive; allow opto slew). */
-static const uint8_t kZfSettleMs = 8;
-/** If commanded PWM is lower, use at least this for a breakaway pulse (0-255). */
-static const uint8_t kKickMinPwm = 48;
-/** ms to hold breakaway duty before final speed. */
-static const uint16_t kKickHoldMs = 280;
+/** Full park: EL off, VR 0, before every start (lets JYQD re-sample DIR). */
+static const uint8_t kParkMs = 25U;
+/** After complementary Z/F writes, let optos settle before EL. */
+static const uint8_t kZfSettleMs = 28U;
+/** Second Z/F rewrite hold (re-latch weak lines). */
+static const uint8_t kZfReassertMs = 10U;
+/** After Z/F valid, wait before asserting EL. */
+static const uint8_t kElAfterZfMs = 15U;
+/** VR stays 0 with EL on (JYQD path like Nina). */
+static const uint8_t kVrZeroMs = 6U;
+/** Breakaway pulse floor (0-255); raise if hubs slip from rest. */
+static const uint8_t kKickMinPwm = 72U;
+/** Hold breakaway before final duty. */
+static const uint16_t kKickHoldMs = 400U;
 
 enum MotionMode : uint8_t {
   MODE_STOPPED = 0,
@@ -102,16 +101,60 @@ static void applyMotor(uint8_t pinEl, uint8_t pinZf, uint8_t pinVr,
   }
 }
 
-/** Z/F first, settle, EL on, VR 0, then breakaway kick then commanded speed. */
-static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t spd) {
+static void refreshMotorPins() {
+  pinMode(PIN_LEFT_EL, OUTPUT);
+  pinMode(PIN_LEFT_ZF, OUTPUT);
+  pinMode(PIN_LEFT_VR, OUTPUT);
+  pinMode(PIN_RIGHT_EL, OUTPUT);
+  pinMode(PIN_RIGHT_ZF, OUTPUT);
+  pinMode(PIN_RIGHT_VR, OUTPUT);
+}
+
+/** EL low, VR 0 both — call before changing Z/F from rest. */
+static void parkDriversFull() {
+  digitalWrite(PIN_LEFT_EL, LOW);
+  digitalWrite(PIN_RIGHT_EL, LOW);
+  analogWrite(PIN_LEFT_VR, 0);
+  analogWrite(PIN_RIGHT_VR, 0);
+  delay(kParkMs);
+}
+
+/**
+ * When Z/F are complementary, write the HIGH side first so the LOW net can
+ * settle with a solid sink (helps flaky "must be LOW" channels on forward L / back R).
+ */
+static void writeZfHardened(bool leftZfHigh, bool rightZfHigh) {
+  if (leftZfHigh != rightZfHigh) {
+    if (leftZfHigh) {
+      digitalWrite(PIN_LEFT_ZF, HIGH);
+      delay(4);
+      digitalWrite(PIN_RIGHT_ZF, LOW);
+    } else {
+      digitalWrite(PIN_RIGHT_ZF, HIGH);
+      delay(4);
+      digitalWrite(PIN_LEFT_ZF, LOW);
+    }
+  } else {
+    digitalWrite(PIN_LEFT_ZF, leftZfHigh ? HIGH : LOW);
+    digitalWrite(PIN_RIGHT_ZF, rightZfHigh ? HIGH : LOW);
+  }
+  delay(kZfSettleMs);
   digitalWrite(PIN_LEFT_ZF, leftZfHigh ? HIGH : LOW);
   digitalWrite(PIN_RIGHT_ZF, rightZfHigh ? HIGH : LOW);
-  delay(kZfSettleMs);
+  delay(kZfReassertMs);
+}
+
+/** Z/F hardened, settle, EL on, VR 0, breakaway kick, then commanded speed. */
+static void enableBothMotorsWithKick(bool leftZfHigh, bool rightZfHigh, uint8_t spd) {
+  refreshMotorPins();
+  parkDriversFull();
+  writeZfHardened(leftZfHigh, rightZfHigh);
+  delay(kElAfterZfMs);
   digitalWrite(PIN_LEFT_EL, HIGH);
   digitalWrite(PIN_RIGHT_EL, HIGH);
   analogWrite(PIN_LEFT_VR, 0);
   analogWrite(PIN_RIGHT_VR, 0);
-  delay(2);
+  delay(kVrZeroMs);
   const uint8_t kick = spd < kKickMinPwm ? kKickMinPwm : spd;
   analogWrite(PIN_LEFT_VR, kick);
   analogWrite(PIN_RIGHT_VR, kick);
@@ -157,6 +200,12 @@ static void turnLeftApply() {
 }
 
 static void stopMotors() {
+  refreshMotorPins();
+  digitalWrite(PIN_LEFT_EL, LOW);
+  digitalWrite(PIN_RIGHT_EL, LOW);
+  analogWrite(PIN_LEFT_VR, 0);
+  analogWrite(PIN_RIGHT_VR, 0);
+  delay(4);
 #if JYQD_LEGACY_ZF_POLARITY
   logLine(F("[JYQD] STOP (EL off; ZF park legacy FWD: L=L R=H)"));
   applyMotor(PIN_LEFT_EL, PIN_LEFT_ZF, PIN_LEFT_VR, false, false, 0);
@@ -242,10 +291,11 @@ static void printHelp() {
   logLine(F("  S = stop (only way to end continuous motion)"));
   logLine(F("  + / - = nudge PWM while running"));
   logLine(F("  ? = help. Use a line ending with Newline."));
+  logLine(F("  Try speed >= 100 for tests; raise kKickMinPwm if needed."));
 #if JYQD_LEGACY_ZF_POLARITY
-  logLine(F("  Build: JYQD_LEGACY_ZF_POLARITY=1 (try 0 if F/B seem swapped)."));
+  logLine(F("  Build: LEGACY Z/F (F=L low R high); set 0 for Nina table."));
 #else
-  logLine(F("  Build: Nina Z/F; set JYQD_LEGACY_ZF_POLARITY=1 if hubs do not move."));
+  logLine(F("  Build: Nina Z/F (F=L high R low); set LEGACY=1 for bench table."));
 #endif
 }
 
