@@ -36,7 +36,7 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 
 
 class HoverboardAxisDrive:
-    """Lean servos: motion tilts about ``brake_pos_*``; stop/brake returns to those goals."""
+    """Lean servos: straight lines use FWD/REV goals; pivots use those goals in opposition."""
 
     DRIVER_LABEL = "Hoverboard lean — Dynamixel AX-18 (ID 12+13)"
     DIR_FORWARD = "forward"
@@ -204,6 +204,21 @@ class HoverboardAxisDrive:
             bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
             br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
             return {self._left_id: bl, self._right_id: br}
+
+        # Pivot: opposite leans from configured straight-line goals (left back + right
+        # forward = turn left; left forward + right back = turn right).
+        if left_speed > 0 and right_speed > 0 and lf != rf:
+            fl = self._dxl._clamp_pos(int(self._axis.forward_pos_left))
+            fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
+            bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
+            br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
+            if lf:
+                lg, rg = fl, br
+            else:
+                lg, rg = bl, fr
+            if self._axis.swap_turn_lr:
+                lg, rg = rg, lg
+            return {self._left_id: lg, self._right_id: rg}
 
         dl = self._speed_to_delta_raw(left_speed) if left_speed > 0 else 0
         dr = self._speed_to_delta_raw(right_speed) if right_speed > 0 else 0

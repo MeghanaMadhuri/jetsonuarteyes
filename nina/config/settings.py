@@ -100,8 +100,10 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
     uses ``NINA_HOVER_FWD_POS_*`` (defaults 525 / 500); straight backward uses
-    ``NINA_HOVER_REV_POS_*`` (defaults 500 / 510). In-place turns still use
-    ``tilt_deg`` deltas from brake.
+    ``NINA_HOVER_REV_POS_*`` (defaults 500 / 510). In-place pivots pair
+    ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
+    Set ``NINA_HOVER_SWAP_TURN_LR=1`` if the robot yaw sense vs. the labels is
+    reversed. ``tilt_deg`` remains for any legacy asymmetric fallback.
     """
 
     id_left: int
@@ -112,6 +114,7 @@ class HoverboardAxisSettings:
     forward_pos_right: int
     backward_pos_left: int
     backward_pos_right: int
+    swap_turn_lr: bool
     tilt_deg: float
     moving_speed: int
     sign_left: int
@@ -331,6 +334,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 500),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 500),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 510),
+        swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", False),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),

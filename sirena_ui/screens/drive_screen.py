@@ -11,8 +11,11 @@ Two input modes are supported:
 
 * On-screen D-pad — press and hold a direction (lean axes tilt from the
   configured brake pose).
-* **Turn left / Turn right** — single-click timed in-place pivots
-  (``NINA_DRIVE_TURN_90_SEC``; speed default **20%**, env ``NINA_DRIVE_TURN_90_PCT``).
+* **Turn left / Turn right** — timed in-place pivots using opposite
+  ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same as straight
+  FWD/REV); duration ``NINA_DRIVE_TURN_90_SEC`` / ``NINA_NAV_TURN_SEC``;
+  speed ``NINA_DRIVE_TURN_90_PCT``. Optional ``NINA_HOVER_SWAP_TURN_LR`` if
+  yaw sense is reversed.
 * D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
 * Keyboard — W/A/S/D forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
@@ -395,9 +398,11 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "~90° in-place pivot counter-clockwise (robot frame). "
-            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "speed: NINA_DRIVE_TURN_90_PCT or default 20% (in-place pivot)."
+            "In-place pivot: left lean axis to REV goal (NINA_HOVER_REV_POS_LEFT), "
+            "right to FWD goal (NINA_HOVER_FWD_POS_RIGHT), held for "
+            "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
+            "If the robot spins the wrong way, set NINA_HOVER_SWAP_TURN_LR=1. "
+            "D-pad left uses the same pairing while held."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
         turn_row.addWidget(self._turn_90_left_btn, stretch=1)
@@ -407,9 +412,11 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "~90° in-place pivot clockwise (robot frame). "
-            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "speed: NINA_DRIVE_TURN_90_PCT or default 20% (in-place pivot)."
+            "In-place pivot: left lean axis to FWD goal (NINA_HOVER_FWD_POS_LEFT), "
+            "right to REV goal (NINA_HOVER_REV_POS_RIGHT), held for "
+            "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
+            "If the robot spins the wrong way, set NINA_HOVER_SWAP_TURN_LR=1. "
+            "D-pad right uses the same pairing while held."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
         turn_row.addWidget(self._turn_90_right_btn, stretch=1)
