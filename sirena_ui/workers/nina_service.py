@@ -19,7 +19,10 @@ from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS
-from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
+from nina.controllers.hoverboard_axis_drive import (
+    HoverboardAxisDrive,
+    apply_hoverboard_brake_positions,
+)
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
@@ -64,11 +67,14 @@ class NinaService:
     def ensure_bus(self) -> Dict[str, object]:
         """Initialize the bus once, run a non-fatal health check, enable torque."""
         with self.bus_lock:
+            first_bus_init = not self._bus_ready
             if not self._bus_ready:
                 self.dxl.initialize_bus()
                 self._bus_ready = True
             health = self.dxl.run_health_check()
             self.dxl.set_torque_all(True)
+            if first_bus_init:
+                apply_hoverboard_brake_positions(self.dxl, self.settings.hoverboard_axis)
             return {
                 "connected": health.connected,
                 "detected": health.detected_motors,

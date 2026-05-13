@@ -1,21 +1,20 @@
 """Drive screen: front camera placeholder + manual control cockpit.
 
-The screen talks to the real BLDC drivers through
-`NinaService.drive`, a Qt facade over `NavigationManager`. Hardware
-init happens lazily on first navigation to this screen, and
-gracefully falls back to "simulation" mode on dev hosts where
-`Jetson.GPIO` is unavailable - the UI still reacts to button presses,
-just without any PWM going out.
+The screen talks to locomotion through `NinaService.drive`, a Qt facade over
+`HoverboardAxisDrive` (Dynamixel AX-18 lean axes, typically IDs 12+13) via
+`DriveController`. Hardware init runs lazily on first visit to this screen.
+
+On a dev host without a live Dynamixel bus, init may fail and the status pill
+shows the error—buttons still update internal state but servos will not move.
 
 Two input modes are supported:
 
-* On-screen D-pad - press-and-HOLD the mouse button on a direction
-  (don't single-click; the BLDC needs a couple of seconds for the
-  rotor to actually catch after the kick-start pulse).
-* **Turn left / Turn right** — single-click timed ~90° in-place pivots
+* On-screen D-pad — press and hold a direction (lean axes tilt from the
+  configured brake pose).
+* **Turn left / Turn right** — single-click timed in-place pivots
   (``NINA_DRIVE_TURN_90_SEC``; speed default **20%**, env ``NINA_DRIVE_TURN_90_PCT``).
 * D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
-* Keyboard - W/A/S/D drive forward / left / back / right while held,
+* Keyboard — W/A/S/D forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
   motor controller. WASD bubbles up through the focused widget on
@@ -513,9 +512,10 @@ class DriveScreen(QWidget):
                 QMessageBox.warning(
                     self,
                     "Drive not ready",
-                    "BLDC did not connect in time. For Jetson-wired JYQDs, "
-                    "confirm header PWM (jetson-io) and wiring. Wait for the "
-                    "green pill, then try Straight again.",
+                    "Drive hardware did not initialize in time. On the robot, "
+                    "confirm the Dynamixel bus (USB cable, NINA_DXL_PORT / baud, "
+                    "IDs 12 and 13), and wait for the status pill to show the "
+                    "hoverboard driver connected. Then try Straight again.",
                 )
                 self._restore_after_straight_test()
                 return

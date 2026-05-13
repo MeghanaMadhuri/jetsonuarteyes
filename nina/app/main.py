@@ -44,7 +44,9 @@ def build_app():
         actions_dir=settings.actions_dir,
         dxl=dxl,
     )
-    startup_service = StartupService(dxl, action_runner, settings.neutral_action_name)
+    startup_service = StartupService(
+        dxl, action_runner, settings.neutral_action_name, settings.hoverboard_axis
+    )
     return settings, dxl, action_runner, startup_service
 
 

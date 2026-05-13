@@ -94,12 +94,17 @@ class HoverboardAxisSettings:
     """Hoverboard locomotion via lean axes (AX-18 on Dynamixel bus).
 
     ``DriveController`` always uses ``HoverboardAxisDrive``. Env:
-    ``NINA_HOVER_ID_LEFT`` / ``RIGHT``, ``NINA_HOVER_TILT_DEG``,
-    ``NINA_HOVER_MOVING_SPEED``, ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1).
+    ``NINA_HOVER_ID_LEFT`` / ``RIGHT``, ``NINA_HOVER_BRAKE_POS_LEFT`` /
+    ``NINA_HOVER_BRAKE_POS_RIGHT`` (brake / stop / boot goals; if unset, legacy
+    ``NINA_HOVER_NEUTRAL_*`` is read instead),
+    ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
+    ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1).
     """
 
     id_left: int
     id_right: int
+    brake_pos_left: int
+    brake_pos_right: int
     tilt_deg: float
     moving_speed: int
     sign_left: int
@@ -305,6 +310,16 @@ def load_settings(repo_root: Path) -> NinaSettings:
     hoverboard_axis = HoverboardAxisSettings(
         id_left=_env_int("NINA_HOVER_ID_LEFT", 12),
         id_right=_env_int("NINA_HOVER_ID_RIGHT", 13),
+        brake_pos_left=(
+            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 515)
+            if "NINA_HOVER_BRAKE_POS_LEFT" in os.environ
+            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 515)
+        ),
+        brake_pos_right=(
+            _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 510)
+            if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
+            else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 510)
+        ),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),

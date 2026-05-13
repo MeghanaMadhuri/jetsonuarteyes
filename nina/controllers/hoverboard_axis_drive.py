@@ -13,19 +13,30 @@ import time
 from typing import Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
-from nina.controllers.dynamixel_manager import (
-    DynamixelManager,
-    REG_PRESENT_POS,
-)
+from nina.controllers.dynamixel_manager import DynamixelManager
 
 log = logging.getLogger("nina.hoverboard_axis")
 
 _POS_SPAN_DEG = 300.0
+
+
+def apply_hoverboard_brake_positions(dxl: DynamixelManager, axis_cfg: HoverboardAxisSettings) -> None:
+    """Command lean servos to the configured brake pose (boot / stopped)."""
+    dxl._require_initialized()
+    lid = int(axis_cfg.id_left)
+    rid = int(axis_cfg.id_right)
+    left = dxl._clamp_pos(int(axis_cfg.brake_pos_left))
+    right = dxl._clamp_pos(int(axis_cfg.brake_pos_right))
+    ms = max(0, min(1023, int(axis_cfg.moving_speed)))
+    dxl.sync_write_moving_speed_subset({lid: ms, rid: ms})
+    dxl.sync_write_goal_position({lid: left, rid: right})
+
+
 _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 
 
 class HoverboardAxisDrive:
-    """Lean servos 12/13 about ``neutral`` captured at ``initialize()``."""
+    """Lean servos: motion tilts about ``brake_pos_*``; stop/brake returns to those goals."""
 
     DRIVER_LABEL = "Hoverboard lean — Dynamixel AX-18 (ID 12+13)"
     DIR_FORWARD = "forward"
@@ -50,8 +61,8 @@ class HoverboardAxisDrive:
         self._invert_right_override: Optional[bool] = None
         self._left_id = int(axis_cfg.id_left)
         self._right_id = int(axis_cfg.id_right)
-        self._neutral_left = 2048
-        self._neutral_right = 2048
+        self._brake_left = 2048
+        self._brake_right = 2048
         self._is_initialized = False
 
     # ------------------------------------------------------------------
@@ -59,26 +70,20 @@ class HoverboardAxisDrive:
         if self._is_initialized:
             return
         with self._bus_lock:
-            self._dxl._require_initialized()
-            nl = self._dxl.read_reg(self._left_id, *REG_PRESENT_POS)
-            nr = self._dxl.read_reg(self._right_id, *REG_PRESENT_POS)
-            self._neutral_left = self._dxl._clamp_pos(
-                int(nl if nl is not None else 2048)
+            self._brake_left = self._dxl._clamp_pos(
+                int(self._axis.brake_pos_left)
             )
-            self._neutral_right = self._dxl._clamp_pos(
-                int(nr if nr is not None else 2048)
+            self._brake_right = self._dxl._clamp_pos(
+                int(self._axis.brake_pos_right)
             )
-            ms = max(0, min(1023, int(self._axis.moving_speed)))
-            self._dxl.sync_write_moving_speed_subset(
-                {self._left_id: ms, self._right_id: ms}
-            )
+            apply_hoverboard_brake_positions(self._dxl, self._axis)
         self._is_initialized = True
         log.info(
-            "HoverboardAxisDrive init neutral L(id%s)=%s R(id%s)=%s tilt=%s°",
+            "HoverboardAxisDrive init brake L(id%s)=%s R(id%s)=%s tilt=%s°",
             self._left_id,
-            self._neutral_left,
+            self._brake_left,
             self._right_id,
-            self._neutral_right,
+            self._brake_right,
             self._axis.tilt_deg,
         )
 
@@ -136,16 +141,18 @@ class HoverboardAxisDrive:
         return
 
     def engage_brake(self) -> None:
+        """Hold brake pose: both lean axes at ``brake_pos_*`` from settings."""
         self.stop()
 
     def release_brake(self) -> None:
+        """No separate hardware unlock; brake pose is the driving reference."""
         return
 
     def stop(self) -> None:
         if not self._is_initialized:
             return
         self._apply_goals(
-            {self._left_id: self._neutral_left, self._right_id: self._neutral_right}
+            {self._left_id: self._brake_left, self._right_id: self._brake_right}
         )
         time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
 
@@ -166,8 +173,8 @@ class HoverboardAxisDrive:
         right_dir: str,
         right_speed: int,
     ) -> Dict[int, int]:
-        nl = self._neutral_left
-        nr = self._neutral_right
+        nl = self._brake_left
+        nr = self._brake_right
         sl = self._eff_sign_left()
         sr = self._eff_sign_right()
 
