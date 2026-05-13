@@ -20,6 +20,17 @@ log = logging.getLogger("nina.hoverboard_axis")
 _POS_SPAN_DEG = 300.0
 
 
+def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
+    """Move *goal* *push* raw ticks away from *brake* (if they differ)."""
+    if push <= 0:
+        return goal
+    if goal > brake:
+        return goal + push
+    if goal < brake:
+        return goal - push
+    return goal
+
+
 def apply_hoverboard_brake_positions(dxl: DynamixelManager, axis_cfg: HoverboardAxisSettings) -> None:
     """Command lean servos to the configured brake pose (boot / stopped)."""
     dxl._require_initialized()
@@ -218,7 +229,14 @@ class HoverboardAxisDrive:
                 lg, rg = bl, fr
             if self._axis.swap_turn_lr:
                 lg, rg = rg, lg
-            return {self._left_id: lg, self._right_id: rg}
+            push = int(self._axis.turn_push_ticks)
+            if push > 0:
+                lg = _nudge_goal_from_brake(lg, nl, push)
+                rg = _nudge_goal_from_brake(rg, nr, push)
+            return {
+                self._left_id: self._dxl._clamp_pos(lg),
+                self._right_id: self._dxl._clamp_pos(rg),
+            }
 
         dl = self._speed_to_delta_raw(left_speed) if left_speed > 0 else 0
         dr = self._speed_to_delta_raw(right_speed) if right_speed > 0 else 0
