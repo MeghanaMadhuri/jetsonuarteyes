@@ -226,20 +226,113 @@ class SlamWorker(QObject):
     # Worker thread
     # ------------------------------------------------------------------
 
-    def _run(self) -> None:
-        # 1) Try to bring up the lidar.
+    def _try_open_lidar(self, lidar, label: str) -> bool:
+        """Try to open `lidar`. Returns True on success, False on
+        failure (and stamps the failure reason into `_status`)."""
         try:
-            self._lidar.open()
-            with self._lock:
-                self._status["lidar_connected"] = True
-                self._status["lidar_message"] = (
-                    f"{self._lidar_label} connected"
-                )
+            lidar.open()
         except Exception as exc:
-            log.warning("%s open failed: %s", self._lidar_label, exc)
+            log.warning("%s open failed: %s", label, exc)
             with self._lock:
                 self._status["lidar_connected"] = False
+                self._status["lidar_model"] = label
                 self._status["lidar_message"] = f"sim - {exc}"
+            return False
+        with self._lock:
+            self._status["lidar_connected"] = True
+            self._status["lidar_model"] = label
+            self._status["lidar_message"] = f"{label} connected"
+        return True
+
+    def _fallback_to_a1(self) -> bool:
+        """Swap the active S2E driver for an A1 driver and retry open().
+
+        We re-import lazily so dev hosts that never had `rplidar`
+        installed don't pay the import cost up front. The S2E driver's
+        bookkeeping (subprocess, threads) is already torn down by its
+        own open() failure path; we just construct a fresh driver and
+        try again. Falls back silently to False if the A1 module isn't
+        installed either (the GUI then stays in 'lidar simulation'
+        mode, same as before this change).
+        """
+        try:
+            from nina.sensors.lidar_factory import model_label
+            from nina.sensors.rplidar_a1 import RPLidarA1
+        except Exception as exc:
+            log.info("A1 fallback unavailable (%s)", exc)
+            return False
+        log.info("SlamWorker: S2E open failed; falling back to RPLIDAR A1")
+        # Reset the prior driver if it has any leftover open() state.
+        try:
+            self._lidar.close()
+        except Exception:
+            pass
+        a1 = RPLidarA1()
+        a1_label = model_label("a1")
+        opened = self._try_open_lidar(a1, a1_label)
+        if opened:
+            self._lidar = a1
+            self._lidar_label = a1_label
+        return opened
+
+    def _run(self) -> None:
+        # 1) Try to bring up the lidar.
+        # `disabled` is a deliberate operator choice (no lidar on
+        # this chassis); skip both open attempts and surface a calm
+        # "Lidar disabled" pill instead of a red error.
+        if (self._lidar_model or "").strip().lower() in (
+            "disabled", "off", "none", "skip"
+        ):
+            with self._lock:
+                self._status["lidar_connected"] = False
+                self._status["lidar_model"] = self._lidar_label
+                self._status["lidar_message"] = (
+                    "disabled by NINA_LIDAR_MODEL=disabled"
+                )
+                self._status["lidar_disabled"] = True
+            opened = False
+        else:
+            opened = self._try_open_lidar(self._lidar, self._lidar_label)
+            if not opened and self._lidar_model == "auto":
+                # `auto` is supposed to fall back to A1 when S2E is
+                # unreachable, but the factory only chose between drivers
+                # at construction time - by the time open() actually
+                # dials 192.168.11.2:8089 we've already committed to the
+                # S2E. Retry with the A1 driver so a mixed-fleet image
+                # with the USB lidar plugged in still ends up with a
+                # working SLAM stack.
+                #
+                # IMPORTANT: we only fall back for `auto`, NOT for an
+                # explicit `s2e` / `a1`. An operator who set
+                # NINA_LIDAR_MODEL=s2e means "this bot has an S2E"; if
+                # we silently rolled over to the A1 driver they'd see a
+                # confusing /dev/ttyUSB0 error from a transport they
+                # don't even use, while the real S2E error (Ethernet
+                # unreachable, lidar unpowered, pyrplidarsdk missing)
+                # gets thrown away.
+                s2e_msg = self._status.get("lidar_message", "")
+                opened = self._fallback_to_a1()
+                if not opened and s2e_msg:
+                    # Preserve the S2E error in the message chain so the
+                    # operator sees BOTH attempts in the Health row, not
+                    # just the second one. A1's error already contains a
+                    # full diagnostic block (see _format_open_error), so
+                    # prefix the S2E line above it.
+                    with self._lock:
+                        a1_msg = self._status.get("lidar_message", "")
+                        self._status["lidar_message"] = (
+                            f"S2E: {s2e_msg.removeprefix('sim - ')}"
+                            "\n---\n"
+                            f"{a1_msg}"
+                        )
+            if not opened:
+                with self._lock:
+                    self._status["lidar_connected"] = False
+                    self._status["lidar_model"] = self._lidar_label
+                    self._status["lidar_message"] = (
+                        self._status.get("lidar_message")
+                        or "lidar unavailable"
+                    )
 
         # 2) Bring up the SLAM engine.
         try:

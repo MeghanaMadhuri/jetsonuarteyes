@@ -5,8 +5,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}/android"
 if [[ -x ./gradlew ]]; then
   ./gradlew assembleRelease --no-daemon
-  APK="${ROOT}/android/app/build/outputs/apk/release/app-release.apk"
-  if [[ -f "${APK}" ]]; then
+  REL="${ROOT}/android/app/build/outputs/apk/release"
+  APK="$(ls -t "$REL"/Sirena\ UI-*.apk 2>/dev/null | head -1)"
+  if [[ -n "${APK}" && -f "${APK}" ]]; then
     echo ""
     echo "OK: ${APK}"
   fi

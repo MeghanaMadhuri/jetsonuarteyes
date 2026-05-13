@@ -1,634 +1,664 @@
 package com.sirena.nina.companion.ui.sirena
 
-import android.graphics.Bitmap
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.data.SlamOccupancyGrid
-import com.sirena.nina.companion.ui.theme.SirenaSwitch
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONObject
 
+private fun letterboxedRect(boxW: Float, boxH: Float, imgW: Int, imgH: Int): Rect {
+    val iw = imgW.toFloat()
+    val ih = imgH.toFloat()
+    val sar = iw / ih
+    val bar = boxW / boxH
+    return if (bar > sar) {
+        val h = boxH
+        val w = h * sar
+        val ox = (boxW - w) / 2f
+        Rect(ox, 0f, ox + w, h)
+    } else {
+        val w = boxW
+        val h = w / sar
+        val oy = (boxH - h) / 2f
+        Rect(0f, oy, w, oy + h)
+    }
+}
+
+private fun tapToWorldMm(
+    tapX: Float,
+    tapY: Float,
+    boxW: Float,
+    boxH: Float,
+    imgW: Int,
+    imgH: Int,
+    scaleMmPerPx: Double,
+): Pair<Double, Double>? {
+    val r = letterboxedRect(boxW, boxH, imgW, imgH)
+    if (tapX < r.left || tapX >= r.right || tapY < r.top || tapY >= r.bottom) return null
+    val sx = r.width / imgW.toFloat()
+    val sy = r.height / imgH.toFloat()
+    val gpx = (tapX - r.left) / sx
+    val gpy = (tapY - r.top) / sy
+    val cx = imgW / 2.0
+    val cy = imgH / 2.0
+    val xMm = (gpx - cx) * scaleMmPerPx
+    val yMm = (cy - gpy) * scaleMmPerPx
+    return xMm to yMm
+}
+
+private fun healthPill(
+    label: String,
+    o: JSONObject?,
+): Pair<String, SirenaPillKind> {
+    if (o == null) return "$label -" to SirenaPillKind.Neutral
+    val ok = o.optBoolean("connected", false)
+    return (
+        if (ok) "$label ok" else "$label —"
+        ) to if (ok) SirenaPillKind.Ok else SirenaPillKind.Neutral
+}
+
+private fun ultraSummary(arr: JSONArray?): String {
+    if (arr == null || arr.length() == 0) return "Ultra -"
+    var any = false
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        if (o.optBoolean("connected", false)) any = true
+    }
+    return if (any) "Ultra ok" else "Ultra —"
+}
+
+/**
+ * Layout aligned with desktop [sirena_ui.screens.map_screen.MapScreen]:
+ * breadcrumb + pills, **~60/40** map vs side rail, legend under grid, side sections.
+ */
 @Composable
 fun SirenaMapScreen(
     vm: CompanionViewModel,
     daemonUrl: String?,
-    caps: JSONObject?,
-    modifier: Modifier = Modifier,
+    caps: JSONObject? = null,
+    shellCompact: Boolean = false,
 ) {
-    val slamOn = caps?.optBoolean("slam_bridge_enabled") == true
-    val autonomyApi = caps?.optBoolean("autonomy_bridge_enabled") == true
-    val gotoApi = caps?.optBoolean("autonomy_supports_goto") == true || autonomyApi
-    var autonomyOn by remember { mutableStateOf(false) }
-    var mappingOn by remember { mutableStateOf(false) }
-    var visionStatus by remember { mutableStateOf<JSONObject?>(null) }
-    var slamStatus by remember { mutableStateOf<JSONObject?>(null) }
-    var snap by remember { mutableStateOf<JSONObject?>(null) }
-    var occBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var mapHint by remember { mutableStateOf("") }
-    var autonomyMsg by remember { mutableStateOf("") }
-    var gotoMsg by remember { mutableStateOf("") }
-    var gotoState by remember { mutableStateOf("idle") }
-    // Tap-to-set-goal: armed via the Goto button below the map.
-    var gotoArmed by remember { mutableStateOf(false) }
-    // Click-position in widget pixels so we can render the pin overlay
-    // without needing a pose-aware translation step.
-    var goalWidget by remember { mutableStateOf<Offset?>(null) }
-    var goalMm by remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    var snappedMm by remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    var pathMm by remember { mutableStateOf<List<Pair<Double, Double>>>(emptyList()) }
-    var navMode by remember { mutableStateOf("—") }
-    var pilotSummary by remember { mutableStateOf("") }
-    var lidarHl by remember { mutableStateOf("") }
-    var depthHl by remember { mutableStateOf("") }
-    var irHl by remember { mutableStateOf("") }
-    var ultraHl by remember { mutableStateOf("") }
-    var saveMapMsg by remember { mutableStateOf("") }
-    val visionEnabled = caps?.optBoolean("vision_bridge_enabled") == true
     val scope = rememberCoroutineScope()
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
+    val online = !daemonUrl.isNullOrBlank() && jetsonLink.isOnline
 
-    LaunchedEffect(daemonUrl, visionEnabled) {
-        if (daemonUrl.isNullOrBlank() || !visionEnabled) return@LaunchedEffect
-        while (true) {
-            visionStatus = vm.fetchVisionStatus()
-            delay(2000)
+    var grid by remember { mutableStateOf<SlamOccupancyGrid?>(null) }
+    var scaleMm by remember { mutableStateOf(1.0) }
+    var slamRunning by remember { mutableStateOf(false) }
+    var slamJson by remember { mutableStateOf<JSONObject?>(null) }
+    var autonomyJson by remember { mutableStateOf<JSONObject?>(null) }
+    var autonomyOn by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf("nina_map.pgm") }
+    var lastGoal by remember { mutableStateOf("—") }
+    var err by remember { mutableStateOf<String?>(null) }
+    var tapGotoOn by remember { mutableStateOf(false) }
+    var lastGridWallMs by remember { mutableStateOf(0L) }
+    var gridAgeTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(grid?.width, grid?.height, online) {
+        val g = grid
+        if (g != null && g.width > 0 && g.height > 0 && online) {
+            lastGridWallMs = System.currentTimeMillis()
         }
     }
 
-    LaunchedEffect(daemonUrl, slamOn) {
-        if (daemonUrl.isNullOrBlank() || !slamOn) return@LaunchedEffect
-        while (true) {
-            slamStatus = vm.fetchSlamStatus()
-            val s = vm.fetchSlamSnapshot()
-            snap = s
-            if (s != null) {
-                val grid: SlamOccupancyGrid? = vm.fetchSlamOccupancyGrid()
-                occBitmap = grid?.toGrayscaleBitmap()
+    LaunchedEffect(online, lastGridWallMs) {
+        if (!online || lastGridWallMs <= 0L) return@LaunchedEffect
+        while (isActive) {
+            delay(500)
+            gridAgeTick++
+        }
+    }
+
+    LaunchedEffect(online, caps?.optBoolean("slam_bridge_enabled")) {
+        if (!online) return@LaunchedEffect
+        while (isActive) {
+            try {
+                if (caps != null && !caps.optBoolean("slam_bridge_enabled")) {
+                    delay(10_000L)
+                    continue
+                }
+                val st = vm.fetchSlamStatus()
+                slamJson = st
+                val snap = st?.optJSONObject("snapshot")
+                if (snap != null) {
+                    scaleMm = snap.optDouble("scale_mm_per_px", 1.0).takeIf { it > 0 } ?: 1.0
+                }
+                slamRunning = st?.optBoolean("running", false) == true
+                grid = vm.fetchSlamOccupancyGrid()
+                val au = vm.fetchAutonomyStatus()
+                autonomyJson = au
+                autonomyOn = au?.optBoolean("enabled") == true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+            delay(1800)
+        }
+    }
+
+    val sim = !autonomyJson?.optString("sim").isNullOrBlank()
+    val sensorTop =
+        remember(autonomyJson, slamJson, sim, autonomyOn, online) {
+            when {
+                !online -> "Sensors idle"
+                autonomyOn -> "Autonomy engaged"
+                sim -> "Simulation"
+                slamJson?.optBoolean("lidar_connected") == true -> "Sensors live"
+                else -> "Sensors idle"
+            }
+        }
+    val sensorTopKind =
+        remember(autonomyOn, sim, slamJson, online) {
+            when {
+                !online -> SirenaPillKind.Neutral
+                autonomyOn -> SirenaPillKind.Ok
+                sim -> SirenaPillKind.Warn
+                slamJson?.optBoolean("lidar_connected") == true -> SirenaPillKind.Ok
+                else -> SirenaPillKind.Neutral
+            }
+        }
+    val slamTop =
+        remember(slamJson) {
+            val j = slamJson ?: return@remember "SLAM idle"
+            val running = j.optBoolean("running", false)
+            when {
+                !running -> "SLAM idle"
+                j.optBoolean("slam_fallback") -> {
+                    val msg = j.optString("slam_message").trim().ifBlank { "no BreezySLAM" }
+                    "SLAM fallback — ${msg.take(40)}"
+                }
+                else -> {
+                    val n = j.optInt("scans_processed", 0)
+                    "SLAM live — $n scans"
+                }
+            }
+        }
+    val slamTopKind =
+        remember(slamJson) {
+            val j = slamJson
+            if (j == null) return@remember SirenaPillKind.Neutral
+            val running = j.optBoolean("running", false)
+            when {
+                !running -> SirenaPillKind.Neutral
+                j.optBoolean("slam_fallback") -> SirenaPillKind.Warn
+                else -> SirenaPillKind.Ok
+            }
+        }
+    val mapPill =
+        remember(grid, slamJson) {
+            when {
+                grid == null -> "waiting for first scan"
+                slamJson?.optBoolean("lidar_connected") == false -> "simulation / no lidar"
+                else -> "live grid"
+            }
+        }
+    val mapPillKind =
+        if (grid != null && slamJson?.optBoolean("lidar_connected") != false) {
+            SirenaPillKind.Ok
+        } else {
+            SirenaPillKind.Neutral
+        }
+
+    val gridAgeSec =
+        run {
+            val g = grid
+            if (lastGridWallMs > 0L && g != null && g.width > 0 && g.height > 0) {
+                (System.currentTimeMillis() - lastGridWallMs) / 1000.0
             } else {
-                occBitmap = null
+                0.0
             }
-            mapHint = slamStatus?.optString("lidar_message").orEmpty()
-            delay(600)
         }
-    }
-
-    LaunchedEffect(daemonUrl, autonomyApi) {
-        if (daemonUrl.isNullOrBlank() || !autonomyApi) return@LaunchedEffect
-        while (true) {
-            val st = vm.fetchAutonomyStatus()
-            if (st?.optBoolean("bridge_enabled") == true) {
-                autonomyOn = st.optBoolean("enabled")
-                navMode = st.optString("mode").ifBlank { "—" }
-                st.optJSONObject("health")?.let { h ->
-                    lidarHl = healthOneLine("Lidar", h.optJSONObject("lidar"))
-                    depthHl = healthOneLine("Depth", h.optJSONObject("depth"))
-                    irHl = healthOneLine("IR", h.optJSONObject("ir"))
-                    val arr = h.optJSONArray("ultrasonic")
-                    if (arr != null && arr.length() > 0) {
-                        var ok = 0
-                        for (i in 0 until arr.length()) {
-                            val u = arr.optJSONObject(i) ?: continue
-                            if (u.optBoolean("connected")) ok++
-                        }
-                        ultraHl = "Ultra $ok/${arr.length()}"
-                    } else {
-                        ultraHl = "Ultra —"
-                    }
+    val mapHeaderPillText =
+        remember(grid, slamJson, gridAgeTick, mapPill) {
+            val g = grid
+            when {
+                g != null && g.width > 0 && g.height > 0 ->
+                    "updated " + String.format(Locale.US, "%.1f", gridAgeSec) + "s ago"
+                slamJson?.optBoolean("running") == true &&
+                    slamJson?.optBoolean("lidar_connected") == false -> {
+                    val sj = slamJson!!
+                    val hint = sj.optString("lidar_message").trim()
+                    if (hint.isNotEmpty()) "Lidar sim — ${hint.take(36)}" else "Lidar simulation"
                 }
-                val p = st.optJSONObject("pilot")
-                if (p != null) {
-                    val act = p.optString("last_action")
-                    val rea = p.optString("last_reason")
-                    pilotSummary = listOf(act, rea).filter { it.isNotBlank() }.joinToString(" · ")
-                } else {
-                    pilotSummary = ""
-                }
-                val goto = st.optJSONObject("goto")
-                if (goto != null) {
-                    gotoState = goto.optString("state", gotoState)
-                    val g = goto.optJSONObject("goal_mm")
-                    if (g != null) {
-                        goalMm = g.optDouble("x") to g.optDouble("y")
-                    }
-                    val sg = goto.optJSONObject("snapped_goal_mm")
-                    snappedMm = sg?.let { it.optDouble("x") to it.optDouble("y") }
-                    val arr = goto.optJSONArray("waypoints_mm")
-                    if (arr != null) {
-                        val pts = mutableListOf<Pair<Double, Double>>()
-                        for (i in 0 until arr.length()) {
-                            val w = arr.optJSONObject(i) ?: continue
-                            pts.add(w.optDouble("x") to w.optDouble("y"))
-                        }
-                        pathMm = pts
-                    }
-                    val reason = goto.optString("reason")
-                    if (reason.isNotBlank()) gotoMsg = "$gotoState · $reason"
-                    // Clear overlays on a clean arrival/cancel to keep the
-                    // map readable for the next click.
-                    if (gotoState == "arrived" || gotoState == "cancelled") {
-                        pathMm = emptyList()
-                    }
-                }
+                else -> mapPill
             }
-            delay(1500)
         }
-    }
+    val mapHeaderPillKind =
+        remember(grid, mapPillKind) {
+            val g = grid
+            if (g != null && g.width > 0 && g.height > 0) SirenaPillKind.Ok else mapPillKind
+        }
 
-    SirenaScrollableScreen(
-        titleBar = "Nina · Map",
-        breadcrumb = "Nina / Map",
-        modifier = modifier,
-    ) {
-        Text(
-            "Occupancy map & pilot",
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
+    val health = autonomyJson?.optJSONObject("health")
+    val lidarH = healthPill("Lidar", health?.optJSONObject("lidar"))
+    val depthH = healthPill("Depth", health?.optJSONObject("depth"))
+    val irH = healthPill("IR", health?.optJSONObject("ir"))
+    val ultraTxt = ultraSummary(health?.optJSONArray("ultrasonic"))
+    val ultraKind =
+        if (ultraTxt.contains("ok")) SirenaPillKind.Ok else SirenaPillKind.Neutral
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    val pose = slamJson?.optJSONObject("snapshot")?.optJSONObject("pose")
+    val poseText =
+        if (pose != null) {
+            val x = pose.optDouble("x_mm", Double.NaN)
+            val y = pose.optDouble("y_mm", Double.NaN)
+            val th = pose.optDouble("theta_deg", Double.NaN)
+            "x: ${fmtMm(x)}\ny: ${fmtMm(y)}\nθ: ${fmtDeg(th)}"
+        } else {
+            "x: —\ny: —\nθ: —"
+        }
+
+    val pilot = autonomyJson?.optJSONObject("pilot")
+    val pilotText =
+        pilot?.optString("last_action")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: pilot?.optString("last_reason")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "idle"
+
+    val goto = autonomyJson?.optJSONObject("goto")
+    val gotoState = goto?.optString("state")?.trim().orEmpty().ifBlank { "idle" }
+    val gotoPillText =
+        if (gotoState == "idle") {
+            "Goto idle"
+        } else {
+            "Goto: $gotoState"
+        }
+    val gotoActive =
+        gotoState in setOf("planning", "driving", "turning", "replanning", "avoiding")
+
+    @Composable
+    fun OccupancyMapColumn(mapCardModifier: Modifier, gridBoxModifier: Modifier) {
+        SirenaCard(
+            modifier = mapCardModifier,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            MapStatusPill(
-                if (slamOn) "SLAM: ${slamStatus?.optString("lidar_message")?.take(14) ?: "…"}"
-                else "SLAM: off",
-                emphasis = slamOn,
-                modifier = Modifier.weight(1f),
-            )
-            MapStatusPill(
-                if (autonomyApi) {
-                    if (autonomyOn) "Auto: ON" else "Auto: OFF"
-                } else {
-                    "Auto: n/a"
-                },
-                emphasis = autonomyOn,
-                modifier = Modifier.weight(1f),
-            )
-            MapStatusPill(
-                "Mode: ${navMode.take(10)}",
-                emphasis = navMode != "—" && navMode.isNotBlank(),
-                modifier = Modifier.weight(1f),
-            )
-            MapStatusPill(
-                "Goto: ${gotoState.take(10)}",
-                emphasis = gotoState != "idle",
-                modifier = Modifier.weight(1f),
-            )
-        }
-
-        if (slamOn) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp, horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    MapLegendDot(Color(0xFFC8102E), "Nina")
-                    MapLegendDot(Color(0xFF1C1C1E), "Wall")
-                    MapLegendDot(Color(0xFFD1D1D6), "Free")
-                    MapLegendDot(Color(0xFF8E8E93), "Unknown")
-                }
+                SirenaCardTitle("Occupancy map")
+                Spacer(Modifier.weight(1f))
+                SirenaStatusPill(mapHeaderPillText, mapHeaderPillKind)
             }
-        }
 
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(360.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Card(
-                Modifier
-                    .weight(0.57f)
-                    .fillMaxSize(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            val g = grid
+            Box(
+                modifier = gridBoxModifier,
             ) {
-                // Track the rendered bitmap rect so taps can be
-                // converted to world mm using the snapshot's scale.
-                var imageSize by remember { mutableStateOf(IntSize.Zero) }
-                var imageOffset by remember { mutableStateOf(IntOffset.Zero) }
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerInput(gotoArmed, snap, occBitmap) {
-                            if (!gotoArmed || snap == null || occBitmap == null) return@pointerInput
-                            detectTapGestures { tap ->
-                                val sn = snap ?: return@detectTapGestures
-                                val bmp = occBitmap ?: return@detectTapGestures
-                                val box = imageSize
-                                if (box.width <= 0 || box.height <= 0) return@detectTapGestures
-                                // Tap is in widget coords relative to the
-                                // image; clamp to inside the bitmap.
-                                val tx = (tap.x - imageOffset.x).coerceIn(0f, box.width.toFloat())
-                                val ty = (tap.y - imageOffset.y).coerceIn(0f, box.height.toFloat())
-                                val pxX = tx / box.width * bmp.width
-                                val pxY = ty / box.height * bmp.height
-                                val scale = sn.optDouble("scale_mm_per_px", 1.0)
-                                val w = sn.optInt("width", bmp.width)
-                                val h = sn.optInt("height", bmp.height)
-                                val cx = w / 2.0
-                                val cy = h / 2.0
-                                val xMm = (pxX - cx) * scale
-                                val yMm = (cy - pxY) * scale
-                                goalWidget = Offset(tap.x, tap.y)
-                                goalMm = xMm to yMm
-                                pathMm = emptyList()
-                                snappedMm = null
-                                scope.launch {
-                                    val r = vm.postAutonomyGoal(xMm, yMm)
-                                    if (r?.optBoolean("ok") == true) {
-                                        autonomyOn = true
-                                        gotoState = r.optString("mode", "goto")
-                                        gotoMsg = r.optString("message").orEmpty()
+                if (g != null && g.width > 0 && g.height > 0) {
+                    val bmp = remember(g) { g.toBitmap().asImageBitmap() }
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = "SLAM map — tap to set goto goal when enabled",
+                        contentScale = ContentScale.Fit,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .then(
+                                    if (tapGotoOn) {
+                                        Modifier.pointerInput(scaleMm, g.width, g.height, tapGotoOn) {
+                                            detectTapGestures { pos ->
+                                                val bw = size.width.toFloat()
+                                                val bh = size.height.toFloat()
+                                                val mm =
+                                                    tapToWorldMm(
+                                                        pos.x,
+                                                        pos.y,
+                                                        bw,
+                                                        bh,
+                                                        g.width,
+                                                        g.height,
+                                                        scaleMm,
+                                                    )
+                                                if (mm != null) {
+                                                    scope.launch {
+                                                        err = null
+                                                        val r = vm.postAutonomyGoal(mm.first, mm.second)
+                                                        if (r != null && r.optBoolean("ok", true)) {
+                                                            lastGoal =
+                                                                "${mm.first.toInt()} mm, ${mm.second.toInt()} mm"
+                                                        } else {
+                                                            val msg =
+                                                                r?.optString("detail").orEmpty().ifBlank {
+                                                                    r?.optString("message").orEmpty().ifBlank {
+                                                                        r?.toString()?.take(120)
+                                                                    }
+                                                                }
+                                                            lastGoal = msg ?: "goal failed"
+                                                            err = msg
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     } else {
-                                        gotoMsg = r?.optString("message").orEmpty()
-                                            .ifBlank { "goto request failed" }
-                                    }
+                                        Modifier
+                                    },
+                                ),
+                    )
+                } else {
+                    val simMsg =
+                        if (slamJson?.optBoolean("running") == true &&
+                            slamJson?.optBoolean("lidar_connected") == false
+                        ) {
+                            slamJson!!.optString("lidar_message").trim().ifBlank {
+                                "Lidar simulation — connect hardware to build a live map."
+                            }
+                        } else {
+                            null
+                        }
+                    Text(
+                        simMsg ?: "Waiting for SLAM occupancy grid…",
+                        modifier = Modifier.align(Alignment.Center).padding(12.dp),
+                        color = SirenaColors.muted,
+                        fontSize = SirenaType.muted,
+                    )
+                }
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LegendDot(Color(0xFFC8102E), "Nina")
+                LegendDot(Color(0xFF1C1C1E), "Wall")
+                LegendDot(Color(0xFFD1D1D6), "Free space")
+                LegendDot(Color(0xFF8E8E93), "Unknown")
+                Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+
+    @Composable
+    fun MapSideRailCard(
+        sideModifier: Modifier,
+        scrollRail: Boolean,
+        caps: JSONObject?,
+    ) {
+        val railScroll = rememberScrollState()
+        SirenaCard(
+            modifier =
+                if (scrollRail) {
+                    sideModifier.verticalScroll(railScroll)
+                } else {
+                    sideModifier
+                },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+                err?.let { msg ->
+                    SirenaInlineStatusBanner(
+                        isError = true,
+                        title = "Map",
+                        message = msg,
+                    )
+                }
+
+                SirenaSectionLabel("Autonomous nav")
+                SirenaPrimaryButton(
+                    text = if (autonomyOn) "Autonomous mode: ON" else "Autonomous mode: OFF",
+                    onClick = {
+                        scope.launch {
+                            err = null
+                            val want = !autonomyOn
+                            val r = vm.postAutonomyEnabled(want)
+                            if (r != null && r.optBoolean("ok", true)) {
+                                autonomyOn = r.optBoolean("enabled", want)
+                            } else {
+                                err = r?.optString("error").orEmpty().ifBlank { "autonomy failed" }
+                            }
+                        }
+                    },
+                    enabled = online && autonomyJson?.optBoolean("bridge_enabled", true) != false,
+                    modifier = Modifier.height(34.dp),
+                )
+                SirenaMutedText(
+                    "When ON: lidar + SLAM + obstacle avoidance start, and Nina drives herself " +
+                        "while reactively avoiding obstacles.",
+                    maxLines = 5,
+                )
+
+                SirenaSectionLabel("Go to point")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SirenaSecondaryButton(
+                        text = if (tapGotoOn) "Tap on map: ON" else "Tap on map: OFF",
+                        onClick = { tapGotoOn = !tapGotoOn },
+                        enabled = online,
+                    )
+                    SirenaSecondaryButton(
+                        text = "Cancel",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                try {
+                                    vm.deleteAutonomyGoal()
+                                    lastGoal = "cancelled"
+                                } catch (e: Exception) {
+                                    err = e.message
                                 }
                             }
                         },
-                    contentAlignment = Alignment.Center,
+                        enabled = online && gotoActive,
+                    )
+                }
+                SirenaStatusPill(gotoPillText, SirenaPillKind.Neutral)
+                SirenaMutedText(
+                    "Tap on the map to send Nina to a point. She'll plan a path on the SLAM grid, " +
+                        "drive there with reactive obstacle avoidance, and stop on arrival.",
+                    maxLines = 5,
+                )
+                SirenaMutedText("Last tap goal: $lastGoal", maxLines = 2)
+
+                SirenaSectionLabel("Mapping")
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (slamOn && occBitmap != null) {
-                        Image(
-                            bitmap = occBitmap!!.asImageBitmap(),
-                            contentDescription = "SLAM occupancy",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(6.dp),
-                        )
-                        // Overlay path polyline + goal flag on top of
-                        // the bitmap. The overlay uses the same Box so
-                        // the IntSize / IntOffset of the contained
-                        // bitmap rect is what we measure for tap math.
-                        Canvas(Modifier.fillMaxSize()) {
-                            val box = size
-                            imageSize = IntSize(box.width.toInt(), box.height.toInt())
-                            imageOffset = IntOffset(0, 0)
-                            val sn = snap
-                            val bmp = occBitmap
-                            if (sn != null && bmp != null && bmp.width > 0 && bmp.height > 0) {
-                                val scale = sn.optDouble("scale_mm_per_px", 1.0)
-                                val gw = sn.optInt("width", bmp.width)
-                                val gh = sn.optInt("height", bmp.height)
-                                val cx = gw / 2.0
-                                val cy = gh / 2.0
-                                fun mmToWidget(xMm: Double, yMm: Double): Offset {
-                                    val pxX = (cx + xMm / scale)
-                                    val pxY = (cy - yMm / scale)
-                                    return Offset(
-                                        (pxX / gw * box.width).toFloat(),
-                                        (pxY / gh * box.height).toFloat(),
-                                    )
-                                }
-                                // Path
-                                if (pathMm.size >= 2) {
-                                    val red = Color(0xFFC8102E).copy(alpha = 0.85f)
-                                    val effect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                                    for (i in 0 until pathMm.size - 1) {
-                                        drawLine(
-                                            color = red,
-                                            start = mmToWidget(pathMm[i].first, pathMm[i].second),
-                                            end = mmToWidget(pathMm[i + 1].first, pathMm[i + 1].second),
-                                            strokeWidth = 4f,
-                                            pathEffect = effect,
-                                        )
-                                    }
-                                }
-                                // Goal pin (snapped wins if present)
-                                val pin = snappedMm ?: goalMm
-                                if (pin != null) {
-                                    val center = mmToWidget(pin.first, pin.second)
-                                    drawCircle(
-                                        color = Color(0xFFC8102E),
-                                        radius = 12f,
-                                        center = center,
-                                    )
-                                    drawCircle(
-                                        color = Color.White,
-                                        radius = 12f,
-                                        center = center,
-                                        style = Stroke(width = 3f),
-                                    )
-                                }
-                                if (snappedMm != null && goalMm != null) {
-                                    val raw = mmToWidget(goalMm!!.first, goalMm!!.second)
-                                    drawCircle(
-                                        color = Color(0xFFC8102E).copy(alpha = 0.6f),
-                                        radius = 10f,
-                                        center = raw,
-                                        style = Stroke(width = 3f),
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .padding(20.dp),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                if (!slamOn) {
-                                    "Enable NINA_LINK_ENABLE_SLAM_BRIDGE on the Jetson for the occupancy map."
-                                } else if (occBitmap == null) {
-                                    "Waiting for SLAM grid…"
+                    SirenaSecondaryButton(
+                        text = if (slamRunning) "Stop mapping" else "Start mapping",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                val wantRun = !slamRunning
+                                val r = vm.postSlamRunning(wantRun)
+                                if (r != null && r.optBoolean("ok", true)) {
+                                    slamRunning = r.optBoolean("running", wantRun)
                                 } else {
-                                    ""
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                    }
-                }
-            }
-            Column(
-                Modifier
-                    .weight(0.43f)
-                    .fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Card(
-                    Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            "Pose",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        val pose = snap?.optJSONObject("pose")
-                        if (pose != null) {
-                            val x = pose.optLong("x_mm")
-                            val y = pose.optLong("y_mm")
-                            val th = pose.optDouble("theta_deg")
-                            Text(
-                                "x ${x} mm  ·  y ${y} mm  ·  θ ${"%.1f".format(th)}°",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        } else {
-                            Text("x —  y —  θ —", style = MaterialTheme.typography.bodySmall)
-                        }
-                        val detail =
-                            listOfNotNull(
-                                mapHint.ifBlank { null },
-                                visionStatus?.optString("message")?.ifBlank { null },
-                            ).joinToString(" · ")
-                        Text(
-                            detail.ifBlank { "Pose from /v1/slam/snapshot when the bridge is on." },
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                if (autonomyApi) {
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                "Sensor health",
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                listOf(lidarHl, depthHl, irHl, ultraHl).joinToString("  ·  "),
-                                modifier = Modifier.fillMaxWidth(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                "Pilot",
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                pilotSummary.ifBlank { "idle" },
-                                modifier = Modifier.fillMaxWidth(),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
-                Card(
-                    Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            "Navigation & mapping",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("Autonomous", style = MaterialTheme.typography.bodySmall)
-                            SirenaSwitch(
-                                checked = autonomyOn,
-                                onCheckedChange = { want ->
-                                    if (!autonomyApi) return@SirenaSwitch
-                                    scope.launch {
-                                        val r = vm.postAutonomyEnabled(want)
-                                        if (r?.optBoolean("ok") == true) {
-                                            autonomyOn = r.optBoolean("enabled", want)
-                                            autonomyMsg = r.optString("message").orEmpty()
-                                        } else {
-                                            autonomyMsg =
-                                                r?.optString("error").orEmpty().ifBlank {
-                                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
-                                                }
-                                        }
-                                    }
-                                },
-                                enabled = autonomyApi,
-                            )
-                        }
-                        if (autonomyMsg.isNotBlank()) {
-                            Text(autonomyMsg, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(
-                                onClick = {
-                                    gotoArmed = !gotoArmed
-                                    if (!gotoArmed) {
-                                        goalWidget = null
-                                        goalMm = null
-                                        pathMm = emptyList()
-                                        snappedMm = null
-                                    }
-                                },
-                                enabled = gotoApi && slamOn,
-                                modifier = Modifier.weight(1f),
-                            ) { Text(if (gotoArmed) "Tap: ARMED" else "Go to point") }
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        val r = vm.deleteAutonomyGoal()
-                                        gotoMsg = r?.optString("message").orEmpty()
-                                            .ifBlank { "goto cleared" }
-                                        gotoArmed = false
-                                        goalWidget = null
-                                        goalMm = null
-                                        pathMm = emptyList()
-                                        snappedMm = null
-                                    }
-                                },
-                                enabled = gotoApi,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Cancel goto") }
-                        }
-                        if (gotoMsg.isNotBlank()) {
-                            Text(
-                                gotoMsg,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(
-                                onClick = { mappingOn = true },
-                                enabled = slamOn,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Start mapping") }
-                            OutlinedButton(
-                                onClick = { mappingOn = false },
-                                enabled = slamOn,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Stop mapping") }
-                        }
-                        Text(
-                            "Mapping runs with the SLAM bridge; use Save on-robot if you add a file endpoint later.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        saveMapMsg = ""
-                                        val r = vm.saveSlamMapPgm("nina_map.pgm")
-                                        saveMapMsg =
-                                            when {
-                                                r == null -> "Save failed (unreachable host)."
-                                                r.optBoolean("ok") ->
-                                                    "Saved: ${r.optString("filename", "nina_map.pgm")}"
-                                                else ->
-                                                    r.optString("detail", r.optString("message", "Save failed"))
-                                            }
-                                    }
-                                },
-                                enabled = slamOn,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Save map")
+                                    err =
+                                        r?.optString("detail") ?: r?.toString()?.take(120)
+                                            ?: if (wantRun) "start failed" else "stop failed"
+                                }
                             }
-                            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("Clear") }
-                        }
-                        if (saveMapMsg.isNotBlank()) {
-                            Text(
-                                saveMapMsg,
-                                style = MaterialTheme.typography.labelSmall,
-                                color =
-                                    if (saveMapMsg.startsWith("Saved")) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.error
-                                    },
-                            )
-                        }
-                    }
+                        },
+                        enabled = online,
+                    )
+                    SirenaSecondaryButton(
+                        text = "Save map",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                val r = vm.saveSlamMapPgm(saveName.trim().ifBlank { "nina_map.pgm" })
+                                if (r == null || !r.optBoolean("ok", false)) {
+                                    err = r?.optString("detail") ?: r?.toString() ?: "save failed"
+                                }
+                            }
+                        },
+                        enabled = online,
+                    )
+                    SirenaSecondaryButton(
+                        text = "Clear",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                val r = vm.postSlamClear()
+                                if (r == null || !r.optBoolean("ok", false)) {
+                                    err = r?.optString("detail") ?: r?.toString()?.take(120) ?: "clear failed"
+                                }
+                            }
+                        },
+                        enabled = online,
+                    )
+                }
+                OutlinedTextField(
+                    value = saveName,
+                    onValueChange = { saveName = it },
+                    label = { Text("PGM filename") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                SirenaMutedText(
+                    "Clears the SLAM map on the robot (same as Qt: autonomy turns off if it was on, then SLAM restarts).",
+                    maxLines = 3,
+                )
+
+                SirenaSectionLabel("Sensor health")
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SirenaStatusPill(lidarH.first, lidarH.second)
+                    SirenaStatusPill(depthH.first, depthH.second)
+                    SirenaStatusPill(irH.first, irH.second)
+                    SirenaStatusPill(ultraTxt, ultraKind)
+                }
+
+                SirenaSectionLabel("Pose")
+                Text(
+                    poseText,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF5F5F7), shape = RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    color = Color(0xFF1C1C1E),
+                )
+
+                SirenaSectionLabel("Pilot")
+                Text(
+                    pilotText,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF5F5F7), shape = RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    color = Color(0xFF1C1C1E),
+                )
+
+                if (online) {
+                    SirenaJetsonFeatureGateCallout(
+                        linkOnline = true,
+                        caps = caps,
+                        flagKey = "slam_bridge_enabled",
+                        title = "SLAM / map HTTP bridge is off",
+                        envLine =
+                            "On the Jetson: export NINA_LINK_ENABLE_SLAM_BRIDGE=1, then restart nina-link. " +
+                                "Autonomy goto also needs NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1.",
+                    )
+                }
+        }
+    }
+
+    SirenaAdaptiveContainer(Modifier.padding(10.dp)) { ctx ->
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SirenaAdaptiveHeaderPills(
+                ctx = ctx,
+                breadcrumb = { SirenaBreadcrumbLine(listOf("Nina", "Map")) },
+                pills = {
+                    SirenaStatusPill(sensorTop, sensorTopKind)
+                    SirenaStatusPill(slamTop, slamTopKind)
+                },
+            )
+            if (ctx.mapSplit) {
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OccupancyMapColumn(
+                        mapCardModifier = Modifier.weight(0.6f).fillMaxHeight(),
+                        gridBoxModifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                    MapSideRailCard(
+                        sideModifier = Modifier.weight(0.4f).fillMaxHeight(),
+                        scrollRail = true,
+                        caps = caps,
+                    )
+                }
+            } else {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OccupancyMapColumn(
+                        mapCardModifier = Modifier.fillMaxWidth(),
+                        gridBoxModifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = ctx.mapStackedGridMinHeight, max = 520.dp),
+                    )
+                    MapSideRailCard(
+                        sideModifier = Modifier.fillMaxWidth(),
+                        scrollRail = false,
+                        caps = caps,
+                    )
                 }
             }
         }
@@ -636,74 +666,27 @@ fun SirenaMapScreen(
 }
 
 @Composable
-private fun MapStatusPill(
-    text: String,
-    emphasis: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color =
-            if (emphasis) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
-        shadowElevation = 1.dp,
-    ) {
-        Text(
-            text,
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun MapLegendDot(color: Color, label: String) {
+private fun LegendDot(color: Color, label: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             Modifier
-                .size(8.dp)
+                .size(10.dp)
                 .background(color, CircleShape),
         )
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            color = SirenaColors.muted,
+            fontWeight = FontWeight.Normal,
         )
     }
 }
 
-private fun healthOneLine(title: String, o: JSONObject?): String {
-    if (o == null) return "$title: —"
-    val ok = o.optBoolean("connected")
-    val msg = o.optString("message").trim()
-    return if (ok) {
-        "$title: OK"
-    } else {
-        val short = if (msg.length > 18) msg.take(18) + "…" else msg
-        "$title: ${short.ifBlank { "off" }}"
-    }
-}
+private fun fmtMm(v: Double): String =
+    if (v.isFinite()) String.format("%.0f mm", v) else "—"
 
-private fun SlamOccupancyGrid.toGrayscaleBitmap(): Bitmap? {
-    if (bytes.size < width * height) return null
-    val pixels = IntArray(width * height)
-    var i = 0
-    for (idx in pixels.indices) {
-        val v = bytes[i].toInt() and 0xff
-        i++
-        pixels[idx] = (0xff shl 24) or (v shl 16) or (v shl 8) or v
-    }
-    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
-        setPixels(pixels, 0, width, 0, 0, width, height)
-    }
-}
+private fun fmtDeg(v: Double): String =
+    if (v.isFinite()) String.format("%.1f°", v) else "—"

@@ -2,3 +2,5 @@
 fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
 pydantic>=2.0.0
+# Bonjour / mDNS for tablet discovery (``NINA_LINK_MDNS=1`` on the Jetson).
+zeroconf>=0.132.0

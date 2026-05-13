@@ -28,7 +28,9 @@ parks the wheels.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -48,7 +50,7 @@ from nina.navigation.goto_pilot import (
 )
 from nina.sensors.gp2y0e02b import GP2Y0E02B
 from nina.sensors.hcsr04 import HCSR04Array
-from nina.sensors.realsense_d435 import RealSenseD435
+from nina.sensors.realsense_d435 import RealSenseD435, normalize_depth_error
 from nina.sensors.types import (
     DepthFrame,
     IRReading,
@@ -68,6 +70,28 @@ MODE_GOTO = "goto"
 
 
 log = logging.getLogger("sirena_ui.autonomy")
+
+
+def _autonomy_enable_stagger_chunk_s() -> float:
+    """Wall-clock delay between heavy bring-up steps (softens CPU spikes vs PulseAudio).
+
+    Set ``NINA_AUTONOMY_ENABLE_STAGGER_MS`` (total ms, split across four yields). ``0``
+    disables. Default ``200`` → four ~50 ms sleeps.
+    """
+    raw = os.environ.get("NINA_AUTONOMY_ENABLE_STAGGER_MS", "200").strip()
+    try:
+        total_ms = max(0.0, float(raw))
+    except ValueError:
+        total_ms = 200.0
+    if total_ms <= 0.0:
+        return 0.0
+    return total_ms / 4000.0
+
+
+def _yield_autonomy_stagger() -> None:
+    chunk = _autonomy_enable_stagger_chunk_s()
+    if chunk > 0.0:
+        time.sleep(chunk)
 
 
 def _pilot_state_to_dict(state: PilotState) -> dict:
@@ -280,7 +304,7 @@ class AutonomyController(QObject):
         except Exception as exc:
             log.warning("depth open failed: %s", exc)
             ok = False
-            msg = f"depth: {exc}"
+            msg = f"depth: {normalize_depth_error(exc)}"
 
         close_now = False
         with self._lock:
@@ -555,6 +579,7 @@ class AutonomyController(QObject):
             self._slam.start()
         except Exception as exc:
             log.warning("slam.start failed: %s", exc)
+        _yield_autonomy_stagger()
 
         # Short-range sensors - each open is independent so a missing
         # sensor doesn't disable the others.
@@ -562,10 +587,12 @@ class AutonomyController(QObject):
             self._ultras.open, "ultrasonic"
         )
         ir_ok, ir_msg = self._safe_open(self._ir.open, "ir")
+        _yield_autonomy_stagger()
         # Depth goes through the refcount so a Perception screen that
         # already opened the camera for visualization doesn't get
         # double-opened (librealsense rejects that).
         depth_ok, depth_msg = self.acquire_depth()
+        _yield_autonomy_stagger()
 
         slam_status = self._slam.status()
         with self._lock:
@@ -598,6 +625,7 @@ class AutonomyController(QObject):
 
         # Make sure the brake is released before either pilot starts
         # issuing wheel commands.
+        _yield_autonomy_stagger()
         try:
             self._drive.set_brake(False)
             self._drive.ensure_hardware()

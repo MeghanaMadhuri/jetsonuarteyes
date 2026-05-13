@@ -1,34 +1,33 @@
 package com.sirena.nina.companion.ui.sirena
 
-import android.media.MediaPlayer
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import com.sirena.nina.companion.ui.theme.SirenaSwitch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,862 +40,695 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.ActionRowUi
 import com.sirena.nina.companion.CompanionViewModel
-import com.sirena.nina.companion.R
-import kotlinx.coroutines.Dispatchers
+import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
+private enum class ActionsSubtab { Playback, Record, Audio }
+
+private fun defaultSpeechForAction(name: String): String =
+    name
+        .split("_")
+        .joinToString(" ") { part ->
+            part.replaceFirstChar { c ->
+                if (c.isLowerCase()) c.titlecase(Locale.getDefault()) else c.toString()
+            }
+        }
+
+private fun parseDoubleOr(raw: String, default: Double): Double =
+    raw.trim().toDoubleOrNull() ?: default
+
+private fun formatMotionMeta(row: ActionRowUi): String {
+    val d = row.durationSec
+    val c = row.frameCount
+    return when {
+        d != null && c != null ->
+            String.format(Locale.US, "%.1fs • %d frames", d, c)
+        c != null -> "$c frames"
+        d != null -> String.format(Locale.US, "%.1fs", d)
+        else -> "—"
+    }
+}
+
+private fun formatAudioMeta(row: ActionRowUi): String {
+    val rel = row.audio?.trim()
+    val off = row.audioOffsetSec
+    if (rel.isNullOrEmpty()) return "Audio: none"
+    val fileName = rel.substringAfterLast('/').ifBlank { rel }
+    val suffix =
+        if (off != null && off > 0.0) {
+            String.format(Locale.US, " • +%.2fs", off)
+        } else {
+            ""
+        }
+    return "Audio: $fileName$suffix"
+}
+
 /**
- * Mirrors [sirena_ui.screens.actions_screen.ActionsScreen] —
- * Playback lists manifest actions from the Jetson; Record/Audio match desktop roles.
+ * Actions: Playback / Record / Audio — same sub-tabs as [sirena_ui.screens.actions_screen.ActionsScreen],
+ * backed by manifest + record HTTP on the link daemon. Content uses the full content area.
  */
 @Composable
 fun SirenaActionsScreen(
-    selectedTab: Int,
-    onTabSelected: (Int) -> Unit,
-    manifestActions: List<ActionRowUi>,
-    manifestError: String?,
-    onRefreshManifest: () -> Unit,
-    onPlayAction: (String) -> Unit,
     vm: CompanionViewModel,
-    caps: JSONObject?,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier
-            .fillMaxSize()
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Nina · Actions",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Text(
-                    if (manifestError != null) "List error" else "${manifestActions.size} actions",
-                    Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color =
-                        if (manifestError != null) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                )
-            }
-        }
-
-        manifestError?.let {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    it,
-                    Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-        }
-
-        TabRow(selectedTabIndex = selectedTab) {
-            SIRENA_ACTIONS_SUBTAB_LABELS.forEachIndexed { index, label ->
-                Tab(
-                    selected = selectedTab == index,
-                    onClick = { onTabSelected(index) },
-                    text = { Text(label) },
-                )
-            }
-        }
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(Modifier.weight(0.38f).fillMaxHeight()) {
-                ActionsHeroCard(onRefreshManifest = onRefreshManifest)
-            }
-            Column(
-                Modifier
-                    .weight(0.62f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                when (selectedTab) {
-                    0 ->
-                        PlaybackTab(
-                            vm = vm,
-                            manifestActions = manifestActions,
-                            onPlayAction = onPlayAction,
-                            onRefreshManifest = onRefreshManifest,
-                        )
-
-                    1 -> RecordTabContent(vm = vm, caps = caps)
-                    2 ->
-                        AudioTabContent(
-                            vm = vm,
-                            caps = caps,
-                            manifestActions = manifestActions,
-                            onPlayAction = onPlayAction,
-                            onRefreshManifest = onRefreshManifest,
-                        )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionsHeroCard(onRefreshManifest: () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Image(
-                painter = painterResource(R.drawable.nina_hero),
-                contentDescription = "Nina",
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(4f / 3f)
-                        .clip(RoundedCornerShape(10.dp)),
-                contentScale = ContentScale.Fit,
-            )
-            Text("Nina", fontWeight = FontWeight.Bold)
-            Text(
-                "Manifest from Jetson GET /v1/actions.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(onClick = onRefreshManifest, modifier = Modifier.fillMaxWidth()) {
-                Text("Refresh list")
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlaybackTab(
-    vm: CompanionViewModel,
-    manifestActions: List<ActionRowUi>,
-    onPlayAction: (String) -> Unit,
-    onRefreshManifest: () -> Unit,
+    initialSubtab: String,
+    caps: JSONObject? = null,
+    /** When true, tab bodies do not use vertical drag scroll (phone shell). */
+    shellCompact: Boolean = false,
+    /** When set (e.g. from Playback **Audio**), switches to the Audio tab and seeds the action picker. */
+    prefillAudioAction: String? = null,
+    onPrefillAudioConsumed: () -> Unit = {},
+    /** Playback **Audio** button: parent may update nav + [prefillAudioAction]. */
+    onPlaybackOpenAudioEditor: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var pendingDelete by remember { mutableStateOf<String?>(null) }
-    var deleteErr by remember { mutableStateOf<String?>(null) }
+    val actions by vm.manifestActions.collectAsStateWithLifecycle()
+    val manifestErr by vm.manifestActionsError.collectAsStateWithLifecycle()
+    val link by vm.jetsonLink.collectAsStateWithLifecycle()
+    val playbackHint by vm.actionPlaybackStatus.collectAsStateWithLifecycle()
+    val protectedNeutral =
+        caps?.optString("neutral_action_name")?.trim()?.takeIf { it.isNotEmpty() } ?: "neutral"
 
-    pendingDelete?.let { name ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove action") },
-            text = {
-                Text(
-                    "Remove \"$name\" from the Jetson manifest and delete its recording file? " +
-                        "Requires ``NINA_LINK_ENABLE_ACTIONS_STATIC=1`` and auth.",
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        scope.launch {
-                            deleteErr = vm.deleteManifestAction(name, deleteRecording = true, deleteAudio = false)
-                            pendingDelete = null
-                            if (deleteErr == null) {
-                                onRefreshManifest()
-                            }
-                        }
-                    },
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) {
-                    Text("Cancel")
-                }
+    var subtab by remember {
+        mutableStateOf(
+            when (initialSubtab.lowercase()) {
+                "record" -> ActionsSubtab.Record
+                "audio" -> ActionsSubtab.Audio
+                else -> ActionsSubtab.Playback
             },
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Text("Playback", fontWeight = FontWeight.SemiBold)
-        Text(
-            "Registered motions from the robot manifest. Play queues motion on the Jetson; Delete removes the manifest entry.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp),
+    var recordName by remember { mutableStateOf("motion") }
+    var recordSeconds by remember { mutableStateOf("5.0") }
+    var recordHz by remember { mutableStateOf("20.0") }
+    var recordCountdown by remember { mutableStateOf("3.0") }
+    var recordRegister by remember { mutableStateOf(true) }
+    var recordHoldAfter by remember { mutableStateOf(false) }
+    var recordErr by remember { mutableStateOf<String?>(null) }
+    var recordLine by remember { mutableStateOf("—") }
+    var recordingActive by remember { mutableStateOf(false) }
+
+    var selectedActionName by remember { mutableStateOf("") }
+    var audioSpeechText by remember { mutableStateOf("") }
+    var voicePresetIndex by remember { mutableIntStateOf(0) }
+    var audioOffsetStr by remember { mutableStateOf("0.0") }
+    var audioActionMenuExpanded by remember { mutableStateOf(false) }
+    var voiceMenuExpanded by remember { mutableStateOf(false) }
+    var audioErr by remember { mutableStateOf<String?>(null) }
+    var audioLast by remember { mutableStateOf("—") }
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(initialSubtab, prefillAudioAction) {
+        subtab =
+            when (initialSubtab.lowercase()) {
+                "record" -> ActionsSubtab.Record
+                "audio" -> ActionsSubtab.Audio
+                else -> ActionsSubtab.Playback
+            }
+        val p = prefillAudioAction?.trim()?.takeIf { it.isNotEmpty() }
+        if (p != null) {
+            subtab = ActionsSubtab.Audio
+            selectedActionName = p
+            audioSpeechText = defaultSpeechForAction(p)
+            voicePresetIndex = 0
+            audioOffsetStr = "0.0"
+            onPrefillAudioConsumed()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.refreshManifestActions()
+    }
+
+    LaunchedEffect(subtab, link.isOnline) {
+        if (subtab != ActionsSubtab.Record || !link.isOnline) {
+            recordingActive = false
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            try {
+                val st = vm.fetchRecordStatus()
+                recordLine =
+                    if (st != null) {
+                        if (st.optBoolean("running")) {
+                            "Recording in progress"
+                        } else {
+                            "Idle"
+                        }
+                    } else {
+                        "—"
+                    }
+                recordingActive = st?.optBoolean("running") == true
+            } catch (_: Exception) {
+            }
+            delay(800)
+        }
+    }
+
+    val buttonTall = Modifier.defaultMinSize(minHeight = 48.dp)
+
+    @Composable
+    fun TabStrip() {
+        SirenaSegmentedTabs(
+            tabs = listOf("Playback", "Record", "Audio"),
+            selectedIndex =
+                when (subtab) {
+                    ActionsSubtab.Playback -> 0
+                    ActionsSubtab.Record -> 1
+                    ActionsSubtab.Audio -> 2
+                },
+            onSelect = { i ->
+                if (!recordingActive) {
+                    subtab =
+                        when (i) {
+                            0 -> ActionsSubtab.Playback
+                            1 -> ActionsSubtab.Record
+                            else -> ActionsSubtab.Audio
+                        }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
         )
-        deleteErr?.let {
-            Text(
-                it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 6.dp),
+    }
+
+    @Composable
+    fun SubtabBody() {
+        when (subtab) {
+            ActionsSubtab.Playback -> {
+                BoxWithConstraints(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 4.dp),
+                ) {
+                    val gridCols =
+                        when {
+                            maxWidth >= 600.dp -> 3
+                            maxWidth >= 320.dp -> 2
+                            else -> 1
+                        }
+                    val estCellWidth = (maxWidth.value / gridCols).dp
+                    val stackButtons = estCellWidth < 168.dp
+
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SirenaCardTitle("Playback actions")
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(gridCols),
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(actions, key = { it.name }) { row: ActionRowUi ->
+                                val cardPad = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                SirenaCard(contentPadding = cardPad, liquidGlass = true) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.Top,
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                row.name,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = SirenaColors.text,
+                                            )
+                                            row.file?.let { SirenaMutedText(it, maxLines = 1) }
+                                            SirenaMutedText(formatMotionMeta(row), maxLines = 1)
+                                            SirenaMutedText(formatAudioMeta(row), maxLines = 2)
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                if (row.name != protectedNeutral) {
+                                                    pendingDelete = row.name
+                                                }
+                                            },
+                                            enabled = row.name != protectedNeutral,
+                                            modifier = Modifier.size(40.dp),
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.Delete,
+                                                contentDescription = "Delete action",
+                                                tint =
+                                                    if (row.name == protectedNeutral) {
+                                                        SirenaColors.disabledText
+                                                    } else {
+                                                        SirenaColors.muted
+                                                    },
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    if (stackButtons) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SirenaPrimaryButton(
+                                                text = "Play",
+                                                onClick = { vm.playManifestAction(row.name) },
+                                                modifier = buttonTall.fillMaxWidth(),
+                                            )
+                                            SirenaSecondaryButton(
+                                                text = "Audio",
+                                                onClick = { onPlaybackOpenAudioEditor(row.name) },
+                                                modifier = buttonTall.fillMaxWidth(),
+                                            )
+                                        }
+                                    } else {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            SirenaPrimaryButton(
+                                                text = "Play",
+                                                onClick = { vm.playManifestAction(row.name) },
+                                                modifier = buttonTall,
+                                            )
+                                            SirenaSecondaryButton(
+                                                text = "Audio",
+                                                onClick = { onPlaybackOpenAudioEditor(row.name) },
+                                                modifier = buttonTall,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(
+                            onClick = { vm.refreshManifestActions() },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Text("Refresh from manifest", color = SirenaColors.muted)
+                        }
+                    }
+                }
+            }
+
+            ActionsSubtab.Record -> {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SirenaMutedText(
+                        "Remote capture uses the same HTTP as the Jetson tablet.",
+                        maxLines = 3,
+                    )
+                    OutlinedTextField(
+                        value = recordName,
+                        onValueChange = { recordName = it },
+                        label = { Text("Motion name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = recordSeconds,
+                        onValueChange = { recordSeconds = it },
+                        label = { Text("Duration (s)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = recordHz,
+                        onValueChange = { recordHz = it },
+                        label = { Text("Sample rate (Hz)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = recordCountdown,
+                        onValueChange = { recordCountdown = it },
+                        label = { Text("Countdown (s)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Checkbox(checked = recordRegister, onCheckedChange = { recordRegister = it })
+                        Text("Register in manifest", color = SirenaColors.text)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Checkbox(checked = recordHoldAfter, onCheckedChange = { recordHoldAfter = it })
+                        Text("Hold after capture", color = SirenaColors.text)
+                    }
+                    if (recordingActive) {
+                        LinearProgressIndicator(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp),
+                        )
+                    }
+                    recordErr?.let {
+                        SirenaCard(kind = SirenaCardKind.Error) {
+                            Text(it, color = SirenaColors.pillErrorFg, fontSize = SirenaType.muted)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SirenaPrimaryButton(
+                            text = "Start recording",
+                            onClick = {
+                                scope.launch {
+                                    recordErr = null
+                                    recordErr =
+                                        vm.startRemoteRecord(
+                                            name = recordName.trim().ifBlank { "motion" },
+                                            seconds = parseDoubleOr(recordSeconds, 5.0),
+                                            hz = parseDoubleOr(recordHz, 20.0),
+                                            countdown = parseDoubleOr(recordCountdown, 3.0),
+                                            holdAfter = recordHoldAfter,
+                                            register = recordRegister,
+                                        )
+                                }
+                            },
+                            modifier = buttonTall,
+                        )
+                        SirenaSecondaryButton(
+                            text = "Stop",
+                            onClick = {
+                                scope.launch {
+                                    recordErr = vm.stopRemoteRecord()
+                                }
+                            },
+                            modifier = buttonTall,
+                        )
+                    }
+                    SirenaCardTitle("Record status")
+                    Text(recordLine, fontSize = SirenaType.muted, color = SirenaColors.muted)
+                }
+            }
+
+            ActionsSubtab.Audio -> {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SirenaMutedText(
+                        "Generate spoken clips with gTTS and attach them to manifest actions.",
+                        maxLines = 3,
+                    )
+                    Box {
+                        SirenaSecondaryButton(
+                            text =
+                                if (selectedActionName.isBlank()) {
+                                    "Select action ▾"
+                                } else {
+                                    "$selectedActionName ▾"
+                                },
+                            onClick = { audioActionMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        DropdownMenu(
+                            expanded = audioActionMenuExpanded,
+                            onDismissRequest = { audioActionMenuExpanded = false },
+                        ) {
+                            actions.forEach { row ->
+                                DropdownMenuItem(
+                                    text = { Text(row.name) },
+                                    onClick = {
+                                        selectedActionName = row.name
+                                        audioSpeechText = defaultSpeechForAction(row.name)
+                                        audioActionMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = audioSpeechText,
+                        onValueChange = { audioSpeechText = it },
+                        label = { Text("Text to speak") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Box {
+                        val preset = SirenaVoicePresets[voicePresetIndex.coerceIn(0, SirenaVoicePresets.lastIndex)]
+                        SirenaSecondaryButton(
+                            text = "${preset.label} ▾",
+                            onClick = { voiceMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        DropdownMenu(
+                            expanded = voiceMenuExpanded,
+                            onDismissRequest = { voiceMenuExpanded = false },
+                        ) {
+                            SirenaVoicePresets.forEachIndexed { idx, p ->
+                                DropdownMenuItem(
+                                    text = { Text(p.label) },
+                                    onClick = {
+                                        voicePresetIndex = idx
+                                        voiceMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = audioOffsetStr,
+                        onValueChange = { audioOffsetStr = it },
+                        label = { Text("Audio offset (s)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SirenaMutedText(
+                        "Preview plays the motion’s attached clip on the robot speakers (link must be online).",
+                        maxLines = 3,
+                    )
+                    audioErr?.let {
+                        SirenaCard(kind = SirenaCardKind.Error) {
+                            Text(it, color = SirenaColors.pillErrorFg, fontSize = SirenaType.muted)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val selectedRow = actions.find { it.name == selectedActionName.trim() }
+                        val hasAudio = selectedRow?.audio?.trim()?.isNotEmpty() == true
+                        SirenaSecondaryButton(
+                            text = "Preview",
+                            onClick = {
+                                scope.launch {
+                                    audioErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        audioErr = "Select an action."
+                                        return@launch
+                                    }
+                                    audioErr = vm.postActionAudioPreview(act)
+                                    if (audioErr == null) {
+                                        audioLast = "Playing preview on the robot…"
+                                    }
+                                }
+                            },
+                            enabled = selectedActionName.isNotBlank() && hasAudio && link.isOnline,
+                            modifier = buttonTall,
+                        )
+                        SirenaPrimaryButton(
+                            text = "Generate & save",
+                            onClick = {
+                                scope.launch {
+                                    audioErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        audioErr = "Select an action."
+                                        return@launch
+                                    }
+                                    val preset =
+                                        SirenaVoicePresets[voicePresetIndex.coerceIn(0, SirenaVoicePresets.lastIndex)]
+                                    val off = parseDoubleOr(audioOffsetStr, 0.0)
+                                    audioErr =
+                                        vm.postActionAudioGenerate(
+                                            action = act,
+                                            text = audioSpeechText,
+                                            lang = preset.lang,
+                                            tld = preset.tld,
+                                            audioOffsetSec = off,
+                                            slow = preset.slow,
+                                        )
+                                    if (audioErr == null) {
+                                        audioLast = "Audio saved for this action."
+                                        vm.refreshManifestActions()
+                                    }
+                                }
+                            },
+                            enabled = selectedActionName.isNotBlank(),
+                            modifier = buttonTall,
+                        )
+                        SirenaSecondaryButton(
+                            text = "Save offset",
+                            onClick = {
+                                scope.launch {
+                                    audioErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        audioErr = "Select an action."
+                                        return@launch
+                                    }
+                                    val off = parseDoubleOr(audioOffsetStr, 0.0)
+                                    audioErr = vm.postActionAudioOffset(act, off)
+                                    if (audioErr == null) {
+                                        audioLast = "Offset updated."
+                                        vm.refreshManifestActions()
+                                    }
+                                }
+                            },
+                            enabled = selectedActionName.isNotBlank(),
+                            modifier = buttonTall,
+                        )
+                        SirenaSecondaryButton(
+                            text = "Remove",
+                            onClick = {
+                                scope.launch {
+                                    audioErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        audioErr = "Select an action."
+                                        return@launch
+                                    }
+                                    audioErr = vm.postActionAudioClear(act)
+                                    if (audioErr == null) {
+                                        audioLast = "Audio removed from this action."
+                                        vm.refreshManifestActions()
+                                    }
+                                }
+                            },
+                            enabled = selectedActionName.isNotBlank(),
+                            modifier = buttonTall,
+                        )
+                    }
+                    SirenaCardTitle("Last result")
+                    Text(audioLast, fontSize = SirenaType.muted, color = SirenaColors.text)
+                }
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        pendingDelete?.let { name ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = {
+                    Text("Delete \"$name\"?", fontWeight = FontWeight.SemiBold)
+                },
+                text = {
+                    Text(
+                        "Remove this motion from the manifest on the robot. Recording files are not deleted automatically.",
+                        color = SirenaColors.muted,
+                        fontSize = SirenaType.muted,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                if (name != protectedNeutral) {
+                                    vm.deleteManifestAction(
+                                        name,
+                                        deleteRecording = true,
+                                        deleteAudio = false,
+                                    )
+                                    vm.refreshManifestActions()
+                                }
+                                pendingDelete = null
+                            }
+                        },
+                    ) {
+                        Text("Delete", color = SirenaColors.danger, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) {
+                        Text("Cancel")
+                    }
+                },
             )
         }
-        if (manifestActions.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    "No actions loaded — refresh or check Jetson nina-link.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+        Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SirenaBreadcrumbLine(listOf("Nina", "Actions"))
+            Spacer(Modifier.weight(1f))
+            SirenaStatusPill(
+                text =
+                    run {
+                        val ph = playbackHint
+                        when {
+                            !link.isOnline -> "Offline"
+                            !ph.isNullOrBlank() ->
+                                ph.trim().take(28).ifBlank { "Playing…" }
+                            manifestErr != null -> "Manifest error"
+                            else -> "Bus: ready"
+                        }
+                    },
+                kind =
+                    run {
+                        val ph = playbackHint
+                        when {
+                            !link.isOnline -> SirenaPillKind.Neutral
+                            manifestErr != null -> SirenaPillKind.Error
+                            !ph.isNullOrBlank() -> SirenaPillKind.Warn
+                            else -> SirenaPillKind.Ok
+                        }
+                    },
+            )
+        }
+
+        if (!link.isOnline) {
+            SirenaCard(kind = SirenaCardKind.Callout) {
+                Text("Link daemon unreachable", fontWeight = FontWeight.SemiBold, color = SirenaColors.text)
+                SirenaMutedText(
+                    link.lastError ?: "Check Wi‑Fi, open Find robot, or set the daemon URL in Settings.",
+                    maxLines = 3,
                 )
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(manifestActions, key = { it.name }) { row ->
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(row.name, fontWeight = FontWeight.SemiBold)
-                                row.file?.let {
-                                    Text(
-                                        it,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Button(onClick = { onPlayAction(row.name) }) {
-                                    Text("Play")
-                                }
-                                OutlinedButton(onClick = { pendingDelete = row.name }) {
-                                    Text("Delete")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            SirenaActionsJetsonGateCallouts(linkOnline = true, caps = caps)
         }
-    }
-}
 
-@Composable
-private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
-    val scope = rememberCoroutineScope()
-    var name by remember { mutableStateOf("demo_motion") }
-    var secondsStr by remember { mutableStateOf("5") }
-    var hzStr by remember { mutableStateOf("20") }
-    var countdownStr by remember { mutableStateOf("3") }
-    var holdAfter by remember { mutableStateOf(false) }
-    var registerInManifest by remember { mutableStateOf(true) }
-    var statusLine by remember { mutableStateOf("") }
-    var poll by remember { mutableStateOf(false) }
-    val recordOn = caps?.optBoolean("record_bridge_enabled") == true
-
-    LaunchedEffect(poll) {
-        if (!poll) return@LaunchedEffect
-        while (true) {
-            val j = vm.fetchRecordStatus()
-            if (j == null) {
-                delay(500)
-                continue
-            }
-            val ph = j.optString("phase", "idle")
-            val err =
-                if (!j.isNull("error")) {
-                    j.optString("error").trim().takeIf {
-                        it.isNotEmpty() && !it.equals("null", ignoreCase = true)
-                    }
-                } else {
-                    null
-                }
-            val extra =
-                buildString {
-                    if (j.has("samples_done") && !j.isNull("samples_done")) {
-                        append(" samples ${j.optInt("samples_done")}")
-                        if (j.has("samples_total") && !j.isNull("samples_total")) {
-                            append("/${j.optInt("samples_total")}")
-                        }
-                    }
-                    if (j.has("countdown_remaining_sec")) {
-                        append(" · countdown ${j.optInt("countdown_remaining_sec")}s")
-                    }
-                }
-            statusLine =
-                when {
-                    err != null ->
-                        if (err.contains("cancelled", ignoreCase = true)) {
-                            "Stopped: $err"
-                        } else {
-                            "Error: $err"
-                        }
-
-                    ph == "idle" && j.optString("last_saved").isNotBlank() ->
-                        "Saved: ${j.optString("last_saved")}"
-
-                    else -> "Phase: $ph$extra"
-                }
-            if (ph == "idle") {
-                poll = false
-                vm.refreshManifestActions()
-                break
-            }
-            delay(450)
-        }
-    }
-
-    Column(Modifier.verticalScroll(rememberScrollState())) {
-        Text("Record", fontWeight = FontWeight.SemiBold)
-        Text(
-            "Captures poses into ``nina/actions/recordings/`` on the Jetson and can register the clip in the manifest. " +
-                "Requires ``NINA_LINK_ENABLE_RECORD_BRIDGE=1`` and no other bus owner (stop Sirena motion UI).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        if (!recordOn) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))) {
+        manifestErr?.let {
+            SirenaCard(kind = SirenaCardKind.Error) {
                 Text(
-                    "Record bridge is off on the Jetson — set NINA_LINK_ENABLE_RECORD_BRIDGE=1 and restart nina-link.",
-                    Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodySmall,
+                    "Could not load actions from the robot.",
+                    color = SirenaColors.pillErrorFg,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = SirenaType.base,
+                )
+                SirenaMutedText(
+                    "Check the link, then use Refresh from manifest on the Playback tab.",
+                    maxLines = 2,
                 )
             }
-            return@Column
         }
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Action name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions =
-                KeyboardOptions(
-                    capitalization = KeyboardCapitalization.None,
-                ),
-        )
-        OutlinedTextField(
-            value = secondsStr,
-            onValueChange = { secondsStr = it },
-            label = { Text("Duration (seconds)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        )
-        OutlinedTextField(
-            value = hzStr,
-            onValueChange = { hzStr = it },
-            label = { Text("Sample rate (Hz)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        )
-        OutlinedTextField(
-            value = countdownStr,
-            onValueChange = { countdownStr = it },
-            label = { Text("Countdown (seconds)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        )
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Register in manifest", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Adds the new recording to manifest.json when capture finishes.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            SirenaSwitch(checked = registerInManifest, onCheckedChange = { registerInManifest = it })
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Re-engage torque after recording", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Hold servos after capture (matches desktop Record panel).",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            SirenaSwitch(checked = holdAfter, onCheckedChange = { holdAfter = it })
-        }
-        Row(
+
+        Column(
             Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Button(
-                onClick = {
-                    scope.launch {
-                        val sec = secondsStr.trim().toDoubleOrNull()
-                        val hz = hzStr.trim().toDoubleOrNull()
-                        val cd = countdownStr.trim().toDoubleOrNull()
-                        if (sec == null || hz == null || cd == null) {
-                            statusLine = "Enter valid numbers for duration, Hz, and countdown."
-                            return@launch
-                        }
-                        statusLine = "Starting…"
-                        val err =
-                            vm.startRemoteRecord(
-                                name = name.trim(),
-                                seconds = sec,
-                                hz = hz,
-                                countdown = cd,
-                                holdAfter = holdAfter,
-                                register = registerInManifest,
-                            )
-                        if (err != null) {
-                            statusLine = err
-                        } else {
-                            poll = true
-                        }
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                enabled = name.trim().length >= 2 && !poll,
-            ) {
-                Text("Start recording")
+            TabStrip()
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                SubtabBody()
             }
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        val err = vm.stopRemoteRecord()
-                        if (err != null) {
-                            statusLine = err
-                        } else {
-                            statusLine = "Stop requested…"
-                        }
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                enabled = poll,
-            ) {
-                Text("Stop recording")
-            }
-        }
-        if (statusLine.isNotBlank()) {
-            Text(
-                statusLine,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 8.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
-}
-
-private data class VoicePreset(
-    val label: String,
-    val lang: String,
-    val tld: String,
-    val slow: Boolean = false,
-)
-
-private val SIRENA_VOICE_PRESETS: List<VoicePreset> =
-    listOf(
-        VoicePreset("US English (default)", "en", "us"),
-        VoicePreset("US English · robotic slow (US)", "en", "us", slow = true),
-        VoicePreset("UK English", "en", "co.uk"),
-        VoicePreset("Australian English", "en", "com.au"),
-        VoicePreset("Indian English", "en", "co.in"),
-        VoicePreset("Hindi", "hi", "co.in"),
-        VoicePreset("Spanish (Spain)", "es", "es"),
-        VoicePreset("French (France)", "fr", "fr"),
-    )
-
-@Composable
-private fun AudioTabContent(
-    vm: CompanionViewModel,
-    caps: JSONObject?,
-    manifestActions: List<ActionRowUi>,
-    onPlayAction: (String) -> Unit,
-    onRefreshManifest: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    val staticOn = caps?.optBoolean("actions_static_enabled") == true
-    val names = remember(manifestActions) { manifestActions.map { it.name }.sorted() }
-    var selectedName by remember { mutableStateOf("") }
-    LaunchedEffect(names) {
-        if (selectedName.isBlank() && names.isNotEmpty()) {
-            selectedName = names.first()
-        }
-        if (selectedName.isNotBlank() && selectedName !in names) {
-            selectedName = names.firstOrNull() ?: ""
-        }
-    }
-
-    var offsetStr by remember { mutableStateOf("0") }
-    var speakText by remember { mutableStateOf("") }
-    var showActionPicker by remember { mutableStateOf(false) }
-    var showVoicePicker by remember { mutableStateOf(false) }
-    var voiceIndex by remember { mutableIntStateOf(0) }
-    val preset = SIRENA_VOICE_PRESETS[voiceIndex.coerceIn(0, SIRENA_VOICE_PRESETS.lastIndex)]
-
-    var audioRel by remember { mutableStateOf<String?>(null) }
-    var clipExists by remember { mutableStateOf(false) }
-    var infoLoading by remember { mutableStateOf(false) }
-    var infoLine by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf("") }
-    var reloadAudioTick by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(selectedName, reloadAudioTick) {
-        if (selectedName.isBlank()) return@LaunchedEffect
-        infoLoading = true
-        infoLine = ""
-        val j = vm.fetchActionAudioInfo(selectedName)
-        infoLoading = false
-        if (j == null) {
-            infoLine = "Could not load audio info from nina-link."
-            audioRel = null
-            clipExists = false
-            return@LaunchedEffect
-        }
-        audioRel = j.optString("audio_rel").takeIf { it.isNotBlank() }
-        clipExists = j.optBoolean("clip_file_exists")
-        val off = j.optDouble("audio_offset")
-        offsetStr =
-            if (j.has("audio_offset") && !j.isNull("audio_offset") && !off.isNaN()) {
-                String.format("%.2f", off).trimEnd('0').trimEnd('.').ifEmpty { "0" }
-            } else {
-                "0"
-            }
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Text("Audio", fontWeight = FontWeight.SemiBold)
-        Text(
-            "Match desktop Audio panel: pick an action, set offset, generate speech (gTTS on Jetson), or clear mapping. " +
-                "Editing requires ``NINA_LINK_ENABLE_ACTIONS_STATIC=1`` and a bearer token when the daemon uses one.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        if (!staticOn) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))) {
-                Text(
-                    "Manifest edits + preview need ``NINA_LINK_ENABLE_ACTIONS_STATIC=1`` on the Jetson (same as HTTP clip preview).",
-                    Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        if (names.isEmpty()) {
-            Text(
-                "No actions in the manifest — refresh from Playback.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            return@Column
-        }
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = selectedName,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Action") },
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(onClick = { showActionPicker = true }) {
-                Text("Pick…")
-            }
-        }
-
-        if (showActionPicker) {
-            AlertDialog(
-                onDismissRequest = { showActionPicker = false },
-                title = { Text("Choose action") },
-                text = {
-                    LazyColumn(Modifier.heightIn(max = 400.dp)) {
-                        items(names, key = { it }) { n ->
-                            TextButton(
-                                onClick = {
-                                    selectedName = n
-                                    showActionPicker = false
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(n)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showActionPicker = false }) {
-                        Text("Cancel")
-                    }
-                },
-            )
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Button(
-                onClick = { onPlayAction(selectedName) },
-                enabled = selectedName.isNotBlank(),
-            ) {
-                Text("Play motion")
-            }
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        busy = "Refreshing manifest…"
-                        onRefreshManifest()
-                        busy = ""
-                    }
-                },
-            ) {
-                Text("Refresh manifest")
-            }
-        }
-
-        Text(
-            buildString {
-                append("Clip: ")
-                append(audioRel ?: "—")
-                if (audioRel != null) append(if (clipExists) " (file on Jetson)" else " (file missing)")
-                if (infoLoading) append(" · loading…")
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-        OutlinedTextField(
-            value = offsetStr,
-            onValueChange = { offsetStr = it },
-            label = { Text("Audio offset (s)") },
-            supportingText = {
-                Text("Seconds after motion starts before the clip plays (matches desktop).")
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            enabled = staticOn,
-        )
-
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        if (!staticOn || audioRel.isNullOrBlank()) return@launch
-                        busy = "Preview…"
-                        try {
-                            val url = vm.mediaFileUrl(audioRel!!)
-                            val mp =
-                                withContext(Dispatchers.IO) {
-                                    MediaPlayer().apply {
-                                        setDataSource(url)
-                                        prepare()
-                                    }
-                                }
-                            withContext(Dispatchers.Main) {
-                                mp.start()
-                                mp.setOnCompletionListener { it.release() }
-                            }
-                        } catch (_: Exception) {
-                        }
-                        busy = ""
-                    }
-                },
-                enabled = staticOn && clipExists && !audioRel.isNullOrBlank(),
-            ) {
-                Text("Play clip")
-            }
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        val off = offsetStr.trim().toDoubleOrNull()
-                        if (off == null) {
-                            infoLine = "Enter a valid offset."
-                            return@launch
-                        }
-                        busy = "Saving offset…"
-                        val err = vm.postActionAudioOffset(selectedName, off)
-                        busy = ""
-                        infoLine = err ?: "Offset saved."
-                        onRefreshManifest()
-                        reloadAudioTick++
-                    }
-                },
-                enabled = staticOn && !audioRel.isNullOrBlank(),
-            ) {
-                Text("Save offset")
-            }
-        }
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = preset.label,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Voice") },
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(onClick = { showVoicePicker = true }) {
-                Text("Pick…")
-            }
-        }
-
-        if (showVoicePicker) {
-            AlertDialog(
-                onDismissRequest = { showVoicePicker = false },
-                title = { Text("Voice") },
-                text = {
-                    LazyColumn(Modifier.heightIn(max = 400.dp)) {
-                        items(SIRENA_VOICE_PRESETS.size) { idx ->
-                            val p = SIRENA_VOICE_PRESETS[idx]
-                            TextButton(
-                                onClick = {
-                                    voiceIndex = idx
-                                    showVoicePicker = false
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(p.label)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showVoicePicker = false }) {
-                        Text("Cancel")
-                    }
-                },
-            )
-        }
-
-        OutlinedTextField(
-            value = speakText,
-            onValueChange = { speakText = it },
-            label = { Text("Text to speak") },
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-            minLines = 2,
-        )
-
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = {
-                    scope.launch {
-                        val t = speakText.trim()
-                        if (t.isEmpty()) {
-                            infoLine = "Enter text to generate."
-                            return@launch
-                        }
-                        busy = "Generating on Jetson…"
-                        val off = offsetStr.trim().toDoubleOrNull() ?: 0.0
-                        val err =
-                            vm.postActionAudioGenerate(
-                                selectedName,
-                                t,
-                                preset.lang,
-                                preset.tld,
-                                off,
-                                preset.slow,
-                            )
-                        busy = ""
-                        infoLine = err ?: "Generated and saved to audio/${selectedName}.mp3"
-                        onRefreshManifest()
-                        reloadAudioTick++
-                    }
-                },
-                enabled = staticOn && selectedName.isNotBlank(),
-            ) {
-                Text("Generate & save")
-            }
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        busy = "Removing audio mapping…"
-                        val err = vm.postActionAudioClear(selectedName)
-                        busy = ""
-                        infoLine = err ?: "Audio mapping cleared."
-                        onRefreshManifest()
-                        reloadAudioTick++
-                    }
-                },
-                enabled = staticOn && selectedName.isNotBlank(),
-            ) {
-                Text("Remove audio")
-            }
-        }
-
-        if (busy.isNotBlank()) {
-            Text(busy, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-        }
-        if (infoLine.isNotBlank()) {
-            Text(
-                infoLine,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
     }
 }

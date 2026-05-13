@@ -1,261 +1,420 @@
 package com.sirena.nina.companion.ui.sirena
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sirena.nina.companion.CompanionViewModel
-import com.sirena.nina.companion.StatusUi
-import kotlinx.coroutines.delay
+import com.sirena.nina.companion.R
+import com.sirena.nina.companion.util.NinaLog
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import kotlin.math.max
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Nina Link liveness (`GET /health`), bridge flags, and aggregated subsystem rows
- * (`GET /v1/robot/health`) matching desktop health collector intent via nina-link bridges.
+ * Health Check — mirrors [sirena_ui.screens.health_screen.HealthScreen]:
+ * hero donut + summary, **Run all checks** / **Export report**, then **Subsystems** table rows.
  */
 @Composable
 fun SirenaHealthScreen(
     vm: CompanionViewModel,
-    daemonUrl: String?,
-    caps: JSONObject?,
-    statusUi: StatusUi?,
-    modifier: Modifier = Modifier,
+    shellCompact: Boolean = false,
 ) {
-    var health by remember { mutableStateOf<JSONObject?>(null) }
-    var healthErr by remember { mutableStateOf<String?>(null) }
-    var robotHealth by remember { mutableStateOf<JSONObject?>(null) }
+    val scope = rememberCoroutineScope()
+    var rows by remember { mutableStateOf<JSONArray?>(null) }
+    var loadErr by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var lastRunLabel by remember { mutableStateOf("Last run \u2014 · 0 checks") }
+    var exportOpen by remember { mutableStateOf(false) }
+    var logsDialogKey by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(daemonUrl) {
-        if (daemonUrl.isNullOrBlank()) {
-            health = null
-            robotHealth = null
-            healthErr = "No daemon URL — complete Setup first."
-            return@LaunchedEffect
-        }
-        healthErr = null
-        health =
+    fun load() {
+        scope.launch {
+            loading = true
+            loadErr = null
             try {
-                vm.fetchDaemonHealth()
-            } catch (_: Exception) {
-                null
+                val h = vm.fetchRobotHealth()
+                if (h == null) {
+                    loadErr = "Could not load health (daemon offline, wrong URL, or HTTP error)."
+                    rows = null
+                } else {
+                    rows = h.optJSONArray("rows")
+                    val n = rows?.length() ?: 0
+                    val t = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    lastRunLabel = "Last run · $t · $n checks"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                loadErr = e.message ?: "failed"
+                rows = null
+            } finally {
+                loading = false
             }
-        if (health == null) {
-            healthErr = "Could not reach GET /health on the Jetson."
         }
     }
 
-    LaunchedEffect(daemonUrl) {
-        if (daemonUrl.isNullOrBlank()) return@LaunchedEffect
-        while (true) {
-            robotHealth = vm.fetchRobotHealth()
-            delay(3000)
-        }
+    LaunchedEffect(Unit) {
+        load()
     }
+
+    val summary = remember(rows) { summarizeHealthRows(rows) }
 
     Column(
-        modifier
+        Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            "Nina · Health",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        SirenaBreadcrumbLine(listOf("Nina", "Health"))
 
-        Text(
-            "Daemon process + bridge flags + live subsystem rows from the Jetson (same stacks as " +
-                "the desktop app when bridges are enabled).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Nina Link daemon", fontWeight = FontWeight.Bold)
-                healthErr?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-                health?.let { j ->
-                    val ok = j.optBoolean("ok")
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("GET /health", style = MaterialTheme.typography.bodyMedium)
-                        HealthStatusChip(ok = ok, label = if (ok) "ok" else "check")
-                    }
-                    Text(
-                        "service: ${j.optString("service", "—")}" +
-                            if (j.has("mock_nm")) " · mock_nm=${j.optBoolean("mock_nm")}" else "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        Text("Robot subsystems", fontWeight = FontWeight.SemiBold)
-        robotHealth?.optJSONArray("rows")?.let { arr ->
-            SubsystemRows(arr)
-        } ?: Text(
-            if (daemonUrl.isNullOrBlank()) {
-                "—"
-            } else {
-                "Loading GET /v1/robot/health…"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        statusUi?.lastError?.takeIf { it.isNotBlank() }?.let { err ->
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)),
-            ) {
-                Text(
-                    "Last daemon error (status)\n$err",
-                    Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-        }
-
-        Text("HTTP bridges", fontWeight = FontWeight.SemiBold)
-        caps?.let { c ->
-            BridgeRow("Robot drive", c.optBoolean("robot_bridge_enabled"))
-            BridgeRow("Action playback", c.optBoolean("action_bridge_enabled"))
-            BridgeRow("Desktop action delegate", c.optBoolean("action_delegate_configured"))
-            BridgeRow("Record session", c.optBoolean("record_bridge_enabled"))
-            BridgeRow("Vision / camera", c.optBoolean("vision_bridge_enabled"))
-            BridgeRow("SLAM / lidar", c.optBoolean("slam_bridge_enabled"))
-            BridgeRow("Depth (RealSense)", c.optBoolean("depth_bridge_enabled"))
-            BridgeRow("Autonomy", c.optBoolean("autonomy_bridge_enabled"))
-            BridgeRow("Static media (audio files)", c.optBoolean("actions_static_enabled"))
-            val manifest = c.optString("manifest_path").takeIf { it.isNotBlank() }
-            if (manifest != null) {
-                Text(
-                    "Manifest: $manifest",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        } ?: Text("Capabilities not loaded yet.", style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun HealthStatusChip(ok: Boolean, label: String) {
-    val color =
-        if (ok) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.tertiaryContainer
-        }
-    Surface(color = color, shape = MaterialTheme.shapes.small) {
-        Text(
-            label,
-            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-        )
-    }
-}
-
-@Composable
-private fun SubsystemRows(rows: JSONArray) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (i in 0 until rows.length()) {
-            val o = rows.optJSONObject(i) ?: continue
-            val label = o.optString("label", "—")
-            val detail = o.optString("detail", "")
-            val st = o.optString("status", "pending")
-            SubsystemHealthCard(label = label, detail = detail, status = st)
-        }
-    }
-}
-
-@Composable
-private fun SubsystemHealthCard(label: String, detail: String, status: String) {
-    val chip =
-        when (status) {
-            "ok" -> "OK" to MaterialTheme.colorScheme.primaryContainer
-            "warn" -> "WARN" to MaterialTheme.colorScheme.tertiaryContainer
-            "error" -> "ERR" to MaterialTheme.colorScheme.errorContainer
-            else -> "—" to MaterialTheme.colorScheme.surfaceVariant
-        }
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SirenaCard(kind = SirenaCardKind.Hero, contentPadding = PaddingValues(16.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(label, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
-                Surface(color = chip.second, shape = MaterialTheme.shapes.small) {
+                HealthDonutGauge(
+                    ok = summary.ok,
+                    warn = summary.warn,
+                    err = summary.err,
+                    total = summary.total,
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        chip.first,
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
+                        summaryHeadline(summary, rows, loadErr),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = SirenaColors.text,
+                    )
+                    Text(
+                        lastRunLabel,
+                        fontSize = SirenaType.muted,
+                        color = SirenaColors.muted,
+                    )
+                    loadErr?.let {
+                        Text(it, fontSize = SirenaType.muted, color = SirenaColors.muted, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SirenaPrimaryButton(
+                        text = if (loading) "Running…" else "Run all checks",
+                        onClick = { load() },
+                        enabled = !loading,
+                        modifier = Modifier.height(40.dp),
+                    )
+                    SirenaSecondaryButton(
+                        text = "Export report",
+                        onClick = { exportOpen = true },
+                        modifier = Modifier.height(40.dp),
                     )
                 }
             }
-            if (detail.isNotBlank()) {
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+
+        SirenaCard(modifier = Modifier.weight(1f), contentPadding = PaddingValues(12.dp)) {
+            SirenaCardTitle("Subsystems")
+            Spacer(Modifier.height(8.dp))
+            val r = rows
+            if (r == null || r.length() == 0) {
+                SirenaMutedText(
+                    if (loadErr != null) {
+                        "Fix the connection above, then tap Run all checks."
+                    } else {
+                        "No rows yet — tap Run all checks."
+                    },
+                    maxLines = 3,
                 )
+            } else {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(
+                        count = r.length(),
+                        key = { index ->
+                            r.optJSONObject(index)?.optString("key")?.ifBlank { "$index" } ?: "$index"
+                        },
+                    ) { index ->
+                        val o = r.optJSONObject(index) ?: return@items
+                        HealthSubsystemRow(
+                            o = o,
+                            stripe = index % 2 == 0,
+                            onViewLogs = { logsDialogKey = o.optString("key").ifBlank { o.optString("label") } },
+                        )
+                    }
+                }
             }
         }
+    }
+
+    if (exportOpen) {
+        AlertDialog(
+            onDismissRequest = { exportOpen = false },
+            title = { Text("Export report") },
+            text = {
+                Text(
+                    "Health-report export will save a JSON snapshot to disk in a future build.",
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { exportOpen = false }) {
+                    Text("OK", color = SirenaColors.red, fontWeight = FontWeight.SemiBold)
+                }
+            },
+        )
+    }
+
+    logsDialogKey?.let { key ->
+        AlertDialog(
+            onDismissRequest = { logsDialogKey = null },
+            title = { Text("View logs") },
+            text = {
+                Text(
+                    "Subsystem \"$key\": full logs live on the robot. Use SSH, the Jetson desktop, or the Sirena UI on the bot to open log files.",
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { logsDialogKey = null }) {
+                    Text("OK", color = SirenaColors.red, fontWeight = FontWeight.SemiBold)
+                }
+            },
+        )
+    }
+}
+
+private data class HealthSummary(val ok: Int, val warn: Int, val err: Int, val pending: Int, val total: Int)
+
+private fun summarizeHealthRows(rows: JSONArray?): HealthSummary {
+    if (rows == null) return HealthSummary(0, 0, 0, 0, 0)
+    var ok = 0
+    var warn = 0
+    var err = 0
+    var pending = 0
+    for (i in 0 until rows.length()) {
+        val o = rows.optJSONObject(i) ?: continue
+        when (o.optString("status").trim().lowercase()) {
+            "ok" -> ok++
+            "warn" -> warn++
+            "error" -> err++
+            else -> pending++
+        }
+    }
+    val total = rows.length()
+    return HealthSummary(ok, warn, err, pending, total)
+}
+
+private fun summaryHeadline(s: HealthSummary, rows: JSONArray?, loadErr: String?): String =
+    when {
+        loadErr != null && (rows == null || rows.length() == 0) -> "Health unavailable"
+        rows == null || rows.length() == 0 -> "Run a check to see status"
+        s.err > 0 -> "Action required"
+        s.warn > 0 -> "System degraded"
+        s.pending > 0 -> "Partial integration"
+        else -> "System healthy"
+    }
+
+private fun healthGlyphForKey(key: String): String =
+    when (key) {
+        "bus" -> "\u26A1"
+        "ftdi" -> "\u2706"
+        "camera" -> "\u25CE"
+        "lidar" -> "\u25A6"
+        "ir", "ultra", "depth" -> "\u25A6"
+        "drive" -> "\u2B95"
+        "battery" -> "\u2615"
+        "wifi" -> "\u2706"
+        "voice" -> "\u266B"
+        "disk" -> "\u25A6"
+        "cpu" -> "\u2699"
+        "temp" -> "\u2615"
+        "daemon" -> "\u26A0"
+        "sirena" -> "\u2665"
+        else -> "\u25CF"
+    }
+
+private fun statusPillLabel(st: String): String =
+    when (st.trim().lowercase()) {
+        "ok" -> "OK"
+        "warn" -> "Warning"
+        "error" -> "Error"
+        else -> "Pending"
+    }
+
+@Composable
+private fun HealthDonutGauge(
+    ok: Int,
+    warn: Int,
+    err: Int,
+    total: Int,
+    modifier: Modifier = Modifier.size(130.dp),
+) {
+    val totalClamped = max(total, ok + warn + err).coerceAtLeast(1)
+    val okC = SirenaColors.success
+    val warnC = SirenaColors.warning
+    val errC = SirenaColors.danger
+    val track = SirenaColors.pillNeutralBg
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val strokeW = 10.dp.toPx()
+            val arcSize = Size(this.size.width - strokeW, this.size.height - strokeW)
+            val topLeft = Offset(strokeW / 2f, strokeW / 2f)
+            val stroke = Stroke(width = strokeW, cap = StrokeCap.Butt)
+            drawArc(
+                color = track,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = stroke,
+            )
+            var start = -90f
+            for ((count, color) in listOf(ok to okC, warn to warnC, err to errC)) {
+                if (count <= 0) continue
+                val sweep = 360f * count / totalClamped.toFloat()
+                drawArc(
+                    color = color,
+                    startAngle = start,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = stroke,
+                )
+                start += sweep
+            }
+        }
+        Image(
+            painter = painterResource(R.drawable.nina_robot),
+            contentDescription = null,
+            modifier =
+                Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(SirenaColors.panel),
+            contentScale = ContentScale.Fit,
+        )
+        Text(
+            "${ok}/${totalClamped}",
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            color = SirenaColors.text,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
+        )
     }
 }
 
 @Composable
-private fun BridgeRow(label: String, enabled: Boolean) {
-    Card(
+private fun HealthSubsystemRow(
+    o: JSONObject,
+    stripe: Boolean,
+    onViewLogs: () -> Unit,
+) {
+    val key = o.optString("key")
+    val label = o.optString("label").ifBlank { key }
+    val detail = o.optString("detail")
+    val st = o.optString("status").trim().lowercase()
+    val kind =
+        when (st) {
+            "ok" -> SirenaPillKind.Ok
+            "warn" -> SirenaPillKind.Warn
+            "error" -> SirenaPillKind.Error
+            else -> SirenaPillKind.Neutral
+        }
+    val bg = if (stripe) SirenaColors.panel else Color(0xFFFAFAFC)
+    Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+            .background(bg, shape = RoundedCornerShape(6.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Text(
+            healthGlyphForKey(key),
+            fontSize = 18.sp,
+            color = SirenaColors.muted,
+            modifier = Modifier.width(28.dp),
+        )
+        Text(
+            label,
+            fontWeight = FontWeight.SemiBold,
+            color = SirenaColors.text,
+            fontSize = SirenaType.base,
+            modifier = Modifier.width(180.dp),
+        )
+        Text(
+            detail,
+            color = SirenaColors.muted,
+            fontSize = SirenaType.muted,
+            modifier = Modifier.weight(1f),
+            maxLines = 4,
+        )
+        SirenaStatusPill(text = statusPillLabel(st), kind = kind, maxLines = 1)
+        TextButton(
+            onClick = {
+                NinaLog.tap("Health", "view_logs", key)
+                onViewLogs()
+            },
+            modifier = Modifier.padding(start = 4.dp),
         ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            HealthStatusChip(ok = enabled, label = if (enabled) "on" else "off")
+            Text(
+                "View logs",
+                color = SirenaColors.red,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Normal,
+            )
         }
     }
 }

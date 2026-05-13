@@ -147,6 +147,8 @@ class VisionWorker(QObject):
         # Deduplicate `faces_recognized` bursts when the same identity is
         # seen frame-after-frame (reduces Qt queued-slot load on the GUI).
         self._last_faces_recognized_key: Optional[Tuple[str, ...]] = None
+        # Last smoothed loop rate (read + infer); exposed for HTTP /v1/vision/status ``fps``.
+        self._last_loop_fps: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -339,10 +341,12 @@ class VisionWorker(QObject):
 
             dt = time.perf_counter() - t0
             ema_dt = 0.85 * ema_dt + 0.15 * max(dt, 1e-3)
+            loop_fps = 1.0 / ema_dt if ema_dt > 0 else 0.0
+            self._last_loop_fps = loop_fps
 
             now = time.perf_counter()
             if now - last_fps_emit > 0.5:
-                self.fps_changed.emit(1.0 / ema_dt if ema_dt > 0 else 0.0)
+                self.fps_changed.emit(loop_fps)
                 last_fps_emit = now
 
             sleep_for = period - dt
@@ -534,6 +538,8 @@ class VisionWorker(QObject):
                 "camera_open": snapshot.camera_open,
                 "face_ready": snapshot.face_ready,
                 "object_ready": snapshot.object_ready,
+                "face_enabled": snapshot.face_enabled,
+                "object_enabled": snapshot.object_enabled,
                 "message": message,
             }
         )

@@ -6,7 +6,7 @@
 #   ./scripts/uninstall-nina-link-jetson.sh
 #   ./scripts/uninstall-nina-link-jetson.sh --purge   # also remove .venv-link + state JSON
 #
-# Does NOT delete source code under nina/link_daemon/ (that stays in the git repo).
+# Does NOT delete application source under the repo checkout.
 # -----------------------------------------------------------------------------
 
 set -u
@@ -78,6 +78,6 @@ fi
 
 say "Done."
 echo ""
-echo "  Repo sources under nina/link_daemon/ are unchanged."
+echo "  Repo sources under your checkout are unchanged."
 echo "  Re-install with: ./scripts/install-nina-link-jetson.sh --all"
 echo ""

@@ -7,9 +7,9 @@
 # GUI behaves identically whether you launch it from a terminal with
 # ``python3 -m sirena_ui`` or by clicking the desktop icon:
 #
-#   1. Source ~/.profile and ~/.bashrc when present so PATH /
-#      LD_LIBRARY_PATH / PYTHONPATH that the user normally has in
-#      a terminal are inherited here too.
+#   1. Pick PYTHON_BIN first (repo .venv-link vs SIRENA_PYTHON vs system), then
+#      source ~/.profile and ~/.bashrc so PATH / LD_LIBRARY_PATH / PYTHONPATH /
+#      rc exports cannot hijack the interpreter choice.
 #   2. Add Jetson's standard CUDA / cuDNN / TensorRT lib paths to
 #      LD_LIBRARY_PATH so PyTorch + Ultralytics + TensorRT can find
 #      their .so files. This is what /etc/profile.d/cuda.sh does
@@ -33,6 +33,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${HOME}/.cache/sirena"
 LOG_FILE="${LOG_DIR}/launch.log"
 mkdir -p "${LOG_DIR}"
+
+# Choose Python before ~/.bashrc — rc files sometimes export SIRENA_PYTHON or
+# PYTHONHOME and would skip ${REPO_ROOT}/.venv-link (uvicorn is in requirements-link.txt).
+# Order: explicit SIRENA_PYTHON (systemd/interactive override), then repo venv, then system.
+PYTHON_BIN=""
+if [[ -n "${SIRENA_PYTHON:-}" ]]; then
+    PYTHON_BIN="${SIRENA_PYTHON}"
+elif [[ -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    PYTHON_BIN="${REPO_ROOT}/.venv-link/bin/python"
+else
+    PYTHON_BIN="/usr/bin/python3"
+fi
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+    PYTHON_BIN="$(command -v python3 || true)"
+fi
 
 # Trim the log so it doesn't grow without bound between runs.
 if [[ -f "${LOG_FILE}" ]]; then
@@ -79,14 +94,6 @@ case ":${PATH}:" in
     *) export PATH="${HOME}/.local/bin:${PATH}" ;;
 esac
 
-PYTHON_BIN="${SIRENA_PYTHON:-/usr/bin/python3}"
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-    # Fall back to whatever is on PATH if the hard-coded interpreter
-    # is missing (some Orin images ship python3 only as a symlink in
-    # /usr/bin without an /etc-pinned full path).
-    PYTHON_BIN="$(command -v python3 || true)"
-fi
-
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 
 # ---------------------------------------------------------------------
@@ -113,27 +120,36 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 # Operator-side belt-and-braces fix that's still worth doing once:
 #     pip uninstall -y opencv-python opencv-python-headless
 #     pip install opencv-python-headless    # the ONE that doesn't bundle Qt
-# but the env-var pin above means this script no longer DEPENDS on
-# the operator having done that.
+# but the env-var pin below covers most hosts even with pip opencv-python.
 # ---------------------------------------------------------------------
-if [[ -z "${QT_QPA_PLATFORM_PLUGIN_PATH:-}" ]]; then
-    for _qt_plugins in \
-        "/usr/lib/aarch64-linux-gnu/qt5/plugins" \
-        "/usr/lib/x86_64-linux-gnu/qt5/plugins" \
-        "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt5/plugins" \
-        "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt/plugins" \
-        "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt5/plugins" \
-        "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt/plugins"
-    do
-        if [[ -f "${_qt_plugins}/platforms/libqxcb.so" ]]; then
-            export QT_QPA_PLATFORM_PLUGIN_PATH="${_qt_plugins}"
-            echo "[qt] pinned QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins}"
-            break
-        fi
-    done
-    if [[ -z "${QT_QPA_PLATFORM_PLUGIN_PATH:-}" ]]; then
-        echo "[qt] WARNING: no system PyQt5 platforms/libqxcb.so found - if the GUI 134s with a 'Could not load the Qt platform plugin xcb' error, install python3-pyqt5 (sudo apt install -y python3-pyqt5) or pip-uninstall opencv-python and use opencv-python-headless." >&2
+# Always pick a working system PyQt5 plugin dir on every launch (do not skip when
+# QT_QPA_PLATFORM_PLUGIN_PATH is inherited from the shell — it may be wrong).
+# Also clear QT_PLUGIN_PATH: otherwise Qt can still pick OpenCV's incompatible
+# ``cv2/qt/plugins`` and abort with exit 134 before our pin takes effect.
+unset QT_PLUGIN_PATH
+_qt_plugins_pin=""
+for _qt_plugins in \
+    "/usr/lib/aarch64-linux-gnu/qt5/plugins" \
+    "/usr/lib/x86_64-linux-gnu/qt5/plugins" \
+    "${HOME}/.local/lib/python3.12/site-packages/PyQt5/Qt5/plugins" \
+    "${HOME}/.local/lib/python3.12/site-packages/PyQt5/Qt/plugins" \
+    "${HOME}/.local/lib/python3.11/site-packages/PyQt5/Qt5/plugins" \
+    "${HOME}/.local/lib/python3.11/site-packages/PyQt5/Qt/plugins" \
+    "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt5/plugins" \
+    "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt/plugins" \
+    "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt5/plugins" \
+    "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt/plugins"
+do
+    if [[ -f "${_qt_plugins}/platforms/libqxcb.so" ]]; then
+        _qt_plugins_pin="${_qt_plugins}"
+        break
     fi
+done
+if [[ -n "${_qt_plugins_pin}" ]]; then
+    export QT_QPA_PLATFORM_PLUGIN_PATH="${_qt_plugins_pin}"
+    echo "[qt] pinned QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins_pin}"
+else
+    echo "[qt] WARNING: no platforms/libqxcb.so found under known paths — GUI may abort with cv2/Qt conflict. Install: sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg  OR  pip install opencv-python-headless (not opencv-python)." >&2
 fi
 # Ensure the repo is importable even if the user has nuked PYTHONPATH.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"

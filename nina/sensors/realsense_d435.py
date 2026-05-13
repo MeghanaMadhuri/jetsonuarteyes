@@ -119,6 +119,35 @@ except ValueError:
 DEFAULT_FWD_BAND_FRAC = max(0.25, min(1.0, _raw_fwd))
 
 
+def normalize_depth_error(exc: Exception | str) -> str:
+    """Collapse RealSense/open failures into stable user-facing categories."""
+    raw = str(exc).strip()
+    low = raw.lower()
+    if (
+        "pyrealsense2" in low
+        and ("not installed" in low or "no module named" in low)
+    ):
+        return "dependency missing: install pyrealsense2"
+    if "permission denied" in low or "errno 13" in low:
+        return "permission denied: check usb/video access"
+    if (
+        "device or resource busy" in low
+        or "already streaming" in low
+        or "busy" in low
+    ):
+        return "device busy: close other depth consumers"
+    if (
+        "no device connected" in low
+        or "device not found" in low
+        or "failed to resolve request" in low
+        or "enoent" in low
+    ):
+        return "camera unavailable: connect D435 over USB3"
+    if "disabled via nina_depth_disable" in low:
+        return "disabled via NINA_DEPTH_DISABLE"
+    return f"depth open failed: {raw}" if raw else "depth open failed"
+
+
 def _import_pyrealsense2():
     """Return the pyrealsense2 module that actually has the C bindings.
 
@@ -179,7 +208,7 @@ def is_available() -> Tuple[bool, str]:
     try:
         _import_pyrealsense2()
     except Exception as exc:  # pragma: no cover
-        return False, f"pyrealsense2 not installed ({exc})"
+        return False, normalize_depth_error(exc)
     return True, ""
 
 
@@ -223,7 +252,7 @@ class RealSenseD435:
         try:
             rs = _import_pyrealsense2()
         except Exception as exc:
-            self._message = f"pyrealsense2 not installed ({exc})"
+            self._message = normalize_depth_error(exc)
             raise RuntimeError(self._message) from exc
 
         try:
@@ -239,7 +268,7 @@ class RealSenseD435:
             self._scale_mm = depth_scale_m * 1000.0
         except Exception as exc:
             self._pipeline = None
-            self._message = f"D435 start failed: {exc}"
+            self._message = normalize_depth_error(exc)
             raise RuntimeError(self._message) from exc
 
         self._stop_evt.clear()

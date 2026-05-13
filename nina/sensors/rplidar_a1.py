@@ -20,6 +20,7 @@ import logging
 import os
 import threading
 import time
+from glob import glob
 from typing import List, Optional, Tuple
 
 from nina.sensors.types import LidarScan
@@ -33,14 +34,151 @@ DEFAULT_BAUD = int(os.environ.get("NINA_LIDAR_BAUD", "115200"))
 DEFAULT_BINS = int(os.environ.get("NINA_LIDAR_BINS", "360"))
 
 
+def _reserved_ports() -> List[str]:
+    """Ports the rest of the stack has already laid claim to.
+
+    The Jetson commonly has both a Dynamixel FTDI adapter and the
+    RPLIDAR A1's USB-serial cable plugged in. Both default to
+    ``/dev/ttyUSB0`` in our env templates, which leads to a serial
+    collision: whichever process opens the device first wins and the
+    other one fails with a confusing 'device or resource busy' /
+    'permission denied' / immediate scan timeout. Treat the Dynamixel
+    and nav-remote ports as reserved so a non-explicit lidar fallback
+    can skip them.
+    """
+    reserved: List[str] = []
+    for env in ("NINA_DXL_PORT", "NINA_NAV_REMOTE_PORT"):
+        v = os.environ.get(env, "").strip()
+        if v:
+            reserved.append(v)
+    return reserved
+
+
+def _serial_candidates(configured: str, *, exclude: Optional[List[str]] = None) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    blocklist = {p for p in (exclude or []) if p}
+
+    def _add(path: str) -> None:
+        if not path or path in seen or path in blocklist:
+            return
+        seen.add(path)
+        ordered.append(path)
+
+    _add(configured)
+    for path in sorted(glob("/dev/ttyUSB*")):
+        _add(path)
+    for path in sorted(glob("/dev/ttyACM*")):
+        _add(path)
+    return ordered
+
+
 def is_available() -> Tuple[bool, str]:
     try:
         import rplidar  # noqa: F401  type: ignore
     except Exception as exc:  # pragma: no cover - depends on host
         return False, f"rplidar package not installed ({exc})"
     if not os.path.exists(DEFAULT_PORT):
+        candidates = _serial_candidates(DEFAULT_PORT, exclude=_reserved_ports())
+        present = [p for p in candidates if os.path.exists(p)]
+        if present:
+            return False, f"{DEFAULT_PORT} not present (found: {', '.join(present[:3])})"
         return False, f"{DEFAULT_PORT} not present"
     return True, ""
+
+
+def _format_open_error(port: str, raw: str, *, explicit: bool) -> str:
+    """Turn rplidar's raw open-error into something the operator can act on.
+
+    On a fresh-boot Jetson the most common failure modes are:
+
+      1. **No USB-serial adapter visible at all** ("No such file or
+         directory" + nothing under /dev/ttyUSB* /dev/ttyACM*). The
+         lidar's USB cable is unplugged, the adapter is a PL2303 /
+         CH340 (JetPack ships only cp210x.ko / ftdi_sio.ko), or the
+         device is powered off.
+
+      2. **Adapter visible but on a different node** (port is busy
+         or doesn't exist, but other /dev/ttyUSB* are present). The
+         Dynamixel manager already grabbed /dev/ttyUSB0 and the
+         lidar is now /dev/ttyUSB1, or vice versa.
+
+      3. **Port exists but is in use** ("Device or resource busy" /
+         "could not exclusively lock"). Two drivers are fighting
+         over the same adapter.
+
+    For each case we attach a short remediation block so the GUI
+    operator can fix it without grepping logs.
+    """
+    raw_lower = raw.lower()
+    reserved = _reserved_ports()
+    candidates = _serial_candidates(port, exclude=reserved)
+    present = [p for p in candidates if os.path.exists(p) and p != port]
+    base = f"open {port}: {raw}"
+
+    no_such = (
+        "no such file or directory" in raw_lower
+        or "could not open port" in raw_lower
+    )
+    busy = (
+        "device or resource busy" in raw_lower
+        or "resource busy" in raw_lower
+        or "could not exclusively lock" in raw_lower
+    )
+
+    if no_such and not present:
+        return (
+            base
+            + "\n\nNo USB-serial adapter visible to the Jetson kernel. "
+            "On the bot, check:\n"
+            "  lsusb                         # is the lidar adapter listed?\n"
+            "  ls /dev/ttyUSB* /dev/ttyACM*  # which serial nodes exist?\n"
+            "  dmesg | tail -20              # last USB events\n\n"
+            "Most common causes:\n"
+            " * Lidar USB cable unplugged or loose.\n"
+            " * Lidar power adapter unplugged (the A1's adapter board "
+            "is bus-powered, but some bots route 5 V through a separate "
+            "header — check the harness).\n"
+            " * Adapter is a PL2303 or CH340. JetPack ships only "
+            "cp210x.ko and ftdi_sio.ko, so those adapters enumerate in "
+            "lsusb but never create a /dev/ttyUSB*. Swap for a CP2102 "
+            "or FT232.\n"
+            " * If you don't have a lidar on this build, set "
+            "`export NINA_LIDAR_MODEL=disabled` to silence this row."
+        )
+    if no_such and present:
+        suggestion = present[0]
+        return (
+            base
+            + f"\n\n{port} is not enumerated, but {', '.join(present[:3])} "
+            "is. Likely the USB enumeration order changed at boot.\n"
+            f"  export NINA_LIDAR_PORT={suggestion}\n"
+            "Restart the app (or just relaunch Nina from the desktop)."
+        )
+    if busy:
+        owner_hint = ""
+        if reserved:
+            owner_hint = f" The Dynamixel/nav-remote stack is configured for {', '.join(reserved)}."
+        alt = next((p for p in present if p not in reserved), None)
+        alt_hint = f" Try `export NINA_LIDAR_PORT={alt}`." if alt else ""
+        return (
+            base
+            + f"\n\n{port} is held by another process.{owner_hint}{alt_hint}"
+        )
+    if "permission denied" in raw_lower:
+        return (
+            base
+            + f"\n\nPermission denied on {port}. Add the kiosk user to "
+            "the dialout group and re-login:\n"
+            "  sudo usermod -aG dialout $USER\n"
+            "  groups | grep dialout"
+        )
+    return base if explicit else (
+        base
+        + "\n\nIf the lidar is plugged in but on a different node, "
+        "set `export NINA_LIDAR_PORT=/dev/ttyUSB1` (or whichever node "
+        "`ls /dev/ttyUSB*` shows)."
+    )
 
 
 class RPLidarA1:
@@ -69,6 +207,46 @@ class RPLidarA1:
         self._message = ""
         self._scans_received = 0
         self._last_scan_at = 0.0
+        self._explicit_port = "NINA_LIDAR_PORT" in os.environ
+
+    def _resolve_port(self) -> str:
+        if self._explicit_port:
+            return self._port
+        reserved = _reserved_ports()
+        # If the lidar would land on a port already configured for the
+        # Dynamixel bus or the Pi nav-remote bridge, both processes
+        # would race for the same FTDI / CP210x and the lidar would
+        # silently fail. Pick a different /dev/ttyUSB* instead — the
+        # operator can override either side with the matching env var
+        # (NINA_LIDAR_PORT / NINA_DXL_PORT) if they intentionally want
+        # that mapping.
+        if self._port in reserved:
+            for cand in _serial_candidates(self._port, exclude=reserved):
+                if cand == self._port:
+                    continue
+                if os.path.exists(cand):
+                    log.warning(
+                        "RPLIDAR port %s is reserved by Dynamixel/nav-remote; "
+                        "falling back to %s",
+                        self._port, cand,
+                    )
+                    return cand
+            log.warning(
+                "RPLIDAR port %s is reserved by Dynamixel/nav-remote and no "
+                "other /dev/ttyUSB* is available; lidar will likely fail to "
+                "open. Set NINA_LIDAR_PORT explicitly to silence this.",
+                self._port,
+            )
+            return self._port
+        if os.path.exists(self._port):
+            return self._port
+        for cand in _serial_candidates(self._port, exclude=reserved):
+            if cand == self._port:
+                continue
+            if os.path.exists(cand):
+                log.info("RPLIDAR port fallback: %s -> %s", self._port, cand)
+                return cand
+        return self._port
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -82,7 +260,9 @@ class RPLidarA1:
             raise RuntimeError(self._message) from exc
 
         try:
-            self._lidar = RPLidar(self._port, baudrate=self._baud, timeout=2.0)
+            resolved_port = self._resolve_port()
+            self._lidar = RPLidar(resolved_port, baudrate=self._baud, timeout=2.0)
+            self._port = resolved_port
             # Probe the device. Older rplidar packages don't expose
             # get_info() reliably; the first iter_scans call will surface
             # the actual error if there is one.
@@ -93,7 +273,9 @@ class RPLidarA1:
                 pass
         except Exception as exc:
             self._lidar = None
-            self._message = f"open {self._port}: {exc}"
+            self._message = _format_open_error(
+                self._port, str(exc), explicit=self._explicit_port
+            )
             raise RuntimeError(self._message) from exc
 
         self._stop_evt.clear()

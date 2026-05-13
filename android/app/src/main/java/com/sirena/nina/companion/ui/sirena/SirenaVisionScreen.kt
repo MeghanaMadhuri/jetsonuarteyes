@@ -1,26 +1,36 @@
 package com.sirena.nina.companion.ui.sirena
 
-import android.annotation.SuppressLint
-import android.webkit.WebView
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import com.sirena.nina.companion.ui.theme.SirenaSwitch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,523 +40,747 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.CompanionViewModel
-import com.sirena.nina.companion.ui.theme.SirenaSwitch
+import com.sirena.nina.companion.util.NinaLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 
-/** Live MJPEG preview + toggles (Jetson ``NINA_LINK_ENABLE_VISION_BRIDGE=1`` + OpenCV / sirena_ui pipeline). */
+/**
+ * Layout aligned with desktop [sirena_ui.screens.vision_screen.VisionScreen]:
+ * breadcrumb + camera pill, **~62/38** camera vs recognition rail.
+ */
 @Composable
 fun SirenaVisionScreen(
     vm: CompanionViewModel,
     daemonUrl: String?,
-    caps: JSONObject?,
-    modifier: Modifier = Modifier,
+    caps: JSONObject? = null,
+    shellCompact: Boolean = false,
 ) {
-    val visionOn = caps?.optBoolean("vision_bridge_enabled") == true
-    var pipelineOn by remember { mutableStateOf(false) }
-    var faceOn by remember { mutableStateOf(false) }
-    var objectOn by remember { mutableStateOf(false) }
-    var statusMsg by remember { mutableStateOf("") }
-    /** Immediate feedback from POST /v1/vision/options (e.g. missing ultralytics). */
-    var toggleErr by remember { mutableStateOf("") }
-    var enrollName by remember { mutableStateOf("") }
-    var enrollBusy by remember { mutableStateOf(false) }
-    var enrollProgress by remember { mutableStateOf("") }
-    var enrollResult by remember { mutableStateOf("") }
-    var announceLine by remember { mutableStateOf("") }
-    var announceErr by remember { mutableStateOf("") }
-    var objectConfidence by remember { mutableStateOf(0.8f) }
-    var detectionsText by remember { mutableStateOf<List<String>>(emptyList()) }
     val scope = rememberCoroutineScope()
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
+    val bearer by vm.bearerToken.collectAsStateWithLifecycle(initialValue = null)
+    val root = daemonUrl?.trimEnd('/') ?: ""
+    val visionOn = root.isNotBlank() && jetsonLink.isOnline
 
-    val streamRoot = daemonUrl?.trimEnd('/') ?: ""
+    var faceOn by remember { mutableStateOf(true) }
+    var objectsOn by remember { mutableStateOf(true) }
+    var enrollName by remember { mutableStateOf("") }
+    /** Follow target sent to ``visionFollowStart`` (empty = largest face). */
+    var followPickValue by remember { mutableStateOf("") }
+    var followPickLabel by remember { mutableStateOf("Largest face (any)") }
+    var followMenuOpen by remember { mutableStateOf(false) }
+    var followFaceNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    var statusJson by remember { mutableStateOf<JSONObject?>(null) }
+    var detectLine by remember { mutableStateOf("—") }
+    var followLine by remember { mutableStateOf("—") }
+    var err by remember { mutableStateOf<String?>(null) }
+    var objectConfPct by remember { mutableStateOf(80) }
+    val objectConfDrag = remember { MutableInteractionSource() }
+    val objectConfDragging by objectConfDrag.collectIsDraggedAsState()
 
-    LaunchedEffect(daemonUrl, visionOn) {
-        if (!visionOn || daemonUrl.isNullOrBlank()) return@LaunchedEffect
-        while (true) {
-            val st = vm.fetchVisionStatus()
-            statusMsg = st?.optString("message") ?: ""
-            delay(2000)
-        }
-    }
-
-    LaunchedEffect(visionOn, pipelineOn, objectOn) {
-        if (!visionOn || !pipelineOn || !objectOn) {
-            detectionsText = emptyList()
-            return@LaunchedEffect
-        }
-        while (true) {
-            val j = vm.fetchVisionDetections()
-            val arr = j?.optJSONArray("detections")
-            val rows = mutableListOf<String>()
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val o = arr.optJSONObject(i) ?: continue
-                    val label = o.optString("label")
-                    val conf = o.optDouble("confidence", 0.0)
-                    val identity = o.optString("identity").trim()
-                    val base = "$label ${(conf * 100).toInt()}%"
-                    rows.add(if (identity.isNotEmpty() && !identity.equals("null", ignoreCase = true)) "$base · $identity" else base)
-                }
-            }
-            detectionsText = rows.take(6)
-            delay(1200)
-        }
-    }
-
-    val openCvHint =
-        statusMsg.contains("opencv", ignoreCase = true) ||
-            statusMsg.contains("cv2", ignoreCase = true)
-
-    LaunchedEffect(faceOn, objectOn, visionOn, pipelineOn) {
-        if (!visionOn || !pipelineOn) {
-            toggleErr = ""
-            return@LaunchedEffect
-        }
-        val resp = vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = null)
-        val faceE = resp.toggleErr("toggle_face_error")
-        val objE = resp.toggleErr("toggle_object_error")
-        toggleErr = listOfNotNull(faceE, objE).joinToString("\n")
-    }
-
-    LaunchedEffect(pipelineOn, visionOn) {
+    LaunchedEffect(visionOn, caps?.optBoolean("vision_bridge_enabled")) {
         if (!visionOn) return@LaunchedEffect
-        if (pipelineOn) {
-            val err = vm.visionOpen()
-            if (err != null) statusMsg = err
-        } else {
-            vm.visionStop()
+        while (isActive) {
+            try {
+                if (caps != null && !caps.optBoolean("vision_bridge_enabled")) {
+                    delay(5000L)
+                    continue
+                }
+                coroutineScope {
+                    val stDef = async { vm.fetchVisionStatus() }
+                    val detDef = async { vm.fetchVisionDetections() }
+                    val fcDef = async { vm.fetchVisionFaces() }
+                    val flDef = async { vm.fetchVisionFollowStatus() }
+                    val st = stDef.await()
+                    statusJson = st
+                    if (!objectConfDragging) {
+                        st?.optDouble("object_confidence")?.let { c ->
+                            objectConfPct = (c * 100.0).toInt().coerceIn(50, 99)
+                        }
+                    }
+                    val fc = fcDef.await()
+                    detectLine = summarizeDetections(detDef.await())
+                    followFaceNames = enrolledFaceNames(fc)
+                    followLine = formatFollowStatus(flDef.await())
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                NinaLog.warn("SirenaVisionScreen", e.message ?: "poll")
+            }
+            // Tighter poll for autonomy-relevant vision JSON (MJPEG is continuous via Compose decoder).
+            delay(320)
         }
     }
 
-    SirenaScrollableScreen(
-        titleBar = "Nina · Vision",
-        breadcrumb = "Nina / Vision",
-        modifier = modifier,
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Camera & recognition",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color =
-                        if (pipelineOn) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Text(
-                        "MJPEG",
-                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color =
-                        if (faceOn || objectOn) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Text(
-                        "Overlays",
-                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
+    LaunchedEffect(followMenuOpen, visionOn, caps?.optBoolean("vision_bridge_enabled")) {
+        if (!followMenuOpen || !visionOn) return@LaunchedEffect
+        if (caps != null && !caps.optBoolean("vision_bridge_enabled")) return@LaunchedEffect
+        try {
+            followFaceNames = enrolledFaceNames(vm.fetchVisionFaces())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            NinaLog.warn("SirenaVisionScreen", e.message ?: "faces_menu")
         }
+    }
 
-        if (!visionOn) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            ) {
-                Text(
-                    "Vision bridge is off on the Jetson — set NINA_LINK_ENABLE_VISION_BRIDGE=1 and install OpenCV + sirena_ui vision dependencies, then restart nina-link.",
-                    Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
+    val camOpen = statusJson?.optBoolean("camera_open") == true
+    val camPillText =
+        when {
+            !visionOn -> "USB camera not connected"
+            camOpen -> "USB camera connected"
+            else -> statusJson?.optString("message")?.trim()?.take(40)?.ifBlank { "USB camera idle" }
+                ?: "USB camera idle"
+        }
+    val camPillKind =
+        when {
+            !visionOn -> SirenaPillKind.Neutral
+            camOpen -> SirenaPillKind.Ok
+            else -> SirenaPillKind.Neutral
+        }
+    val fpsPillText =
+        when {
+            !visionOn -> "\u2014"
+            statusJson?.has("fps") == true ->
+                String.format(
+                    java.util.Locale.US,
+                    "%.1f fps",
+                    statusJson!!.optDouble("fps"),
                 )
-            }
+            camOpen -> "Live"
+            else -> "\u2014"
         }
 
-        if (visionOn) {
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    @Composable
+    fun VisionCameraCard(
+        cardModifier: Modifier,
+        expandViewport: Boolean,
+        viewportMin: Dp,
+        fpsPillText: String,
+    ) {
+        SirenaCard(
+            modifier = cardModifier,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Title + compact picture-in-corner (fixed width, native 16:9 — avoids full-width stretch).
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Text(
-                        "Live preview",
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Surface(
-                        modifier = Modifier.width(200.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp)
-                                .aspectRatio(16f / 9f),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (pipelineOn && streamRoot.isNotBlank()) {
-                                val streamUrl = "$streamRoot/v1/vision/stream"
-                                val html =
-                                    remember(streamUrl) {
-                                        "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
-                                            "<body style=\"margin:0;background:#000;\">" +
-                                            "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block;object-fit:contain;\" />" +
-                                            "</body></html>"
-                                    }
-                                MjpegWebView(html = html)
-                            } else {
-                                Text(
-                                    "Off",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(8.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-                ToggleRow("Camera stream", pipelineOn) { pipelineOn = it }
-                if (openCvHint && pipelineOn) {
-                    Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)),
-                    ) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("OpenCV not available on the Jetson", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "Install it into the same Python environment as nina-link (often ``.venv-link``), then restart the service:\n\n" +
-                                    "``./.venv-link/bin/pip install opencv-python-headless``\n\n" +
-                                    "``sudo systemctl restart nina-link``",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                        }
-                    }
-                }
-                if (toggleErr.isNotBlank()) {
-                    Text(
-                        toggleErr,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (statusMsg.isNotBlank()) {
-                    Text(
-                        statusMsg,
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SirenaCardTitle("Camera")
+                Spacer(Modifier.weight(1f))
+                SirenaStatusPill(fpsPillText, SirenaPillKind.Neutral)
             }
-        }
-        }
-
-        if (visionOn) {
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        ) {
-            Column(
+            val base =
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .clip(RoundedCornerShape(SirenaDimens.cardRadiusSubtle))
+                    .background(SirenaColors.cloud)
+            Box(
+                modifier =
+                    base.then(
+                        if (expandViewport) {
+                            Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = viewportMin)
+                        } else {
+                            Modifier.heightIn(min = viewportMin, max = 400.dp)
+                        },
+                    ),
             ) {
-                Text(
-                    "Recognition pipeline",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                ToggleRow("Face detection", faceOn) { faceOn = it }
-                ToggleRow("Object detection", objectOn) { objectOn = it }
-                Text(
-                    "Object confidence ${(objectConfidence * 100).toInt()}%",
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Slider(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = objectConfidence,
-                    onValueChange = { objectConfidence = it.coerceIn(0.5f, 0.99f) },
-                    valueRange = 0.5f..0.99f,
-                    enabled = visionOn && pipelineOn && objectOn,
-                )
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        scope.launch {
-                            vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = objectConfidence.toDouble())
-                        }
-                    },
-                    enabled = visionOn && pipelineOn && objectOn,
-                ) {
-                    Text("Apply confidence")
+                if (visionOn) {
+                    SirenaMjpegImage(
+                        streamUrl = "$root/v1/vision/stream",
+                        bearer = bearer,
+                        modifier = Modifier.fillMaxSize(),
+                        maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
+                    )
+                } else {
+                    Text(
+                        "Plug in a USB camera to see the live feed here.",
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        color = SirenaColors.muted,
+                        fontSize = SirenaType.muted,
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun VisionRecognitionRail(
+        modifier: Modifier,
+        compactActions: Boolean,
+        splitRailLayout: Boolean,
+    ) {
+        val railMidScroll = rememberScrollState()
+        val stackedScroll = rememberScrollState()
+
+        fun pushVisionOptions() {
+            scope.launch {
+                err = null
+                try {
+                    val r =
+                        vm.postVisionOptionsSync(
+                            faceOn,
+                            objectsOn,
+                            objectConfPct / 100.0,
+                        )
+                    if (r != null && !r.optBoolean("ok", true)) {
+                        err = r.optString("error").ifBlank { r.toString().take(120) }
+                    }
+                } catch (e: Exception) {
+                    err = e.message
                 }
             }
         }
 
-        Text(
-            "Face enrollment",
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        ) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        @Composable
+        fun VisionCameraPlaceholders() {
+            SirenaSectionLabel("Camera")
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SirenaMutedText("Resolution", maxLines = 1)
                 Text(
-                    "Capture 8 face samples and save to the robot (same as Sirena UI). " +
-                        "One person in frame, good light, face detection on, camera stream on.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "640\u00d7480",
+                    color = SirenaColors.text,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = SirenaType.muted,
                 )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SirenaMutedText("Brightness", maxLines = 1)
+                Slider(
+                    value = 55f,
+                    onValueChange = {},
+                    enabled = false,
+                    modifier = Modifier.weight(1f),
+                    valueRange = 0f..100f,
+                    colors =
+                        SliderDefaults.colors(
+                            thumbColor = SirenaColors.border,
+                            activeTrackColor = SirenaColors.border,
+                            inactiveTrackColor = SirenaColors.border,
+                        ),
+                )
+                SirenaStatusPill("55%", SirenaPillKind.Neutral)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SirenaMutedText("Exposure", maxLines = 1)
+                Text(
+                    "Auto",
+                    color = SirenaColors.text,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = SirenaType.muted,
+                )
+            }
+            SirenaMutedText(
+                "Changing resolution, brightness, or exposure from the tablet is not wired yet; use the Jetson Sirena UI for live tuning.",
+                maxLines = 3,
+            )
+        }
+
+        @Composable
+        fun CoreSections() {
+            SirenaSectionLabel("Recognition")
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Face recognition",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.Medium,
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.base,
+                )
+                SirenaSwitch(
+                    checked = faceOn,
+                    onCheckedChange = { v ->
+                        faceOn = v
+                        pushVisionOptions()
+                    },
+                    enabled = visionOn,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Object detection",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.Medium,
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.base,
+                )
+                SirenaSwitch(
+                    checked = objectsOn,
+                    onCheckedChange = { v ->
+                        objectsOn = v
+                        pushVisionOptions()
+                    },
+                    enabled = visionOn,
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { scope.launch { err = vm.visionOpen() } },
+                    enabled = visionOn,
+                ) { Text("Open camera") }
+                Button(
+                    onClick = { scope.launch { err = vm.visionStop() } },
+                    enabled = visionOn,
+                ) { Text("Stop") }
+            }
+
+            SirenaSectionLabel("Person follow")
+            SirenaMutedText(
+                "Drives toward a standoff face size, holds when centred, and reverses " +
+                    "if you move closer\u2014using the same closeness limit for hold and reverse.",
+                maxLines = 6,
+            )
+            Box(Modifier.fillMaxWidth()) {
                 OutlinedTextField(
-                    value = enrollName,
-                    onValueChange = { enrollName = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    value = followPickLabel,
+                    onValueChange = {},
+                    readOnly = true,
                     singleLine = true,
-                    label = { Text("Name to store") },
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Words,
-                    ),
+                    label = { Text("Follow target") },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { followMenuOpen = !followMenuOpen },
+                            enabled = visionOn,
+                        ) {
+                            Icon(
+                                Icons.Filled.ArrowDropDown,
+                                contentDescription = "Open follow target menu",
+                            )
+                        }
+                    },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = visionOn) { followMenuOpen = !followMenuOpen },
+                    enabled = visionOn,
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
+                DropdownMenu(
+                    expanded = followMenuOpen,
+                    onDismissRequest = { followMenuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Largest face (any)") },
+                        onClick = {
+                            followPickLabel = "Largest face (any)"
+                            followPickValue = ""
+                            followMenuOpen = false
+                        },
+                    )
+                    followFaceNames.forEach { n ->
+                        DropdownMenuItem(
+                            text = { Text(n) },
+                            onClick = {
+                                followPickLabel = n
+                                followPickValue = n
+                                followMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SirenaPrimaryButton(
+                    text = "Start follow",
+                    onClick = {
+                        scope.launch {
+                            try {
+                                vm.visionFollowStart(followPickValue.trim())
+                            } catch (e: Exception) {
+                                err = e.message
+                            }
+                        }
+                    },
+                    enabled = visionOn,
+                    modifier = Modifier.height(34.dp).weight(1f),
+                )
+                SirenaSecondaryButton(
+                    text = "Stop follow",
+                    onClick = {
+                        scope.launch {
+                            try {
+                                vm.visionFollowStop()
+                            } catch (e: Exception) {
+                                err = e.message
+                            }
+                        }
+                    },
+                    enabled = visionOn,
+                    modifier = Modifier.height(34.dp).weight(1f),
+                )
+            }
+            SirenaStatusPill(
+                text = followLine.take(48).ifBlank { "Follow: off" },
+                SirenaPillKind.Neutral,
+            )
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SirenaMutedText("Object confidence", maxLines = 1)
+                Slider(
+                    value = objectConfPct.toFloat(),
+                    onValueChange = { v -> objectConfPct = v.toInt().coerceIn(50, 99) },
+                    onValueChangeFinished = { pushVisionOptions() },
+                    valueRange = 50f..99f,
+                    steps = 47,
+                    enabled = visionOn,
+                    modifier = Modifier.weight(1f),
+                    interactionSource = objectConfDrag,
+                    colors =
+                        SliderDefaults.colors(
+                            thumbColor = SirenaColors.red,
+                            activeTrackColor = SirenaColors.red,
+                        ),
+                )
+                SirenaStatusPill("$objectConfPct%", SirenaPillKind.Neutral)
+            }
+
+            OutlinedTextField(
+                value = enrollName,
+                onValueChange = { enrollName = it },
+                label = { Text("Name") },
+                supportingText = {
+                    Text(
+                        "Used by Train face",
+                        fontSize = SirenaType.quickBlurb,
+                        color = SirenaColors.muted,
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            SirenaSectionLabel("Detected")
+            SirenaCard(
+                kind = SirenaCardKind.Subtle,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+            ) {
+                Text(detectLine, fontSize = SirenaType.muted, color = SirenaColors.text)
+            }
+
+            VisionCameraPlaceholders()
+        }
+
+        @Composable
+        fun ActionButtonRow(outer: Modifier) {
+            if (compactActions) {
+                Column(outer, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SirenaPrimaryButton(
+                        text = "Train face",
                         onClick = {
                             scope.launch {
-                                enrollResult = ""
-                                val name = enrollName.trim()
-                                if (name.isEmpty()) {
-                                    enrollResult = "Enter a name for this face."
+                                err = null
+                                if (enrollName.isBlank()) {
+                                    err = "Enter a name for Train face / enroll."
                                     return@launch
                                 }
-                                if (!pipelineOn) {
-                                    enrollResult = "Turn on Camera stream first."
-                                    return@launch
-                                }
-                                if (!faceOn) {
-                                    enrollResult = "Enable Face detection first."
-                                    return@launch
-                                }
-                                val (start, enrollNetErr) = vm.visionEnroll(name, 8)
-                                if (enrollNetErr != null) {
-                                    enrollResult = enrollNetErr
-                                    return@launch
-                                }
-                                if (start == null) {
-                                    enrollResult = "Could not reach the Jetson."
-                                    return@launch
-                                }
-                                if (!start.optBoolean("ok")) {
-                                    enrollResult = start.optString("error", "Could not start enrollment.")
-                                    return@launch
-                                }
-                                enrollBusy = true
-                                enrollProgress = "0 / 8"
-                                while (true) {
-                                    delay(400)
-                                    val st = vm.fetchVisionEnrollStatus()
-                                    if (st == null) {
-                                        enrollResult = "Lost status from robot."
-                                        enrollBusy = false
-                                        break
-                                    }
-                                    val t = st.optInt("target", 8)
-                                    val s = st.optInt("samples", 0)
-                                    enrollProgress = "$s / $t"
-                                    if (st.optBoolean("in_progress") != true) {
-                                        val last = st.optJSONObject("last")
-                                        enrollResult = last?.optString("message") ?: ""
-                                        enrollBusy = false
-                                        break
-                                    }
+                                val (j, netErr) = vm.visionEnroll(enrollName.trim(), 8)
+                                if (netErr != null) err = netErr
+                                else if (j != null && !j.optBoolean("ok", true)) {
+                                    err = j.optString("message").ifBlank { j.toString().take(120) }
+                                } else if (j != null && j.optBoolean("ok", true)) {
+                                    followFaceNames = enrolledFaceNames(vm.fetchVisionFaces())
                                 }
                             }
                         },
-                        enabled = visionOn && !enrollBusy,
-                    ) {
-                        Text(if (enrollBusy) "Enrolling…" else "Start (8 samples)")
-                    }
-                }
-                if (enrollProgress.isNotBlank()) {
-                    Text(enrollProgress, style = MaterialTheme.typography.bodySmall)
-                }
-                if (enrollResult.isNotBlank()) {
-                    Text(enrollResult, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        Text(
-            "Detections & voice",
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (detectionsText.isEmpty()) {
-                    Text(
-                        "No detections yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        enabled = visionOn,
+                        modifier = Modifier.fillMaxWidth().height(34.dp),
                     )
-                } else {
-                    detectionsText.forEach {
-                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    SirenaSecondaryButton(
+                        text = "Snapshot",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                val jpeg = vm.fetchVisionSnapshotJpeg()
+                                if (jpeg == null || jpeg.isEmpty()) {
+                                    err = "Snapshot failed"
+                                }
+                            }
+                        },
+                        enabled = visionOn,
+                        modifier = Modifier.fillMaxWidth().height(34.dp),
+                    )
+                    SirenaPrimaryButton(
+                        text = "Speak",
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    vm.visionAnnounceObjects()
+                                } catch (e: Exception) {
+                                    err = e.message
+                                }
+                            }
+                        },
+                        enabled = visionOn && objectsOn,
+                        modifier = Modifier.fillMaxWidth().height(34.dp),
+                    )
+                }
+            } else {
+                Row(outer, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SirenaPrimaryButton(
+                        text = "Train face",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                if (enrollName.isBlank()) {
+                                    err = "Enter a name for Train face / enroll."
+                                    return@launch
+                                }
+                                val (j, netErr) = vm.visionEnroll(enrollName.trim(), 8)
+                                if (netErr != null) err = netErr
+                                else if (j != null && !j.optBoolean("ok", true)) {
+                                    err = j.optString("message").ifBlank { j.toString().take(120) }
+                                } else if (j != null && j.optBoolean("ok", true)) {
+                                    followFaceNames = enrolledFaceNames(vm.fetchVisionFaces())
+                                }
+                            }
+                        },
+                        enabled = visionOn,
+                        modifier = Modifier.height(34.dp).weight(1f),
+                    )
+                    SirenaSecondaryButton(
+                        text = "Snapshot",
+                        onClick = {
+                            scope.launch {
+                                err = null
+                                val jpeg = vm.fetchVisionSnapshotJpeg()
+                                if (jpeg == null || jpeg.isEmpty()) {
+                                    err = "Snapshot failed"
+                                }
+                            }
+                        },
+                        enabled = visionOn,
+                        modifier = Modifier.height(34.dp).weight(1f),
+                    )
+                    SirenaPrimaryButton(
+                        text = "Speak",
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    vm.visionAnnounceObjects()
+                                } catch (e: Exception) {
+                                    err = e.message
+                                }
+                            }
+                        },
+                        enabled = visionOn && objectsOn,
+                        modifier = Modifier.height(34.dp).weight(1f),
+                    )
+                }
+            }
+        }
+
+        if (splitRailLayout) {
+            Column(
+                modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(railMidScroll),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CoreSections()
+                }
+                ActionButtonRow(Modifier.fillMaxWidth())
+            }
+        } else {
+            Column(
+                modifier
+                    .fillMaxWidth()
+                    .verticalScroll(stackedScroll),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CoreSections()
+                ActionButtonRow(Modifier.fillMaxWidth())
+            }
+        }
+    }
+    SirenaAdaptiveContainer(Modifier.padding(10.dp)) { ctx ->
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SirenaAdaptiveHeaderPills(
+                ctx = ctx,
+                breadcrumb = { SirenaBreadcrumbLine(listOf("Nina", "Vision")) },
+                pills = { SirenaStatusPill(camPillText, camPillKind) },
+            )
+            SirenaJetsonFeatureGateCallout(
+                linkOnline = jetsonLink.isOnline,
+                caps = caps,
+                flagKey = "vision_bridge_enabled",
+                title = "Vision HTTP bridge is off",
+                envLine = "On the Jetson: export NINA_LINK_ENABLE_VISION_BRIDGE=1 (and install vision deps), then restart nina-link.",
+            )
+            err?.let { msg ->
+                SirenaCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    kind = SirenaCardKind.Error,
+                ) {
+                    Text(msg, color = SirenaColors.pillErrorFg, fontSize = SirenaType.muted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SirenaSecondaryButton(text = "Retry", onClick = { err = null })
                     }
                 }
-                Text(
-                    "Bounding boxes are drawn on the Jetson stream when toggles are on (same pipeline as Sirena UI).",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "The robot can speak what it sees using gTTS (install gTTS on the Jetson; audio via mpg123 or similar).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        scope.launch {
-                            announceErr = ""
-                            announceLine = ""
-                            if (!pipelineOn) {
-                                announceErr = "Turn on Camera stream first."
-                                return@launch
-                            }
-                            if (!objectOn) {
-                                announceErr = "Enable Object detection to label the scene."
-                                return@launch
-                            }
-                            val j = vm.visionAnnounceObjects()
-                            if (j == null) {
-                                announceErr = "Request failed."
-                                return@launch
-                            }
-                            if (!j.optBoolean("ok", true)) {
-                                announceErr = j.optString("error", "Failed")
-                                return@launch
-                            }
-                            if (j.optBoolean("skipped")) {
-                                announceLine = j.optString("sentence", "")
-                                return@launch
-                            }
-                            announceLine = j.optString("sentence", "")
-                            delay(1200)
-                            val errJ = vm.fetchVisionAnnounceStatus()
-                            val err =
-                                errJ?.takeIf { !it.isNull("error") }?.optString("error")?.trim()
-                                    ?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
-                            if (!err.isNullOrBlank()) {
-                                announceErr = err
-                            }
-                        }
-                    },
-                    enabled = visionOn && pipelineOn && objectOn,
+            }
+            val vMin = ctx.visionCameraViewportMin
+            val compactButtons = ctx.maxWidth < 400.dp
+            if (ctx.visionSplit) {
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("Speak detected objects")
+                    VisionCameraCard(
+                        cardModifier = Modifier.weight(0.62f).fillMaxHeight(),
+                        expandViewport = true,
+                        viewportMin = vMin,
+                        fpsPillText = fpsPillText,
+                    )
+                    VisionRecognitionRail(
+                        modifier =
+                            Modifier
+                                .weight(0.38f)
+                                .fillMaxHeight(),
+                        compactActions = compactButtons,
+                        splitRailLayout = true,
+                    )
                 }
-                if (announceLine.isNotBlank()) {
-                    Text(announceLine, style = MaterialTheme.typography.bodySmall)
-                }
-                if (announceErr.isNotBlank()) {
-                    Text(announceErr, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            } else {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    VisionCameraCard(
+                        cardModifier = Modifier.fillMaxWidth(),
+                        expandViewport = false,
+                        viewportMin = vMin,
+                        fpsPillText = fpsPillText,
+                    )
+                    VisionRecognitionRail(
+                        modifier = Modifier.fillMaxWidth(),
+                        compactActions = compactButtons,
+                        splitRailLayout = false,
+                    )
                 }
             }
-        }
         }
     }
 }
 
-private fun JSONObject?.toggleErr(key: String): String? {
-    val j = this ?: return null
-    if (!j.has(key) || j.isNull(key)) return null
-    val s = j.optString(key).trim()
-    if (s.isEmpty() || s.equals("null", ignoreCase = true)) return null
-    return s
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun MjpegWebView(html: String) {
-    AndroidView(
-        factory = { context ->
-            WebView(context).apply {
-                settings.javaScriptEnabled = false
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
-            }
-        },
-        update = { wv ->
-            wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
-        },
-        modifier = Modifier.fillMaxSize(),
-    )
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        SirenaSwitch(checked = checked, onCheckedChange = onCheckedChange)
+private fun enrolledFaceNames(j: JSONObject?): List<String> {
+    if (j == null) return emptyList()
+    if (j.has("ok") && !j.optBoolean("ok", true)) return emptyList()
+    val arr = j.optJSONArray("faces") ?: j.optJSONArray("names") ?: return emptyList()
+    val out = mutableListOf<String>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i)
+        if (o != null) {
+            o.optString("name").trim().takeIf { it.isNotEmpty() }?.let { out.add(it) }
+        } else {
+            val s = arr.optString(i).trim()
+            if (s.isNotEmpty()) out.add(s)
+        }
     }
+    return out.distinct().sorted()
+}
+
+private fun formatFollowStatus(j: JSONObject?): String {
+    if (j == null) return "Follow: unavailable"
+    if (j.has("ok") && !j.optBoolean("ok", true)) {
+        val err = j.optString("error").trim().takeIf { it.isNotEmpty() }
+        return err ?: "Follow: error"
+    }
+    val active = j.optBoolean("active", false)
+    val msg = j.optString("message").trim()
+    return when {
+        active && msg.isNotEmpty() -> msg.take(96)
+        active -> "Following (active)"
+        msg.isNotEmpty() -> msg.take(96)
+        else -> "Follow idle"
+    }
+}
+
+private fun summarizeDetections(j: JSONObject?): String {
+    if (j == null) return "—"
+    val emptyCopy = "No objects detected."
+
+    fun fromLabelStrings(arr: JSONArray?): String {
+        if (arr == null || arr.length() == 0) return emptyCopy
+        val parts = mutableListOf<String>()
+        for (i in 0 until minOf(arr.length(), 24)) {
+            val s = arr.optString(i).trim()
+            if (s.isNotEmpty()) parts.add(s)
+        }
+        return parts.distinct().joinToString(", ").ifBlank { emptyCopy }
+    }
+
+    val labels = j.optJSONArray("labels")
+    if (labels != null) {
+        return fromLabelStrings(labels)
+    }
+    val dets = j.optJSONArray("detections")
+    if (dets != null) {
+        if (dets.length() == 0) return emptyCopy
+        val counts = linkedMapOf<String, Int>()
+        for (i in 0 until minOf(dets.length(), 24)) {
+            val o = dets.optJSONObject(i) ?: continue
+            val label =
+                o.optString("label").trim().ifBlank {
+                    o.optString("class_name").trim().ifBlank {
+                        o.optString("identity").trim().ifBlank { o.optString("kind").trim() }
+                    }
+                }
+            if (label.isNotEmpty()) {
+                counts[label] = (counts[label] ?: 0) + 1
+            }
+        }
+        if (counts.isEmpty()) return emptyCopy
+        return counts.entries.joinToString(", ") { (name, n) ->
+            if (n > 1) "$name ($n)" else name
+        }
+    }
+    return emptyCopy
 }

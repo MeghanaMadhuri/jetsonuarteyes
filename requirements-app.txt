@@ -1,0 +1,48 @@
+# =============================================================================
+# Jetson "Nina app" Python stack — Sirena UI + embedded tablet gateway + Wi‑Fi
+# companion (Android). Install on the robot, not on the tablet.
+#
+#   python3 -m venv ~/nina-venv && source ~/nina-venv/bin/activate
+#   pip install -U pip setuptools wheel
+#   pip install -r requirements-app.txt
+#   export PYTHONPATH=/path/to/Nvidia-jetson-platform
+#
+# Jetson / PyTorch: if `ultralytics` or `torch` wheels fail, install the NVIDIA
+# wheel for your JetPack first, then re-run pip (see NVIDIA Jetson forums).
+#
+# Wi‑Fi reality: no software can guarantee zero packet loss or zero latency on
+# a shared radio. Use 5 GHz when possible, place AP and robot/tablet with good
+# RSSI, and keep firmware current. This file pulls deps that keep the link
+# stable (HTTP stack, discovery, vision); tune AP QoS for robot traffic if needed.
+#
+# Recommended env for Android parity over Wi‑Fi (systemd drop-in or shell):
+#   export NINA_ANDROID_GATEWAY_ALL=1
+#   export NINA_LINK_MDNS=1
+#   export NINA_LINK_LOG_UI_POLL_GETS=0
+#   (optional shared secret) export NINA_ANDROID_HTTP_TOKEN=...
+#
+# Cross-check HTTP surface (run on Jetson after starting Sirena / gateway):
+#   bash scripts/verify-nina-link-companion.sh
+# =============================================================================
+
+# --- Tablet gateway: FastAPI, Uvicorn, Pydantic, mDNS/Bonjour (zeroconf) ---
+-r requirements-ui.txt
+
+# --- USB camera / Roboflow-style vision used by Sirena Vision + gateway bridges ---
+-r requirements-vision.txt
+
+# --- Qt desktop UI (same process hosts the gateway when you run `python -m sirena_ui`) ---
+# Prefer Ubuntu/Jetson packages when pip wheels misbehave: sudo apt install -y python3-pyqt5
+PyQt5>=5.15.10
+
+# --- Jetson <-> Raspberry Pi motor bridge (remote navigation serial) ---
+pyserial>=3.5
+
+# --- CLI / kiosk logging ---
+rich>=12
+
+# --- YOLO path used by vision tooling (optional if you only use embedded inference) ---
+ultralytics>=8.0.0
+
+# --- Optional: systemd / D-Bus helpers on Ubuntu (only if you add dbus code paths) ---
+# PyGObject is usually installed via apt (python3-gi); prefer apt on Jetson.

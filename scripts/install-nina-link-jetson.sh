@@ -8,6 +8,7 @@
 #   ./scripts/update-nina-link-jetson.sh --sirena-headless --restart --verify
 #
 # Usage (on the Jetson, from repo root):
+#   ./scripts/jetson-tablet-setup.sh              # preferred: + drop-in bridges + UFW hints
 #   ./scripts/install-nina-link-jetson.sh --all
 #   ./scripts/uninstall-nina-link-jetson.sh --purge   # remove service + venv + state
 # Do NOT pass script flags to chmod (e.g. chmod +x foo.sh --smoke is wrong).
@@ -120,37 +121,46 @@ _install_nina_link_systemd() {
     fi
     "${SUDO[@]}" tee "${UNIT_DST}" >/dev/null <<EOF
 [Unit]
-Description=Nina Link Daemon (Wi-Fi provisioning API for companion app)
-After=network-online.target NetworkManager.service
+Description=Sirena Control Center (tablet HTTP API embedded; replaces nina-link)
+After=network-online.target NetworkManager.service graphical-session.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Must exist at systemd parse time; PYTHONPATH + ExecStart pin the repo (avoid /opt vs home mismatches).
 WorkingDirectory=/
-# BLDC: Jetson GPIO direct. navigation.env may set pins / invert flags.
+# Hoverboard lean via Dynamixel (production): tunables live in
+# /etc/nina-link/navigation.env (NINA_HOVER_*, polarity flags). The
+# Pi-UART bridge is gone — UnsetEnvironment below clears any stale
+# remote-mode env that might survive across reboots.
+# Yield CPU to PulseAudio / I2S under SLAM + depth bursts; safe at
+# Nice=5 on Jetson Orin Nano (lean drive uses Dynamixel, not RT GPIO).
+Nice=5
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
 UnsetEnvironment=NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC NINA_NAV_LEGACY_PI_BRIDGE
 Environment=PYTHONPATH=${REPO_ROOT}
-Environment=NINA_LINK_BOOT_AP=1
-Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
+Environment=DISPLAY=:0
+Environment=QT_QPA_PLATFORM=xcb
+Environment=NINA_ANDROID_GATEWAY=1
+Environment=NINA_ANDROID_GATEWAY_ALL=1
+Environment=NINA_ANDROID_GATEWAY_BOOT_AP=0
+Environment=NINA_LINK_BOOT_AP=0
+Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=0
 Environment=NINA_LINK_WIFI_READY_TIMEOUT=240
 Environment=NINA_LINK_WIFI_READY_POLL=2
 Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
-# Companion app (tablet): expose full HTTP API — same set as update-nina-link-jetson.sh drop-in
+Environment=NINA_LINK_DISPLAY_HOSTNAME=jnx
 Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
-Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
 Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
 Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1
 Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
 Environment=NINA_LINK_ENABLE_SLAM_BRIDGE=1
 Environment=NINA_LINK_ENABLE_DEPTH_BRIDGE=1
 Environment=NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
-ExecStart=${PY} -m nina.link_daemon.main
+ExecStart=${PY} -m sirena_ui
 Restart=on-failure
 RestartSec=5
 
@@ -174,6 +184,7 @@ EOF
             _scrub_obsolete_nav_env_file "${NAV_ENV_DST}" || true
         fi
     fi
+    _install_pulse_jetson_tweaks "${SUDO[@]}" || true
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable nina-link.service
     "${SUDO[@]}" systemctl restart nina-link.service
@@ -183,6 +194,45 @@ EOF
     fi
     warn "Unit installed but not active — journalctl -u nina-link -e"
     return 1
+}
+
+# PulseAudio: larger default sink buffer + mild priority so autonomy/SLAM spikes do not
+# underrun I2S (MAX98357 class "static"). See nina/systemd/pulse/README.md
+_install_pulse_jetson_tweaks() {
+    local -a SUDO=("$@")
+    if ! command -v pulseaudio >/dev/null 2>&1; then
+        warn "pulseaudio not installed — skipping I2S daemon.conf.d (optional: apt install pulseaudio)"
+        return 0
+    fi
+    local SRC="${REPO_ROOT}/nina/systemd/pulse/daemon-i2s-under-load.conf"
+    if [[ ! -f "${SRC}" ]]; then
+        warn "Missing ${SRC} — skipping PulseAudio I2S tweaks"
+        return 0
+    fi
+    if [[ "${#SUDO[@]}" -gt 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+        warn "sudo not installed — skipping PulseAudio I2S tweaks"
+        return 0
+    fi
+    "${SUDO[@]}" mkdir -p /etc/pulse/daemon.conf.d
+    "${SUDO[@]}" cp -f "${SRC}" /etc/pulse/daemon.conf.d/99-nina-i2s-under-load.conf
+    ok "Installed /etc/pulse/daemon.conf.d/99-nina-i2s-under-load.conf"
+    local DC=/etc/pulse/daemon.conf
+    if [[ -f "${DC}" ]]; then
+        if grep -qE '^[[:space:]]*\.include[[:space:]]+/etc/pulse/daemon\.conf\.d/\*\.conf[[:space:]]*$' "${DC}"; then
+            ok "daemon.conf already includes daemon.conf.d drop-ins"
+        else
+            "${SUDO[@]}" tee -a "${DC}" >/dev/null <<'INCL'
+
+### Nina — allow /etc/pulse/daemon.conf.d/*.conf (install script; safe to remove if unused)
+.include /etc/pulse/daemon.conf.d/*.conf
+INCL
+            ok "Appended .include /etc/pulse/daemon.conf.d/*.conf to ${DC}"
+        fi
+    else
+        warn "Missing ${DC} — create PulseAudio base config or install pulseaudio package"
+    fi
+    warn "Reload PulseAudio as the desktop user: pulseaudio -k && pulseaudio --start (or reboot)"
+    return 0
 }
 
 # systemd-only: register service and exit (run: sudo ./install-nina-link-jetson.sh --systemd-only)
@@ -260,9 +310,11 @@ if [[ "${INSTALL_SYSTEM_DEPS}" -eq 1 ]]; then
         "python3.${PY_MINOR}-venv" \
         python3-venv \
         python3-pip \
+        python3-pyqt5 \
+        python3-pyqt5.qtsvg \
         curl \
         || { bad "apt-get install failed"; exit 1; }
-    ok "python3-venv, pip, curl (apt)"
+    ok "python3-venv, pip, PyQt5 (distro), curl (apt)"
 fi
 
 # Remove broken half-created venv from a previous failed run (no interpreter)
@@ -294,8 +346,8 @@ if [[ ! -d "${VENV_PATH}" ]]; then
         bad "python3 -m venv failed — install python3-venv (see above)"
         exit 1
     fi
-    say "  Creating venv: ${VENV_PATH}"
-    if ! python3 -m venv "${VENV_PATH}"; then
+    say "  Creating venv: ${VENV_PATH} (system site-packages → distro PyQt5 for sirena_ui)"
+    if ! python3 -m venv --system-site-packages "${VENV_PATH}"; then
         bad "venv creation failed"
         rm -rf "${VENV_PATH}"
         exit 1
@@ -316,8 +368,8 @@ if [[ -x "${PY}" ]] && ! _venv_has_pip; then
     if ! "${PY}" -m ensurepip --upgrade; then
         warn "ensurepip failed — recreating venv from scratch"
         rm -rf "${VENV_PATH}"
-        say "  Creating venv: ${VENV_PATH}"
-        python3 -m venv "${VENV_PATH}" || { bad "venv recreate failed"; exit 1; }
+        say "  Creating venv: ${VENV_PATH} (system site-packages)"
+        python3 -m venv --system-site-packages "${VENV_PATH}" || { bad "venv recreate failed"; exit 1; }
         PY="${VENV_PATH}/bin/python"
     fi
 fi
@@ -342,17 +394,15 @@ say "4. Import / package verification"
 IMPORT_ERR="$(mktemp "${TMPDIR:-/tmp}/nina-link-import.XXXXXX.err")"
 export PYTHONPATH="${REPO_ROOT}"
 if "${PY}" -c "
-from nina.link_daemon.config import load_config
-from nina.link_daemon.nm import mock_backend
-from nina.link_daemon.state import LinkCoordinator
-from nina.link_daemon.api import create_app
+from nina.jetson_net.config import load_config
+from nina.jetson_net.nm import mock_backend
+from nina.jetson_net.state import LinkCoordinator
 c = load_config()
 co = LinkCoordinator(c, mock_backend())
-app = create_app(c, co)
-print('import_ok', app.title)
+print('import_ok', co.cfg.host, co.cfg.port)
 " 2>"${IMPORT_ERR}"; then
     rm -f "${IMPORT_ERR}"
-    ok "nina.link_daemon imports successfully"
+    ok "nina.jetson_net imports successfully"
 else
     bad "Import failed:"
     sed 's/^/    /' "${IMPORT_ERR}" >&2
@@ -360,32 +410,27 @@ else
     exit 1
 fi
 
+if "${PY}" -c "from PyQt5.QtCore import QT_VERSION_STR; print('pyqt_ok', QT_VERSION_STR)" 2>"${IMPORT_ERR}"; then
+    rm -f "${IMPORT_ERR}"
+    ok "PyQt5 importable (required for python -m sirena_ui)"
+else
+    bad "PyQt5 not importable in this venv — tablet gateway needs Qt."
+    sed 's/^/    /' "${IMPORT_ERR}" >&2
+    rm -f "${IMPORT_ERR}"
+    echo ""
+    echo "  Fix on Ubuntu/Jetson:"
+    echo "    sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg"
+    echo "    rm -rf ${VENV_PATH}"
+    echo "    $0 --install-system-deps --smoke   # or --all"
+    echo ""
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 say "5. Optional smoke test (HTTP /health)"
 
 if [[ "${SMOKE}" -eq 1 ]]; then
-    if ! command -v curl >/dev/null 2>&1; then
-        warn "curl not installed — skipping smoke (sudo apt install curl)"
-    else
-        export PYTHONPATH="${REPO_ROOT}"
-        export NINA_LINK_MOCK=1
-        export NINA_LINK_BOOT_AP=0
-        export NINA_LINK_HOST=127.0.0.1
-        export NINA_LINK_PORT=8788
-        SMOKE_LOG="$(mktemp "${TMPDIR:-/tmp}/nina-link-smoke.XXXXXX.log")"
-        "${PY}" -m nina.link_daemon.main >"${SMOKE_LOG}" 2>&1 &
-        DAEMON_PID=$!
-        sleep 3
-        if curl -sf "http://127.0.0.1:8788/health" | grep -q '"ok"'; then
-            rm -f "${SMOKE_LOG}"
-            ok "HTTP /health responded (mock NM)"
-        else
-            bad "Smoke HTTP failed — log: ${SMOKE_LOG}"
-            EXIT=1
-        fi
-        kill "${DAEMON_PID}" 2>/dev/null || true
-        wait "${DAEMON_PID}" 2>/dev/null || true
-    fi
+    warn "Automated HTTP smoke test removed (nina-link standalone daemon). After install, run Sirena UI and: curl -s http://127.0.0.1:8787/health"
 fi
 
 # ---------------------------------------------------------------------------
@@ -408,10 +453,11 @@ cat <<EOF
 
   Companion app on hotspot (NetworkManager / Jetson typical): http://10.42.0.1:8787
 
-  Manual foreground run (no systemd):
+  Manual foreground run (no systemd) — tablet API inside Sirena UI:
     export PYTHONPATH=${REPO_ROOT}
-    export NINA_LINK_ENABLE_ROBOT_BRIDGE=1 NINA_LINK_ENABLE_ACTION_BRIDGE=1 NINA_LINK_ENABLE_RECORD_BRIDGE=1 NINA_LINK_ENABLE_VISION_BRIDGE=1 NINA_LINK_ENABLE_ACTIONS_STATIC=1 NINA_LINK_ENABLE_SLAM_BRIDGE=1 NINA_LINK_ENABLE_DEPTH_BRIDGE=1 NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
-    ${PY} -m nina.link_daemon.main
+    export NINA_ANDROID_GATEWAY=1 NINA_ANDROID_GATEWAY_ALL=1
+    export NINA_LINK_ENABLE_ROBOT_BRIDGE=1 NINA_LINK_ENABLE_RECORD_BRIDGE=1 NINA_LINK_ENABLE_VISION_BRIDGE=1 NINA_LINK_ENABLE_ACTIONS_STATIC=1 NINA_LINK_ENABLE_SLAM_BRIDGE=1 NINA_LINK_ENABLE_DEPTH_BRIDGE=1 NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
+    ${PY} -m sirena_ui
 
   Verify APIs after install (on Jetson):
     curl -s http://127.0.0.1:8787/v1/robot/capabilities | head
@@ -423,6 +469,8 @@ cat <<EOF
     ./scripts/uninstall-nina-link-jetson.sh --purge
 
   Full notes: docs/COMPANION_APP.md
+
+  Jetson I2S + PulseAudio under autonomy load: nina/systemd/pulse/README.md
 
 EOF
 

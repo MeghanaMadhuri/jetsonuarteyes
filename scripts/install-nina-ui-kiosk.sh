@@ -163,6 +163,12 @@ Useful commands:
   # tweak env vars without editing the repo (e.g. NINA_NAV_INVERT_* or pin overrides)
   systemctl --user edit nina-ui-kiosk
 
+  # After git pull, re-run this script to refresh the unit from
+  # desktop/nina-ui-kiosk.service (e.g. new default env for the tablet API).
+
+  # Android companion: same process as the kiosk; use http://<jetson-ip>:8787
+  # (re-run this installer if the unit file in the repo was updated).
+
 To verify on the panel right now: the GUI should already be up,
 running fullscreen. Press F11 to toggle out of fullscreen, F10 to
 quit. The unit will auto-restart F10 quits so use 'systemctl --user

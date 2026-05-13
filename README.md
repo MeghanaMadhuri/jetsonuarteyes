@@ -1,32 +1,41 @@
-# Sirena Nina — Jetson robotics platform
+# Sirena Nina — Jetson + Raspberry Pi robotics platform
 
-Nina is a wheeled robot built on an **NVIDIA Jetson Orin Nano**: one
-SBC runs the GUI, vision, SLAM, autonomy, action playback **and**
-direct GPIO/PWM to the two **JYQD_V7.3E2** BLDC wheel drivers.
-
-**`pi_motor_bridge/`** on a **Raspberry Pi** remains in-tree for bench /
-bring-up of the same JYQD hardware with pigpio, but **Nina on the Jetson**
-always drives wheels from GPIO/PWM on the 40-pin header. New production
-wiring connects JYQD logic lines per
-`nina/controllers/navigation_manager.py` (`DEFAULT_PINS`) and
-`pi_motor_bridge/PINMAP.md` (signal names).
+Nina is a wheeled robot built on a two-board split: an **NVIDIA Jetson
+Orin Nano** runs the GUI, vision, SLAM, autonomy and action playback,
+and a **Raspberry Pi 4** is the dedicated motor controller for the
+two JYQD_V7.3E2 BLDC drivers. The boards talk over a 115 200 8N1
+serial link (40-pin UART crossover, or CP2102 / FT232 USB-to-TTL
+adapter).
 
 ## Documentation
 
-**[REQUIREMENTS.md](REQUIREMENTS.md)** — Hardware BOM, OS, Python deps, bring-up (Jetson-first).
+**[REQUIREMENTS.md](REQUIREMENTS.md)** — Single reference: hardware BOM, OS versions, Python deps, and the end-to-end bring-up checklist for fresh Jetson + Pi pair.
 
-Deeper references:
+**[docs/COMPANION_CONTROLS.md](docs/COMPANION_CONTROLS.md)** — Nina **Android companion** + Jetson **`nina-link`**: which HTTP controls need which env flags (`NINA_LINK_ENABLE_*`), auth, and troubleshooting when the tablet UI looks idle.
 
-- [`sirena_ui/docs/NINA_APP.md`](sirena_ui/docs/NINA_APP.md) — PyQt cockpit (screens, env vars, tunables).
-- [`pi_motor_bridge/PINMAP.md`](pi_motor_bridge/PINMAP.md) — JYQD ↔ header table (BCM labels; match Jetson `DEFAULT_PINS`).
-- [`pi_motor_bridge/README.md`](pi_motor_bridge/README.md) — **Legacy** Pi motor daemon (pigpio, UART, systemd).
+**[docs/COMPANION_APP.md](docs/COMPANION_APP.md)** — Tablet app + Jetson gateway install paths, updates, and parity notes.
+
+### Android companion + Jetson gateway (one shot)
+
+On the **Jetson**, from the repo root (after clone), run either:
+
+- `./scripts/jetson-tablet-setup.sh` — recommended wrapper, or  
+- `./scripts/install-sirena-companion-jetson.sh` — same chain: **nina-link** (venv, systemd), **HTTP bridge drop-in**, optional UFW **8787/tcp**; add `--with-sirena-headless` for vision / SLAM–class pip deps in `.venv-link`.
+
+Then build or sideload the app from **`android/`** (see [`android/README.md`](android/README.md)) and point **Setup** at the daemon URL (default hotspot-style `http://10.42.0.1:8787` when applicable). Recent companion and `/v1/robot/capabilities` behavior are summarized in **COMPANION_APP.md** § *Companion app + gateway updates*.
+
+Deeper references for each subsystem:
+
+- [`sirena_ui/docs/NINA_APP.md`](sirena_ui/docs/NINA_APP.md) — full feature reference for the PyQt5 cockpit (every screen, every env var, every tunable).
+- [`pi_motor_bridge/README.md`](pi_motor_bridge/README.md) — Raspberry Pi bring-up walkthrough (Bookworm, pigpio, UART, every pothole).
+- [`pi_motor_bridge/PINMAP.md`](pi_motor_bridge/PINMAP.md) — JYQD ↔ Pi GPIO wiring table.
 
 ## Quick layout
 
 ```
 ├── sirena_ui/         PyQt5 cockpit (Home, Drive, Vision, Map, Actions, Settings, Health)
 ├── nina/              Backend: navigation, sensors, SLAM, autonomy, action runner
-├── pi_motor_bridge/   Optional: legacy Pi motor daemon + wiring tables for JYQDs
+├── pi_motor_bridge/   Pi-side serial daemon that owns the JYQDs
 ├── desktop/           Systemd user units + .desktop launcher templates
 ├── scripts/           Installers (kiosk autostart, FTDI udev, desktop icon)
 ├── tests/             Hardware-free pytest suite (mocks pigpio + serial)
@@ -35,8 +44,8 @@ Deeper references:
 
 ## Quick start
 
-For bring-up from boxes to **Drive** on the panel, follow
-**[REQUIREMENTS.md](REQUIREMENTS.md)** §5 (Jetson GPIO motors).
+For an end-to-end bring-up on fresh Jetson + Pi pair, follow the
+checklist in **[REQUIREMENTS.md](REQUIREMENTS.md)** §5.
 
 If both boards are already set up and you just want to run the GUI:
 

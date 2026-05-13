@@ -19,3 +19,5 @@ rich>=12
 ultralytics>=8.0.0
 
 # Optional web UI: pip install -r requirements-ui.txt
+#
+# Jetson kiosk + Android tablet companion (single install list): see requirements-app.txt

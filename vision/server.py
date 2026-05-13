@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,23 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("carbot.vision.server")
+
+
+def _apply_tcp_stability_opts(sock: socket.socket) -> None:
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    if sys.platform.startswith("linux"):
+        try:
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
+        except OSError:
+            pass
 
 
 class VisionServer:
@@ -168,6 +186,7 @@ class VisionServer:
             while not self._shutdown.is_set():
                 try:
                     client, addr = srv.accept()
+                    _apply_tcp_stability_opts(client)
                     log.info("Connection from %s", addr)
                     t = threading.Thread(
                         target=self.handle_client, args=(client,), daemon=True

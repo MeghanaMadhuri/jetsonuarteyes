@@ -1,7 +1,9 @@
 package com.sirena.nina.companion
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
+import android.net.wifi.WifiManager
 import androidx.lifecycle.AndroidViewModel
 import kotlin.jvm.Volatile
 import androidx.lifecycle.viewModelScope
@@ -10,6 +12,7 @@ import com.sirena.nina.companion.data.LinkClient
 import com.sirena.nina.companion.data.SlamOccupancyGrid
 import com.sirena.nina.companion.data.jsonCleanString
 import com.sirena.nina.companion.data.Prefs
+import com.sirena.nina.companion.network.BonjourJetsonFinder
 import com.sirena.nina.companion.network.DaemonUrlResolver
 import com.sirena.nina.companion.network.LanDaemonScanner
 import com.sirena.nina.companion.util.NinaLog
@@ -17,12 +20,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -39,6 +45,10 @@ data class StatusUi(
     val activeStaProfile: String?,
     /** Jetson has issued a session token (fleet / pairing). */
     val paired: Boolean,
+    val systemId: String?,
+    val hostname: String?,
+    /** Jetson-configured friendly label (`NINA_LINK_ROBOT_NAME` / ``display_name`` in JSON). */
+    val displayName: String?,
 )
 
 data class SavedNetUi(
@@ -46,6 +56,27 @@ data class SavedNetUi(
     val uuid: String,
     val ssid: String,
     val nmAutoconnect: Boolean,
+    /** ``ap`` for hotspot / Nina-AP style profiles, ``infrastructure`` for home STA. */
+    val wifiMode: String = "infrastructure",
+)
+
+data class DiscoveredDaemonUi(
+    val baseUrl: String,
+    val systemId: String?,
+    val hostname: String?,
+    val displayName: String?,
+)
+
+data class DiscoveryDiagnosticsUi(
+    val isScanning: Boolean = false,
+    val deviceIpv4: String? = null,
+    val subnetPrefix: String? = null,
+    val hostCount: Int = 0,
+    val probeAttempts: Int = 0,
+    val successfulHosts: Int = 0,
+    val failedProbes: Int = 0,
+    val durationMs: Long? = null,
+    val lastError: String? = null,
 )
 
 /** Fast HTTP liveness to saved daemon URL (independent of full status refresh). */
@@ -60,6 +91,9 @@ data class ActionRowUi(
     val file: String?,
     val audio: String?,
     val audioOffsetSec: Double?,
+    /** From motion JSON when ``duration_sec`` / ``frame_count`` are present on the link response. */
+    val durationSec: Double?,
+    val frameCount: Int?,
 )
 
 sealed interface CompanionUiState {
@@ -69,6 +103,8 @@ sealed interface CompanionUiState {
 }
 
 class CompanionViewModel(app: Application) : AndroidViewModel(app) {
+
+    private fun vmD(msg: String) = NinaLog.debug("CompanionVM", msg)
 
     private val prefs = Prefs(app)
     private val client = LinkClient()
@@ -85,6 +121,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** Persisted daemon URL (normalized). */
     val savedDaemonUrl: Flow<String> = prefs.baseUrl
 
+    /** Optional bearer for protected link routes (MJPEG streams may use this header when enabled). */
+    val bearerToken: Flow<String?> = prefs.bearerToken
+
     private val _gatewayHint = MutableStateFlow<String?>(null)
     val gatewayHint: StateFlow<String?> = _gatewayHint.asStateFlow()
 
@@ -94,15 +133,33 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private val _manifestActionsError = MutableStateFlow<String?>(null)
     val manifestActionsError: StateFlow<String?> = _manifestActionsError.asStateFlow()
 
+    /** Short-lived hint after ``POST /v1/actions/play`` (HTTP has no completion callback). */
+    private val _actionPlaybackStatus = MutableStateFlow<String?>(null)
+    val actionPlaybackStatus: StateFlow<String?> = _actionPlaybackStatus.asStateFlow()
+
+    @Volatile
+    private var playbackHintJob: Job? = null
+
     private val _state = MutableStateFlow<CompanionUiState>(CompanionUiState.Loading)
     val state: StateFlow<CompanionUiState> = _state.asStateFlow()
 
     private val _jetsonLink = MutableStateFlow(JetsonLinkState())
     val jetsonLink: StateFlow<JetsonLinkState> = _jetsonLink.asStateFlow()
 
+    /** Latest ``GET /v1/robot/capabilities`` (bridges, drive defaults). Cleared when status refresh fails. */
+    private val _robotCapabilities = MutableStateFlow<JSONObject?>(null)
+    val robotCapabilities: StateFlow<JSONObject?> = _robotCapabilities.asStateFlow()
+    private val _discoveredDaemons = MutableStateFlow<List<DiscoveredDaemonUi>>(emptyList())
+    val discoveredDaemons: StateFlow<List<DiscoveredDaemonUi>> = _discoveredDaemons.asStateFlow()
+    private val _discoveryDiagnostics = MutableStateFlow(DiscoveryDiagnosticsUi())
+    val discoveryDiagnostics: StateFlow<DiscoveryDiagnosticsUi> = _discoveryDiagnostics.asStateFlow()
+
     init {
+        vmD("init CompanionViewModel")
         refreshStatus()
         viewModelScope.launch {
+            var failStreak = 0
+            var wasOnline = false
             while (isActive) {
                 val url =
                     try {
@@ -111,37 +168,101 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         ""
                     }
                 if (url.isBlank()) {
+                    if (wasOnline) vmD("jetsonLinkPoll urlBlank -> offline")
+                    wasOnline = false
                     _jetsonLink.value = JetsonLinkState(false, null)
+                    failStreak = 0
                     delay(3000)
                     continue
                 }
                 try {
                     client.health(url)
+                    if (!wasOnline) {
+                        vmD("jetsonLinkPoll online host=${Uri.parse(url).host ?: url}")
+                    }
+                    wasOnline = true
                     _jetsonLink.value = JetsonLinkState(true, null)
+                    failStreak = 0
+                    delay(2500)
                 } catch (e: Exception) {
+                    failStreak++
                     val msg = e.message?.trim()?.take(120)
+                    if (wasOnline || failStreak == 1 || failStreak % 5 == 0) {
+                        vmD("jetsonLinkPoll fail streak=$failStreak err=${msg ?: e.javaClass.simpleName}")
+                    }
+                    wasOnline = false
                     _jetsonLink.value = JetsonLinkState(false, msg)
+                    val backoffMs = (2000L * failStreak).coerceAtMost(25_000L)
+                    delay(backoffMs)
                 }
-                delay(2500)
             }
+        }
+    }
+
+    /**
+     * Leave full-screen [CompanionUiState.Error] while keeping navigation usable.
+     * Restores [CompanionUiState.Ready] with no status snapshot until the next successful refresh.
+     */
+    fun dismissErrorToDegradedReady() {
+        viewModelScope.launch {
+            vmD("dismissErrorToDegradedReady state=${_state.value::class.simpleName}")
+            if (_state.value !is CompanionUiState.Error) return@launch
+            val url = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
+            vmD("dismissErrorToDegradedReady -> Ready urlHost=${Uri.parse(url).host}")
+            _state.value =
+                CompanionUiState.Ready(
+                    url = url,
+                    status = null,
+                    message =
+                        "Last status refresh failed. Use Find robot or Network, then tap Refresh status.",
+                )
         }
     }
 
     fun refreshStatus() {
         viewModelScope.launch {
+            vmD("refreshStatus start")
             try {
-                val (url, statusUi) = resolveAndFetchStatus()
+                val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
+                if (savedNorm.isBlank()) {
+                    val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
+                    val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
+                    _gatewayHint.value = buildDiscoveryHint(myIp, gw)
+                    _state.value = CompanionUiState.Ready(url = "", status = null, message = null)
+                    _robotCapabilities.value = null
+                    _manifestActions.value = emptyList()
+                    vmD("refreshStatus no saved URL — idle Ready")
+                    return@launch
+                }
+                val (url, statusUi) = fetchStatusForSavedUrl(savedNorm)
                 val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
                 val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
                 _gatewayHint.value = buildDiscoveryHint(myIp, gw)
                 _state.value = CompanionUiState.Ready(url, statusUi, null)
+                vmD(
+                    "refreshStatus Ready host=${statusUi.hostname} role=${statusUi.wifiRole} ipv4=${statusUi.ipv4}",
+                )
+                try {
+                    _robotCapabilities.value = client.capabilities(url)
+                    vmD(
+                        "refreshStatus capabilities keyCount=${_robotCapabilities.value?.length() ?: 0}",
+                    )
+                } catch (_: Exception) {
+                    _robotCapabilities.value = null
+                    vmD("refreshStatus capabilities fetch failed (ignored)")
+                }
+                refreshManifestActions()
             } catch (e: LinkApiException) {
                 NinaLog.warn("refreshStatus", friendlyHttp(e))
+                vmD("refreshStatus LinkApiException code=${e.code}")
+                _robotCapabilities.value = null
                 _state.update {
                     CompanionUiState.Error(friendlyHttp(e))
                 }
             } catch (e: Exception) {
                 NinaLog.warn("refreshStatus", e.message ?: "unknown")
+                vmD("refreshStatus Exception ${e.javaClass.simpleName}")
+                _robotCapabilities.value = null
                 _state.value = CompanionUiState.Error(
                     e.message ?: "Could not reach Nina Link daemon. Check Wi‑Fi.",
                 )
@@ -149,107 +270,25 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * Try several URLs: hotspot gateway first when it looks like an NM AP, then saved prefs,
-     * then common Jetson defaults — avoids using the tablet's own IP by mistake.
-     */
-    private suspend fun resolveAndFetchStatus(): Pair<String, StatusUi> {
+    /** Health + status for the persisted daemon URL only (never writes prefs). */
+    private suspend fun fetchStatusForSavedUrl(savedNorm: String): Pair<String, StatusUi> {
         val bearer = prefs.bearerToken.first()
-        val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
-        val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
-        val homeLan = DaemonUrlResolver.isTypicalHomeLanClient(myIp)
-        var lastError: Exception? = null
-        val tried = mutableSetOf<String>()
-
-        suspend fun attempt(url: String): Pair<String, StatusUi>? {
-            try {
-                assertUrlNotTabletOwnIp(url)
-                client.health(url)
-                val st = client.status(url, bearer)
-                prefs.setBaseUrl(url)
-                return url to parseStatus(st)
-            } catch (e: IllegalArgumentException) {
-                lastError = e
-                return null
-            } catch (e: Exception) {
-                lastError = e
-                return null
-            }
-        }
-
-        suspend fun tryNormalized(raw: String): Pair<String, StatusUi>? {
-            val n = Prefs.normalizeBaseUrl(raw)
-            if (n in tried) return null
-            tried.add(n)
-            return attempt(n)
-        }
-
-        for (raw in buildCandidateUrls(savedNorm)) {
-            tryNormalized(raw)?.let { return it }
-        }
-
-        // Same Wi‑Fi as the Jetson but saved URL / gateway guesses failed — scan the /24 for :8787.
-        if (homeLan) {
-            for (base in LanDaemonScanner.scanIpv4Subnet(myIp)) {
-                tryNormalized(base)?.let { return it }
-            }
-        }
-
-        throw lastError ?: IllegalStateException("Could not reach Nina Link.")
+        vmD("fetchStatusForSavedUrl host=${Uri.parse(savedNorm).host}")
+        assertUrlNotTabletOwnIp(savedNorm)
+        client.health(savedNorm)
+        val st = client.status(savedNorm, bearer)
+        return savedNorm to parseStatus(st)
     }
 
     private fun buildDiscoveryHint(myIp: String?, gw: String?): String {
         return when {
             DaemonUrlResolver.isTypicalHomeLanClient(myIp) ->
-                "Home Wi‑Fi: the router (${gw ?: "gateway"}) is not the robot. " +
-                    "This app tries your saved URL first, then scans this subnet for port 8787. " +
-                    "You can still set the Jetson address manually under Setup."
+                "Home Wi‑Fi: use Find robot or the radar on the product screen to scan, then tap Connect on a system."
             gw != null ->
-                "Jetson AP gateway (if any): http://$gw:8787 — home routers are never used as the daemon host."
+                "Jetson AP gateway (if any): http://$gw:8787 — home routers are not the daemon host."
             else ->
-                "Open Setup and enter the Jetson link-daemon URL if discovery fails."
+                "Set the Jetson link-daemon URL after discovery, or enter it in Network / Settings."
         }
-    }
-
-    /**
-     * Fast candidates only — no full-subnet scan (scan runs in [resolveAndFetchStatus] on failure).
-     * Never treats the home LAN default gateway as the Jetson (that caused connects to e.g. 192.168.1.1).
-     */
-    private fun buildCandidateUrls(savedNorm: String): List<String> {
-        val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
-        val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
-        val hotspot = DaemonUrlResolver.isNinaHotspotClient(myIp)
-
-        val candidates = mutableListOf<String>()
-
-        fun offer(raw: String) {
-            val n = Prefs.normalizeBaseUrl(raw)
-            val host = Uri.parse(n).host ?: return
-            if (host.equals(myIp, ignoreCase = true)) return
-            if (n !in candidates) candidates.add(n)
-        }
-
-        offer(savedNorm)
-
-        // Only Nina hotspot / USB-tether gateways host nina-link — never a typical home router.
-        if (gw != null &&
-            DaemonUrlResolver.isLikelyJetsonApGateway(gw) &&
-            !gw.equals(myIp, ignoreCase = true)
-        ) {
-            offer("http://$gw:8787")
-        }
-
-        DaemonUrlResolver.heuristicGatewayForDeviceIp(myIp)?.let { offer("http://$it:8787") }
-
-        if (hotspot) {
-            offer("http://10.42.0.1:8787")
-            offer("http://192.168.4.1:8787")
-        } else {
-            if (myIp?.startsWith("10.42.") == true) offer("http://10.42.0.1:8787")
-            if (myIp?.startsWith("192.168.4.") == true) offer("http://192.168.4.1:8787")
-        }
-
-        return candidates
     }
 
     private fun assertUrlNotTabletOwnIp(url: String) {
@@ -266,14 +305,17 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun ping(urlOverride: String? = null) {
         viewModelScope.launch {
+            vmD("ping override=${urlOverride != null}")
             try {
                 val raw = urlOverride?.trim() ?: prefs.baseUrl.first()
                 val url = Prefs.normalizeBaseUrl(raw)
                 assertUrlNotTabletOwnIp(url)
                 client.health(url)
                 prefs.setBaseUrl(url)
+                vmD("ping ok host=${Uri.parse(url).host}")
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("ping fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Ping failed")
             }
         }
@@ -281,20 +323,52 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveBaseUrl(url: String) {
         viewModelScope.launch {
+            vmD("saveBaseUrl host=${Uri.parse(Prefs.normalizeBaseUrl(url)).host}")
             try {
                 assertUrlNotTabletOwnIp(Prefs.normalizeBaseUrl(url))
                 prefs.setBaseUrl(url)
                 refreshStatus()
             } catch (e: IllegalArgumentException) {
+                vmD("saveBaseUrl invalid ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Invalid URL")
             } catch (e: Exception) {
+                vmD("saveBaseUrl fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Save failed")
             }
         }
     }
 
+    /**
+     * Persists [url] and loads status without switching to full-screen [CompanionUiState.Error]
+     * (for discovery sheet / product hub). Returns null on success, or a short error message.
+     */
+    suspend fun connectDiscoveredAndRefresh(url: String): String? {
+        return try {
+            val norm = Prefs.normalizeBaseUrl(url)
+            assertUrlNotTabletOwnIp(norm)
+            prefs.setBaseUrl(norm)
+            val (finalUrl, statusUi) = fetchStatusForSavedUrl(norm)
+            val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
+            val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
+            _gatewayHint.value = buildDiscoveryHint(myIp, gw)
+            _state.value = CompanionUiState.Ready(finalUrl, statusUi, null)
+            try {
+                _robotCapabilities.value = client.capabilities(finalUrl)
+            } catch (_: Exception) {
+                _robotCapabilities.value = null
+            }
+            refreshManifestActions()
+            null
+        } catch (e: IllegalArgumentException) {
+            e.message ?: "Invalid address"
+        } catch (e: Exception) {
+            e.message ?: "Could not connect"
+        }
+    }
+
     fun saveBearer(token: String?) {
         viewModelScope.launch {
+            vmD("saveBearer hasToken=${!token.isNullOrBlank()}")
             prefs.setBearerToken(token)
             refreshStatus()
         }
@@ -302,12 +376,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMode(mode: String) {
         viewModelScope.launch {
+            vmD("setMode mode=$mode")
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.setMode(url, bearer, mode)
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("setMode fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Mode failed")
             }
         }
@@ -315,6 +391,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveHomeAndOptionallyConnect(ssid: String, password: String, connect: Boolean) {
         viewModelScope.launch {
+            vmD("saveHomeWifi ssid=$ssid connect=$connect pwdLen=${password.length}")
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
@@ -324,6 +401,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("saveHomeWifi fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Save Wi‑Fi failed")
             }
         }
@@ -331,12 +409,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connectJetsonHome(ssid: String?) {
         viewModelScope.launch {
+            vmD("connectJetsonHome ssid=$ssid")
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.connectHome(url, bearer, ssid)
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("connectJetsonHome fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Connect failed — check password on Jetson.")
             }
         }
@@ -344,12 +424,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startApOnJetson() {
         viewModelScope.launch {
+            vmD("startApOnJetson")
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.startAp(url, bearer)
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("startApOnJetson fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Could not start AP on Jetson")
             }
         }
@@ -357,41 +439,55 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteProfile(profileId: String) {
         viewModelScope.launch {
+            vmD("deleteProfile id=$profileId")
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.deleteSaved(url, bearer, profileId)
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("deleteProfile fail ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Delete failed")
             }
         }
     }
 
-    fun pair(pin: String, onToken: (String) -> Unit) {
+    fun pair(
+        pin: String,
+        onToken: (String) -> Unit,
+        onNoToken: () -> Unit = {},
+    ) {
         viewModelScope.launch {
+            vmD("pair start pinLen=${pin.length} (pin not logged)")
             try {
                 val url = prefs.baseUrl.first()
                 val body = client.pair(url, pin)
                 val token = body.optString("token", "")
                 if (token.isNotBlank()) {
+                    vmD("pair tokenReceived len=${token.length}")
                     prefs.setBearerToken(token)
                     onToken(token)
+                } else {
+                    vmD("pair noTokenInResponse")
+                    onNoToken()
                 }
                 refreshStatus()
             } catch (e: Exception) {
+                vmD("pair exception ${e.message}")
                 _state.value = CompanionUiState.Error(e.message ?: "Pairing failed")
             }
         }
     }
 
     suspend fun loadRobotCapabilities(): JSONObject {
+        vmD("loadRobotCapabilities")
         val url = prefs.baseUrl.first()
         return client.capabilities(url)
     }
 
     fun refreshManifestActions() {
         viewModelScope.launch {
+            vmD("refreshManifestActions")
             NinaLog.api("GET", "/v1/actions")
             try {
                 val url = prefs.baseUrl.first()
@@ -406,12 +502,26 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                             o.isNull("audio_offset") -> null
                             else -> o.optDouble("audio_offset").takeUnless { it.isNaN() }
                         }
+                    val dur =
+                        when {
+                            !o.has("duration_sec") -> null
+                            o.isNull("duration_sec") -> null
+                            else -> o.optDouble("duration_sec").takeUnless { it.isNaN() }
+                        }
+                    val fc =
+                        when {
+                            !o.has("frame_count") -> null
+                            o.isNull("frame_count") -> null
+                            else -> o.optInt("frame_count").takeIf { it >= 0 }
+                        }
                     list.add(
                         ActionRowUi(
                             name = o.optString("name"),
                             file = o.optString("file").takeIf { it.isNotBlank() },
                             audio = o.optString("audio").takeIf { it.isNotBlank() },
                             audioOffsetSec = off,
+                            durationSec = dur,
+                            frameCount = fc,
                         ),
                     )
                 }
@@ -428,6 +538,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playManifestAction(name: String) {
         NinaLog.tap("Actions", "play_motion", name)
+        playbackHintJob?.cancel()
         viewModelScope.launch {
             try {
                 val url = prefs.baseUrl.first()
@@ -435,8 +546,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 NinaLog.api("POST", "/v1/actions/play action=$name")
                 client.playAction(url, bearer, name)
                 _manifestActionsError.value = null
+                _actionPlaybackStatus.value = "Playing '$name'…"
+                playbackHintJob =
+                    launch {
+                        delay(55_000)
+                        _actionPlaybackStatus.value = null
+                    }
             } catch (e: Exception) {
                 NinaLog.warn("play_action", e.message ?: "failed")
+                _actionPlaybackStatus.value = null
                 _manifestActionsError.value = e.message ?: "Play failed"
             }
         }
@@ -483,6 +601,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestJetsonShutdown(onResult: (String?) -> Unit) {
         NinaLog.tap("System", "jetson_poweroff", "")
+        vmD("requestJetsonShutdown")
         viewModelScope.launch {
             try {
                 val url = prefs.baseUrl.first()
@@ -491,6 +610,21 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(null)
             } catch (e: Exception) {
                 onResult(e.message ?: "Poweroff request failed")
+            }
+        }
+    }
+
+    fun requestJetsonReboot(onResult: (String?) -> Unit) {
+        NinaLog.tap("System", "jetson_reboot", "")
+        vmD("requestJetsonReboot")
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.systemReboot(url, bearer)
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message ?: "Reboot request failed")
             }
         }
     }
@@ -507,6 +641,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         o.optString("uuid"),
                         o.optCleanString("ssid") ?: "",
                         nmAutoconnect = o.optBoolean("autoconnect", false),
+                        wifiMode =
+                            o.optString("wifi_mode").trim().lowercase().takeIf { it.isNotEmpty() }
+                                ?: "infrastructure",
                     ),
                 )
             }
@@ -523,11 +660,104 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             activeStaSsid = j.optCleanString("active_sta_ssid"),
             activeStaProfile = j.optCleanString("active_sta_profile"),
             paired = j.optBoolean("paired"),
+            systemId = j.optCleanString("system_id"),
+            hostname = j.optCleanString("hostname"),
+            displayName = j.optCleanString("display_name"),
         )
+    }
+
+    fun scanForDaemons() {
+        viewModelScope.launch {
+            vmD("scanForDaemons start")
+            val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
+            _discoveryDiagnostics.value = _discoveryDiagnostics.value.copy(isScanning = true, lastError = null)
+            @Suppress("DEPRECATION")
+            val mlock =
+                try {
+                    (appCtx.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
+                        ?.createMulticastLock("nina-companion-mdns")
+                        ?.apply {
+                            setReferenceCounted(false)
+                            acquire()
+                        }
+                } catch (_: Exception) {
+                    null
+                }
+            val mdnsUrls =
+                try {
+                    BonjourJetsonFinder.discoverBaseUrls(appCtx, 3600L)
+                } catch (e: Exception) {
+                    NinaLog.warn("scanForDaemons", "mDNS: ${e.message}")
+                    emptyList()
+                } finally {
+                    try {
+                        if (mlock?.isHeld == true) mlock.release()
+                    } catch (_: Exception) {
+                    }
+                }
+            val fromMdns =
+                withContext(Dispatchers.IO) {
+                    val out = mutableListOf<LanDaemonScanner.DiscoveredDaemon>()
+                    for (raw in mdnsUrls) {
+                        val base = raw.trimEnd('/')
+                        try {
+                            val j = client.health(base)
+                            out.add(
+                                LanDaemonScanner.DiscoveredDaemon(
+                                    baseUrl = base,
+                                    systemId = j.optString("system_id").trim().takeIf { it.isNotEmpty() },
+                                    hostname = j.optString("hostname").trim().takeIf { it.isNotEmpty() },
+                                    displayName = j.optString("display_name").trim().takeIf { it.isNotEmpty() },
+                                ),
+                            )
+                        } catch (_: Exception) {
+                        }
+                    }
+                    out
+                }
+            val report = LanDaemonScanner.scanIpv4SubnetWithReport(myIp)
+            val merged =
+                (fromMdns + report.discovered)
+                    .groupBy { it.baseUrl.lowercase() }
+                    .map { (_, list) ->
+                        val first = list.first()
+                        LanDaemonScanner.DiscoveredDaemon(
+                            baseUrl = first.baseUrl,
+                            displayName = list.mapNotNull { it.displayName }.firstOrNull(),
+                            systemId = list.mapNotNull { it.systemId }.firstOrNull(),
+                            hostname = list.mapNotNull { it.hostname }.firstOrNull(),
+                        )
+                    }
+                    .sortedBy { it.baseUrl.lowercase() }
+            val rows =
+                merged.map {
+                    DiscoveredDaemonUi(
+                        baseUrl = it.baseUrl,
+                        systemId = it.systemId,
+                        hostname = it.hostname,
+                        displayName = it.displayName,
+                    )
+                }
+            _discoveredDaemons.value = rows
+            _discoveryDiagnostics.value =
+                DiscoveryDiagnosticsUi(
+                    isScanning = false,
+                    deviceIpv4 = report.deviceIpv4,
+                    subnetPrefix = report.subnetPrefix,
+                    hostCount = report.hostCount,
+                    probeAttempts = report.probeAttempts + mdnsUrls.size,
+                    successfulHosts = merged.size,
+                    failedProbes = report.failedProbes,
+                    durationMs = report.durationMs,
+                    lastError = report.error,
+                )
+            vmD("scanForDaemons done count=${rows.size} mdns=${mdnsUrls.size}")
+        }
     }
 
     suspend fun fetchRecordStatus(): JSONObject? =
         try {
+            vmD("fetchRecordStatus")
             val url = prefs.baseUrl.first()
             client.recordStatus(url)
         } catch (_: Exception) {
@@ -542,6 +772,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         holdAfter: Boolean = false,
         register: Boolean = true,
     ): String? {
+        vmD("startRemoteRecord name=$name sec=$seconds hz=$hz")
         return try {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
@@ -554,13 +785,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
         } catch (e: LinkApiException) {
+            vmD("startRemoteRecord LinkApi ${e.code}")
             normalizeRemoteError(e)
         } catch (e: Exception) {
+            vmD("startRemoteRecord fail ${e.message}")
             normalizeRemoteError(e)
         }
     }
 
     suspend fun stopRemoteRecord(): String? {
+        vmD("stopRemoteRecord")
         return try {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
@@ -583,13 +817,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         deleteAudio: Boolean = false,
     ): String? =
         try {
+            vmD("deleteManifestAction name=$actionName rec=$deleteRecording audio=$deleteAudio")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.deleteManifestAction(url, bearer, actionName, deleteRecording, deleteAudio)
             null
         } catch (e: LinkApiException) {
+            vmD("deleteManifestAction LinkApi ${e.code}")
             normalizeRemoteError(e)
         } catch (e: Exception) {
+            vmD("deleteManifestAction ${e.message}")
             normalizeRemoteError(e)
         }
 
@@ -608,6 +845,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchDaemonHealth(): JSONObject? =
         try {
+            vmD("fetchDaemonHealth")
             val url = prefs.baseUrl.first()
             client.health(url)
         } catch (_: Exception) {
@@ -616,6 +854,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchActionAudioInfo(action: String): JSONObject? =
         try {
+            vmD("fetchActionAudioInfo action=$action")
             val url = prefs.baseUrl.first()
             client.actionAudioInfo(url, action)
         } catch (_: Exception) {
@@ -624,6 +863,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun postActionAudioOffset(action: String, audioOffsetSec: Double): String? =
         try {
+            vmD("postActionAudioOffset action=$action off=$audioOffsetSec")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioOffset(url, bearer, action, audioOffsetSec)
@@ -634,9 +874,21 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun postActionAudioClear(action: String): String? =
         try {
+            vmD("postActionAudioClear action=$action")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioClear(url, bearer, action)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    suspend fun postActionAudioPreview(action: String): String? =
+        try {
+            vmD("postActionAudioPreview action=$action")
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionAudioPreview(url, bearer, action)
             null
         } catch (e: Exception) {
             e.message
@@ -651,6 +903,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         slow: Boolean = false,
     ): String? =
         try {
+            vmD("postActionAudioGenerate action=$action lang=$lang textLen=${text.length}")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioGenerate(url, bearer, action, text, lang, tld, audioOffsetSec, slow)
@@ -661,6 +914,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchVisionStatus(): JSONObject? =
         try {
+            vmD("fetchVisionStatus")
             val url = prefs.baseUrl.first()
             client.visionStatus(url)
         } catch (_: Exception) {
@@ -674,6 +928,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         objectConfidence: Double? = null,
     ): JSONObject? =
         try {
+            vmD("postVisionOptionsSync face=$face objects=$objects conf=$objectConfidence")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.visionOptions(url, bearer, face, objects, objectConfidence)
@@ -686,6 +941,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun visionOpen(): String? =
         try {
+            vmD("visionOpen")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.visionOpen(url, bearer)
@@ -696,6 +952,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun visionStop(): String? =
         try {
+            vmD("visionStop")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.visionStop(url, bearer)
@@ -707,6 +964,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** Start face enrollment; second value is a human-readable network/auth error when present. */
     suspend fun visionEnroll(name: String, targetSamples: Int = 8): Pair<JSONObject?, String?> =
         try {
+            vmD("visionEnroll name=$name samples=$targetSamples")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             Pair(client.visionEnroll(url, bearer, name, targetSamples), null)
@@ -718,6 +976,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchVisionEnrollStatus(): JSONObject? =
         try {
+            vmD("fetchVisionEnrollStatus")
             val url = prefs.baseUrl.first()
             client.visionEnrollStatus(url)
         } catch (_: Exception) {
@@ -726,6 +985,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun visionAnnounceObjects(): JSONObject? =
         try {
+            vmD("visionAnnounceObjects")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.visionAnnounce(url, bearer)
@@ -735,6 +995,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchVisionAnnounceStatus(): JSONObject? =
         try {
+            vmD("fetchVisionAnnounceStatus")
             val url = prefs.baseUrl.first()
             client.visionAnnounceStatus(url)
         } catch (_: Exception) {
@@ -743,14 +1004,69 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchVisionDetections(): JSONObject? =
         try {
+            vmD("fetchVisionDetections")
             val url = prefs.baseUrl.first()
             client.visionDetections(url)
         } catch (_: Exception) {
             null
         }
 
+    suspend fun fetchVisionFaces(): JSONObject? =
+        try {
+            vmD("fetchVisionFaces")
+            val url = prefs.baseUrl.first()
+            client.visionFaces(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun visionFollowStart(target: String): JSONObject? =
+        try {
+            vmD("visionFollowStart target=$target")
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionFollowStart(url, bearer, target)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            NinaLog.warn("vision_follow_start", e.message ?: "failed")
+            null
+        }
+
+    suspend fun visionFollowStop(): JSONObject? =
+        try {
+            vmD("visionFollowStop")
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionFollowStop(url, bearer)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            NinaLog.warn("vision_follow_stop", e.message ?: "failed")
+            null
+        }
+
+    suspend fun fetchVisionFollowStatus(): JSONObject? =
+        try {
+            vmD("fetchVisionFollowStatus")
+            val url = prefs.baseUrl.first()
+            client.visionFollowStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchVisionSnapshotJpeg(): ByteArray? =
+        try {
+            vmD("fetchVisionSnapshotJpeg")
+            val url = prefs.baseUrl.first()
+            client.visionSnapshotJpeg(url)
+        } catch (_: Exception) {
+            null
+        }
+
     suspend fun fetchSlamStatus(): JSONObject? =
         try {
+            vmD("fetchSlamStatus")
             val url = prefs.baseUrl.first()
             client.slamStatus(url)
         } catch (_: Exception) {
@@ -759,6 +1075,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchSlamSnapshot(): JSONObject? =
         try {
+            vmD("fetchSlamSnapshot")
             val url = prefs.baseUrl.first()
             client.slamSnapshot(url)
         } catch (_: Exception) {
@@ -767,6 +1084,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchSlamOccupancyGrid(): SlamOccupancyGrid? =
         try {
+            vmD("fetchSlamOccupancyGrid")
             val url = prefs.baseUrl.first()
             client.slamOccupancyGrid(url)
         } catch (_: Exception) {
@@ -775,6 +1093,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchRobotHealth(): JSONObject? =
         try {
+            vmD("fetchRobotHealth")
             val url = prefs.baseUrl.first()
             client.robotHealth(url)
         } catch (_: Exception) {
@@ -783,6 +1102,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun saveSlamMapPgm(filename: String): JSONObject? =
         try {
+            vmD("saveSlamMapPgm file=$filename")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.slamSave(url, bearer, filename)
@@ -792,8 +1112,34 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    suspend fun postSlamRunning(running: Boolean): JSONObject? =
+        try {
+            vmD("postSlamRunning running=$running")
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.slamSetRunning(url, bearer, running)
+        } catch (e: LinkApiException) {
+            JSONObject().put("ok", false).put("detail", e.message ?: "HTTP ${e.code}")
+        } catch (_: Exception) {
+            null
+        }
+
+    /** POST /v1/slam/clear — same reset as Qt Map screen Clear (SLAM stop/start; autonomy off if was on). */
+    suspend fun postSlamClear(): JSONObject? =
+        try {
+            vmD("postSlamClear")
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.slamClear(url, bearer)
+        } catch (e: LinkApiException) {
+            JSONObject().put("ok", false).put("detail", e.message ?: "HTTP ${e.code}")
+        } catch (_: Exception) {
+            null
+        }
+
     suspend fun fetchDepthStatus(): JSONObject? =
         try {
+            vmD("fetchDepthStatus")
             val url = prefs.baseUrl.first()
             client.depthStatus(url)
         } catch (_: Exception) {
@@ -802,6 +1148,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun fetchAutonomyStatus(): JSONObject? =
         try {
+            vmD("fetchAutonomyStatus")
             val url = prefs.baseUrl.first()
             client.autonomyStatus(url)
         } catch (_: Exception) {
@@ -810,6 +1157,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun postAutonomyEnabled(enabled: Boolean): JSONObject? =
         try {
+            vmD("postAutonomyEnabled enabled=$enabled")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.setAutonomyEnabled(url, bearer, enabled)
@@ -820,6 +1168,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** POST /v1/autonomy/goal — arm goto with the given world-mm coordinates. */
     suspend fun postAutonomyGoal(xMm: Double, yMm: Double): JSONObject? =
         try {
+            vmD("postAutonomyGoal x=$xMm y=$yMm")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.setAutonomyGoal(url, bearer, xMm, yMm)
@@ -830,6 +1179,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** DELETE /v1/autonomy/goal — cancel an in-flight goto. */
     suspend fun deleteAutonomyGoal(): JSONObject? =
         try {
+            vmD("deleteAutonomyGoal")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.clearAutonomyGoal(url, bearer)
@@ -838,33 +1188,40 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun sessionClaim(onResult: (String?) -> Unit) {
+        vmD("sessionClaim")
         viewModelScope.launch {
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.sessionClaim(url, bearer)
                 robotConsoleSessionActive = true
+                vmD("sessionClaim ok")
                 onResult(null)
             } catch (e: LinkApiException) {
+                vmD("sessionClaim LinkApi code=${e.code}")
                 if (e.code == 503) {
                     onResult(null)
                 } else {
                     onResult(e.message)
                 }
             } catch (e: Exception) {
+                vmD("sessionClaim fail ${e.message}")
                 onResult(e.message)
             }
         }
     }
 
     fun sessionRelease(onResult: (String?) -> Unit) {
+        vmD("sessionRelease")
         viewModelScope.launch {
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.sessionRelease(url, bearer)
+                vmD("sessionRelease ok")
                 onResult(null)
             } catch (e: Exception) {
+                vmD("sessionRelease fail ${e.message}")
                 onResult(e.message)
             } finally {
                 robotConsoleSessionActive = false
@@ -877,6 +1234,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      * (see `NINA_LINK_SESSION_SCRIPT` on the Jetson). Closing the console releases.
      */
     fun notifyRobotConsoleVisibility(visible: Boolean) {
+        vmD("notifyRobotConsoleVisibility visible=$visible active=$robotConsoleSessionActive")
         viewModelScope.launch {
             if (visible) {
                 if (robotConsoleSessionActive) return@launch
@@ -910,6 +1268,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        vmD("onCleared sessionActive=$robotConsoleSessionActive")
         if (robotConsoleSessionActive) {
             runBlocking {
                 try {
@@ -927,6 +1286,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun mediaFileUrl(relativePath: String): String {
+        vmD("mediaFileUrl relLen=${relativePath.length}")
         val base = prefs.baseUrl.first().trimEnd('/')
         val enc = java.net.URLEncoder.encode(relativePath, Charsets.UTF_8.toString())
         return "$base/v1/media/file?relative=$enc"

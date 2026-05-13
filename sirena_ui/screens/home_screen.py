@@ -9,9 +9,9 @@ launches on the 10.1" Jetson display.
 from __future__ import annotations
 
 import sys
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from PyQt5.QtCore import QProcess, Qt, pyqtSignal
+from PyQt5.QtCore import QProcess, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
 
 from sirena_ui.styles import asset_path
 from sirena_ui.widgets.common import Breadcrumb, Card, CardTitle, MutedLabel, Pill, SectionLabel
+from sirena_ui.workers.health_collector import collect
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -92,6 +93,43 @@ class _QuickTile(QPushButton):
         v.addWidget(sub)
 
 
+def _pill_kind_for_health_status(status: str) -> str:
+    s = (status or "").strip().lower()
+    if s in ("ok", "ready"):
+        return Pill.KIND_OK
+    if s == "warn":
+        return Pill.KIND_WARN
+    if s == "error":
+        return Pill.KIND_ERROR
+    return Pill.KIND_NEUTRAL
+
+
+def _health_row_by_key(rows: list, key: str):
+    for r in rows:
+        if getattr(r, "key", None) == key:
+            return r
+    return None
+
+
+def _overview_pill_caption_kind(row: object) -> Tuple[str, str]:
+    """Short value + pill objectName for System overview tiles (Health row semantics)."""
+    if row is None:
+        return ("—", Pill.KIND_NEUTRAL)
+    st = (getattr(row, "status", None) or "").strip().lower() or "pending"
+    kind = _pill_kind_for_health_status(st)
+    detail = (getattr(row, "detail", None) or "").strip()
+    key = getattr(row, "key", "") or ""
+    if key == "wifi" and detail:
+        low = detail.lower()
+        if "offline" in low:
+            return ("Offline", Pill.KIND_NEUTRAL)
+        if "connect" in low:
+            return ("Online", Pill.KIND_OK)
+    if detail:
+        return (detail[:22], kind)
+    return ("—", kind)
+
+
 class HomeScreen(QWidget):
     navigate_requested = pyqtSignal(str)
 
@@ -100,6 +138,10 @@ class HomeScreen(QWidget):
         self._service = service
         self._git_pull_proc: Optional[QProcess] = None
         self._pull_changes_btn: Optional[QPushButton] = None
+        self._pill_bus: Optional[Pill] = None
+        self._pill_torque: Optional[Pill] = None
+        self._pill_voice: Optional[Pill] = None
+        self._ov_pills: Dict[str, Pill] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -114,6 +156,54 @@ class HomeScreen(QWidget):
         outer.addLayout(self._build_tiles(), stretch=1)
 
         outer.addWidget(self._build_status_strip(), stretch=0)
+
+        self._hero_pill_timer = QTimer(self)
+        self._hero_pill_timer.setInterval(5000)
+        self._hero_pill_timer.timeout.connect(self._refresh_hero_pills)
+        self._wire_drive_hero_pills()
+        self._hero_pill_timer.start()
+        self._refresh_hero_pills()
+
+    def _wire_drive_hero_pills(self) -> None:
+        """Start BLDC init and subscribe so the torque chip updates without opening Drive."""
+        try:
+            dc = self._service.drive
+            dc.state_changed.connect(self._on_drive_state_changed, type=Qt.UniqueConnection)
+            dc.ensure_hardware()
+        except Exception:
+            pass
+
+    def _on_drive_state_changed(self, st: object) -> None:
+        if isinstance(st, dict):
+            self._apply_torque_pill_from_state(st)
+
+    def _apply_torque_pill_from_state(self, st: dict) -> None:
+        pt = self._pill_torque
+        if pt is None:
+            return
+        connected = bool(st.get("connected"))
+        msg = str(st.get("driver_message", "") or "").strip()
+        if connected:
+            pt.setText("Torque ON")
+            pt.set_kind(Pill.KIND_OK)
+            pt.setToolTip(msg or "BLDC L+R connected")
+            return
+        low = msg.lower()
+        if not msg or any(
+            x in low for x in ("initialis", "initializ", "waiting", "not yet", "queued")
+        ):
+            pt.setText("Drive …")
+            pt.set_kind(Pill.KIND_NEUTRAL)
+            pt.setToolTip(msg or "Starting drive hardware")
+            return
+        if "simulation" in low:
+            pt.setText("Simulation")
+            pt.set_kind(Pill.KIND_WARN)
+            pt.setToolTip(msg)
+            return
+        pt.setText("Torque off")
+        pt.set_kind(Pill.KIND_WARN)
+        pt.setToolTip(msg)
 
     # ---------- hero ----------
 
@@ -160,12 +250,12 @@ class HomeScreen(QWidget):
         chip_row.setSpacing(8)
         chip_row.setAlignment(Qt.AlignLeft)
         text.addLayout(chip_row)
-        for label, kind in [
-            ("Idle", Pill.KIND_NEUTRAL),
-            ("Torque ON", Pill.KIND_OK),
-            ("Voice ready", Pill.KIND_NEUTRAL),
-        ]:
-            chip_row.addWidget(Pill(label, kind))
+        self._pill_bus = Pill("Bus …", Pill.KIND_NEUTRAL)
+        self._pill_torque = Pill("Torque …", Pill.KIND_NEUTRAL)
+        self._pill_voice = Pill("Voice …", Pill.KIND_NEUTRAL)
+        chip_row.addWidget(self._pill_bus)
+        chip_row.addWidget(self._pill_torque)
+        chip_row.addWidget(self._pill_voice)
         text.addStretch(1)
 
         # Right-side primary CTA
@@ -204,6 +294,74 @@ class HomeScreen(QWidget):
 
         return card
 
+    def _refresh_hero_pills(self) -> None:
+        """Match Android companion hero chips: bus + BLDC torque + voice from live service."""
+        pb, pt, pv = self._pill_bus, self._pill_torque, self._pill_voice
+        if pb is None or pt is None or pv is None:
+            return
+        try:
+            rows = collect(self._service)
+        except Exception:
+            rows = []
+
+        bus_row = _health_row_by_key(rows, "bus")
+        voice_row = _health_row_by_key(rows, "voice")
+
+        if bus_row is None:
+            bus_label, bus_kind = "Bus —", Pill.KIND_NEUTRAL
+        else:
+            st = (bus_row.status or "").strip().lower() or "pending"
+            bus_kind = _pill_kind_for_health_status(st)
+            if st in ("ok", "ready"):
+                bus_label = "Bus ready"
+            elif st == "pending":
+                bus_label = "Bus idle"
+            elif st in ("warn", "error"):
+                d = (bus_row.detail or "").strip()
+                bus_label = (d[:22] if d else "Bus issue") or "Bus issue"
+            else:
+                d = (bus_row.detail or "").strip()
+                bus_label = (d[:22] if d else "Bus") or "Bus"
+
+        try:
+            dc = self._service.drive
+            dc.ensure_hardware()
+            self._apply_torque_pill_from_state(dc.state())
+        except Exception as exc:
+            self._apply_torque_pill_from_state(
+                {"connected": False, "driver_message": f"{type(exc).__name__}: {exc}"},
+            )
+
+        if voice_row is None:
+            voice_label, voice_kind = "Voice —", Pill.KIND_NEUTRAL
+        else:
+            vst = (voice_row.status or "").strip().lower() or "pending"
+            voice_kind = _pill_kind_for_health_status(vst)
+            if vst in ("ok", "ready"):
+                voice_label = "Voice ready"
+            elif vst == "pending":
+                voice_label = "Voice idle"
+            else:
+                d = (voice_row.detail or "").strip()
+                voice_label = (d[:22] if d else "Voice") or "Voice"
+
+        pb.setText(bus_label)
+        pb.set_kind(bus_kind)
+        pv.setText(voice_label)
+        pv.set_kind(voice_kind)
+        self._refresh_overview_strip(rows)
+
+    def _refresh_overview_strip(self, rows: list) -> None:
+        """System overview row under quick actions — same subsystem keys as Health."""
+        for key in ("bus", "camera", "lidar", "battery", "wifi"):
+            pill = self._ov_pills.get(key)
+            if pill is None:
+                continue
+            r = _health_row_by_key(rows, key)
+            cap, kind = _overview_pill_caption_kind(r)
+            pill.setText(cap)
+            pill.set_kind(kind)
+
     # ---------- tiles ----------
 
     def _build_tiles(self) -> QGridLayout:
@@ -231,17 +389,19 @@ class HomeScreen(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
         card.add_layout(row)
-        items = [
-            ("Bus", "Connecting...", Pill.KIND_NEUTRAL),
-            ("Camera", "Not connected", Pill.KIND_NEUTRAL),
-            ("Lidar", "Not connected", Pill.KIND_NEUTRAL),
-            ("Battery", "n/a", Pill.KIND_NEUTRAL),
-            ("Wi-Fi", "Online", Pill.KIND_OK),
-        ]
-        for label, value, kind in items:
+        self._ov_pills.clear()
+        for key, title in (
+            ("bus", "Bus"),
+            ("camera", "Camera"),
+            ("lidar", "Lidar"),
+            ("battery", "Battery"),
+            ("wifi", "Wi-Fi"),
+        ):
             box = Card(padding=8, spacing=2, subtle=True)
-            box.add(SectionLabel(label))
-            box.add(Pill(value, kind))
+            box.add(SectionLabel(title))
+            pill = Pill("\u2014", Pill.KIND_NEUTRAL)
+            self._ov_pills[key] = pill
+            box.add(pill)
             row.addWidget(box, stretch=1)
 
         return card

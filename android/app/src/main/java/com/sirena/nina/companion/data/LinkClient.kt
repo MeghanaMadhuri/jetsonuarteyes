@@ -2,25 +2,35 @@ package com.sirena.nina.companion.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.sirena.nina.companion.network.IdempotentRetryInterceptor
+import com.sirena.nina.companion.util.NinaLog
+import okhttp3.ConnectionPool
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import com.sirena.nina.companion.util.NinaLog
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** HTTP client for the Jetson nina-link daemon (matches `nina/link_daemon/api.py`). */
+/** HTTP client for the Jetson tablet gateway (same routes as `sirena_ui/android_gateway/fastapi_app.py`). */
 class LinkClient {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(45, TimeUnit.SECONDS)
-        .build()
+    /** Tuned for Wi‑Fi: longer reads for MJPEG/JSON, HTTP/1.1 only, idempotent GET retries. */
+    private val client =
+        OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(0, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
+            .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -107,6 +117,27 @@ class LinkClient {
         )
     }
 
+    /** Start or stop SLAM mapping (``POST /v1/slam/running`` — same as Qt Map screen). */
+    suspend fun slamSetRunning(
+        baseUrl: String,
+        bearer: String?,
+        running: Boolean,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        post(
+            "$baseUrl/v1/slam/running",
+            bearer,
+            JSONObject().put("running", running).toString(),
+        )
+    }
+
+    /** Reset SLAM map like Qt Map **Clear** (``POST /v1/slam/clear``). */
+    suspend fun slamClear(
+        baseUrl: String,
+        bearer: String?,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        post("$baseUrl/v1/slam/clear", bearer, "{}")
+    }
+
     suspend fun robotDriveMomentary(
         baseUrl: String,
         bearer: String?,
@@ -128,6 +159,12 @@ class LinkClient {
     suspend fun systemPoweroff(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
             post("$baseUrl/v1/system/poweroff", bearer, "{}")
+        }
+
+    /** Ask the Jetson host to reboot (requires passwordless sudo on the robot — see nina-link docs). */
+    suspend fun systemReboot(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/system/reboot", bearer, "{}")
         }
 
     /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
@@ -223,6 +260,16 @@ class LinkClient {
         withContext(Dispatchers.IO) {
             post(
                 "$baseUrl/v1/actions/audio/clear",
+                bearer,
+                JSONObject().put("action", action).toString(),
+            )
+        }
+
+    /** Play manifest audio clip on the Jetson speakers (`POST /v1/actions/audio/preview`). */
+    suspend fun actionAudioPreview(baseUrl: String, bearer: String?, action: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/actions/audio/preview",
                 bearer,
                 JSONObject().put("action", action).toString(),
             )
@@ -334,6 +381,77 @@ class LinkClient {
             get("$baseUrl/v1/vision/detections")
         }
 
+    /** Enrolled face names for person-follow target selection (matches Qt combo). */
+    suspend fun visionFaces(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/faces")
+        }
+
+    /**
+     * Start vision-guided person follow on the Jetson (``FaceFollowController``).
+     * [target] empty = largest face; else an enrolled identity name.
+     */
+    suspend fun visionFollowStart(
+        baseUrl: String,
+        bearer: String?,
+        target: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/vision/follow/start",
+                bearer,
+                JSONObject().put("target", target).toString(),
+            )
+        }
+
+    suspend fun visionFollowStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/vision/follow/stop", bearer, "{}")
+        }
+
+    suspend fun visionFollowStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/follow/status")
+        }
+
+    /**
+     * Single JPEG frame from the live vision pipeline (``GET /v1/vision/snapshot``).
+     * Returns null on HTTP error or empty body.
+     */
+    suspend fun visionSnapshotJpeg(baseUrl: String): ByteArray? =
+        withContext(Dispatchers.IO) {
+            val url = "$baseUrl/v1/vision/snapshot"
+            val req = Request.Builder()
+                .url(url)
+                .header("Accept", "image/jpeg")
+                .get()
+                .build()
+            val snapLabel = safeRequestLabel(req)
+            NinaLog.debug("LinkClient", ">> $snapLabel (jpeg)")
+            try {
+                client.newCall(req).execute().use { resp ->
+                    val bytes = resp.body?.bytes()
+                    NinaLog.debug(
+                        "LinkClient",
+                        "<< $snapLabel http=${resp.code} jpegBytes=${bytes?.size ?: 0}",
+                    )
+                    if (!resp.isSuccessful) {
+                        if (resp.code != 404) {
+                            NinaLog.warn(
+                                "LinkClient",
+                                "GET $url -> ${resp.code} ${resp.message}",
+                            )
+                        }
+                        return@withContext null
+                    }
+                    bytes
+                }
+            } catch (e: IOException) {
+                NinaLog.warn("LinkClient", "<< $snapLabel IOException: ${e.message}")
+                null
+            }
+        }
+
     suspend fun sessionClaim(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
             post("$baseUrl/v1/session/claim", bearer, "{}")
@@ -361,11 +479,15 @@ class LinkClient {
         withContext(Dispatchers.IO) {
             val url = "$baseUrl/v1/slam/occupancy".toHttpUrlOrNull() ?: return@withContext null
             val req = Request.Builder().url(url).get().build()
+            val occLabel = safeRequestLabel(req)
+            NinaLog.debug("LinkClient", ">> $occLabel (octet-stream)")
             client.newCall(req).execute().use { resp ->
+                NinaLog.debug("LinkClient", "<< $occLabel http=${resp.code}")
                 if (!resp.isSuccessful) return@withContext null
                 val w = resp.header("X-Slam-Width")?.toIntOrNull() ?: return@withContext null
                 val h = resp.header("X-Slam-Height")?.toIntOrNull() ?: return@withContext null
                 val bytes = resp.body?.bytes() ?: return@withContext null
+                NinaLog.debug("LinkClient", "slam occupancy grid w=$w h=${h} rawBytes=${bytes.size}")
                 if (bytes.size < w * h) return@withContext null
                 SlamOccupancyGrid(bytes, w, h)
             }
@@ -454,10 +576,27 @@ class LinkClient {
         return execute(req)
     }
 
+    /** Log-safe request label: path + query (truncated), never Authorization or body (PINs/passwords). */
+    private fun safeRequestLabel(req: Request): String {
+        val q = req.url.encodedQuery
+        val path =
+            req.url.encodedPath +
+                if (q.isNullOrBlank()) {
+                    ""
+                } else {
+                    "?${q.take(80)}"
+                }
+        val auth = if (req.header("Authorization").isNullOrBlank()) "auth=no" else "auth=bearer"
+        return "${req.method} $path $auth"
+    }
+
     private fun execute(req: Request): JSONObject {
+        val label = safeRequestLabel(req)
+        NinaLog.debug("LinkClient", ">> $label")
         try {
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
+                NinaLog.debug("LinkClient", "<< $label http=${resp.code} bytes=${body.length}")
                 if (!resp.isSuccessful) {
                     val hint = httpErrorDetail(body, resp.code, resp.message)
                     val path = req.url.encodedPath
@@ -476,7 +615,7 @@ class LinkClient {
                 return if (body.isBlank()) JSONObject() else JSONObject(body)
             }
         } catch (e: IOException) {
-            NinaLog.warn("LinkClient", "${req.method} ${req.url} -> ${e.message}")
+            NinaLog.warn("LinkClient", "<< $label IOException: ${e.message}")
             throw e
         }
     }

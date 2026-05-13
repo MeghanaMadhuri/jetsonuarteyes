@@ -1,16 +1,28 @@
-# Nina Companion (tablet) + Jetson link daemon
+# Nina Companion (tablet) + Jetson tablet gateway
 
-This document describes the **Android companion app** under [`android/`](../android/README.md) and the Python **nina-link daemon** under [`nina/link_daemon/`](../nina/link_daemon/).
+This document describes the **Android companion app** under [`android/`](../android/README.md) and the **tablet HTTP API** served from **Sirena UI** on the Jetson ([`sirena_ui/android_gateway/`](../sirena_ui/android_gateway/) + [`nina/jetson_net/`](../nina/jetson_net/) for Wi‑Fi state).
+
+**Tablet controls idle or HTTP 503?** See **[COMPANION_CONTROLS.md](COMPANION_CONTROLS.md)** (`NINA_LINK_ENABLE_*` bridge matrix, auth, and env example [`nina-link-bridge.env.example`](nina-link-bridge.env.example)).
 
 ## Jetson: one-shot install + diagnosis (recommended)
+
+**Single entry point (tablet + Sirena UI gateway + bridges):** run **`scripts/jetson-tablet-setup.sh`** from the repo root. It chains the venv/systemd install, enables HTTP bridge drop-ins, optional UFW, and the same flags as **`scripts/install-sirena-companion-jetson.sh`** (e.g. `--with-sirena-headless`).
+
+**Equivalent installer (explicit name):** **`./scripts/install-sirena-companion-jetson.sh`** — documented in the script header: installs **nina-link**, applies **`update-nina-link-jetson.sh --install-dropin`**, restarts and verifies, optional UFW on **8787**. Use **`--with-sirena-headless`** when you need the same pip set as **`sirena_ui` headless** (vision stream, richer sensors) inside **`.venv-link`**.
 
 From the repo root on the Jetson (after `git clone` / copy):
 
 ```bash
 # Executable bit is set in git; if you still see "Permission denied":
-chmod +x scripts/install-nina-link-jetson.sh scripts/uninstall-nina-link-jetson.sh
+chmod +x scripts/jetson-tablet-setup.sh scripts/install-sirena-companion-jetson.sh scripts/install-nina-link-jetson.sh scripts/uninstall-nina-link-jetson.sh
 
-# Full Jetson setup: apt deps, venv, smoke test, systemd — daemon + hotspot policy on every boot
+# Full Jetson setup (recommended one-liner): apt + PyQt5 (distro) + venv, pip, systemd, bridge drop-in, verify
+./scripts/jetson-tablet-setup.sh
+
+# Same as above (companion-oriented entry point):
+# ./scripts/install-sirena-companion-jetson.sh
+
+# Lower-level equivalent (venv + systemd only, no drop-in / UFW orchestration):
 ./scripts/install-nina-link-jetson.sh --all
 
 # If sudo password was not entered during --all, finish systemd registration:
@@ -19,6 +31,37 @@ sudo ./scripts/install-nina-link-jetson.sh --systemd-only
 # Remove service and optional venv/state:
 ./scripts/uninstall-nina-link-jetson.sh --purge
 ```
+
+## Companion app + gateway updates (0.4 track)
+
+Use this section after **`git pull`** to see what changed on the **tablet** and **Jetson HTTP surface** without diffing the whole tree.
+
+| Area | Change |
+|------|--------|
+| **Jetson `/v1/robot/capabilities`** | Includes **`neutral_action_name`** (from Nina settings / `NINA_NEUTRAL_ACTION`, default `neutral`) so the tablet can match Qt’s protected neutral when deleting actions. |
+| **Android Drive** | Hardware keyboard: **W A S D**, arrow keys, **Space** (stop), **Esc** (brake + E‑STOP) when the Drive screen has focus; copy describes D‑pad + keyboard + HTTP pulse limits. |
+| **Android Actions** | Short **Playing '…'** hint after successful manifest play; delete protection uses **`neutral_action_name`** from capabilities when present. |
+| **Android Settings** | **General** and **Network** panels plus an **else** branch for other categories pointing operators at on-robot Sirena UI and **`docs/COMPANION_CONTROLS.md`**. |
+| **Android shell** | Footer horizontal padding aligned to **12 dp** (closer to Qt status bar margins). |
+| **Android version** | **`versionName`** aligned with desktop **0.4** line (**`0.4.0`** in `android/app/build.gradle.kts`); bump **`versionCode`** when you ship a new APK. |
+| **Find robot** | On wide layouts (≥520 dp), **Discovery diagnostics** and **Currently connected** sit **side by side**; each nearby daemon card uses a **row** (details + **Connect** on the right). |
+
+Full desktop-vs-tablet matrix: **[ANDROID_SIRENA_PARITY.md](ANDROID_SIRENA_PARITY.md)** and **[ANDROID_SIRENA_GAPS.md](ANDROID_SIRENA_GAPS.md)**.
+
+### Vision MJPEG (tablet + Jetson)
+
+The companion decodes RGB and depth MJPEG in **Compose** (multipart JPEG scan + `BitmapFactory`), with a client-side long-edge clamp (**`SirenaMjpegAndroidMaxLongEdgeDefault`** in `SirenaMjpegImage.kt`, typically **1152**). Intermediate JPEGs in a backlog are dropped so the UI stays on the **latest** frame.
+
+On the Jetson gateway, tune encode cost and Wi‑Fi bandwidth with:
+
+| Env | Default | Role |
+|-----|---------|------|
+| **`NINA_MJPEG_MAX_WIDTH`** | `1280` | Max width before JPEG encode (height scales). Try **`960`** on busy Wi‑Fi or older tablets. |
+| **`NINA_MJPEG_JPEG_QUALITY`** | `78` | JPEG quality (40–95). Slightly higher quality is cheaper when width is capped. |
+
+Source: `sirena_ui/android_gateway/vision_mjpeg.py`.
+
+**Depth colorization:** RealSense depth MJPEG uses OpenCV in the same Python environment as `sirena_ui` / `nina-link`. If the depth stream is empty while RGB works, install headless deps (e.g. `./scripts/update-nina-link-jetson.sh --sirena-headless` or `--vision`) so OpenCV is available in the venv that runs the gateway.
 
 ## Jetson: quick update after `git pull` (recommended)
 
@@ -57,7 +100,7 @@ Smaller installs (no systemd / no apt): `./scripts/install-nina-link-jetson.sh -
 
 On stock Ubuntu/Jetson images you may need **`python3-venv`** once: either `sudo apt install python3-venv` or use **`--install-system-deps`** (runs `apt` for `python3.X-venv`, `python3-venv`, `pip`, `curl`).
 
-This creates **`.venv-link`**, installs **`requirements-link.txt`**, verifies imports, checks **`nmcli`/NetworkManager**, and with **`--smoke`** briefly runs the daemon and curls **`/health`**.
+This creates **`.venv-link`** with **`--system-site-packages`** (new venvs) so **`python3-pyqt5`** from apt is visible to **`python -m sirena_ui`**. It installs **`requirements-link.txt`**, verifies **`nina.jetson_net`** and **PyQt5** imports, checks **`nmcli`/NetworkManager**, and with **`--smoke`** prints a **`curl /health`** hint (no auto-spawn).
 
 If you see **`pip missing inside venv`**, an old `.venv-link` was built before **`python3-venv`** existed. The install script now runs **`python -m ensurepip`** inside that venv or recreates it. To reset manually: **`rm -rf .venv-link`** and run the script again.
 
@@ -109,7 +152,9 @@ cd ~/Nvidia-jetson-platform
 python3 -m venv .venv-link && source .venv-link/bin/activate
 export PYTHONPATH=.
 pip install -r requirements-link.txt
-python -m nina.link_daemon.main
+pip install -r sirena_ui/requirements.txt
+export NINA_ANDROID_GATEWAY=1
+python -m sirena_ui
 ```
 
 Same steps **without** `activate` (paths relative to repo root):
@@ -118,14 +163,19 @@ Same steps **without** `activate` (paths relative to repo root):
 cd ~/Nvidia-jetson-platform
 python3 -m venv .venv-link
 ./.venv-link/bin/pip install -r requirements-link.txt
+./.venv-link/bin/pip install -r sirena_ui/requirements.txt
 export PYTHONPATH=.
-./.venv-link/bin/python -m nina.link_daemon.main
+export NINA_ANDROID_GATEWAY=1
+./.venv-link/bin/python -m sirena_ui
 ```
 
-Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/config.py)):
+Environment variables (see [`nina/jetson_net/config.py`](../nina/jetson_net/config.py)):
 
 | Variable | Meaning |
 |----------|---------|
+| `NINA_ANDROID_GATEWAY` | If `0`, do not start embedded FastAPI (default `1` in `server.py` when unset behaves as on) |
+| `NINA_ANDROID_HTTP_HOST` / `NINA_ANDROID_HTTP_PORT` | Optional overrides for bind (else `NINA_LINK_HOST` / `NINA_LINK_PORT`) |
+| `NINA_ANDROID_GATEWAY_ALL` | If `1`, enable robot/vision/slam/depth/autonomy/record/static HTTP bridges without per-flag env |
 | `NINA_LINK_HOST` | Bind address (default `0.0.0.0`) |
 | `NINA_LINK_PORT` | HTTP port (default `8787`) |
 | `NINA_LINK_AP_SSID` / `NINA_LINK_AP_PASSWORD` | Hotspot credentials when using `nmcli device wifi hotspot` |
@@ -135,7 +185,7 @@ Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/co
 | `NINA_LINK_TOKEN` | If set, remote clients must send `Authorization: Bearer <token>` for mutating calls (localhost always trusted) |
 | `NINA_LINK_MOCK` | If `1`, simulate Wi-Fi (for laptops without NetworkManager) |
 | `NINA_LINK_ENABLE_ROBOT_BRIDGE` | If `1`, `POST /v1/robot/drive` (do not use desktop Drive at the same time) |
-| `NINA_LINK_ENABLE_ACTION_BRIDGE` | If `1`, `POST /v1/actions/play` (stop Sirena UI / other bus users first) |
+| `NINA_LINK_ENABLE_ACTION_BRIDGE` | Legacy nina-link only; embedded Sirena always serves `POST /v1/actions/play` via `NinaService` |
 | `NINA_LINK_ENABLE_RECORD_BRIDGE` | If `1`, `POST /v1/actions/record/start` (same serial bus as Sirena UI) |
 | `NINA_LINK_ENABLE_VISION_BRIDGE` | If `1`, `GET /v1/vision/stream` (MJPEG; needs OpenCV + `sirena_ui` vision stack on `PYTHONPATH`) |
 | `NINA_LINK_ENABLE_ACTIONS_STATIC` | If `1`, `GET /v1/media/file?relative=…` for `nina/actions/` files (e.g. audio MP3) |
@@ -241,6 +291,7 @@ The companion **MainActivity** is locked to **landscape** (`sensorLandscape` in 
 - **`503`** on **`POST /v1/actions/play`**: Action bridge off in the running process — set `NINA_LINK_ENABLE_ACTION_BRIDGE=1` in systemd and **`sudo systemctl restart nina-link`**.
 - **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`./.venv-link/bin/pip install -r requirements-link.txt`** (includes `pyserial`) or activate first, then **`pip install -r requirements-link.txt`** — then **`sudo systemctl restart nina-link`**.
 - **`No module named 'rplidar'`**, **`breezyslam`**, or SLAM stuck in simulation on the **tablet Map** screen: **`requirements-link.txt` does not include lidar/SLAM.** Install the headless Sirena stack into the **same** venv the service uses: **`./scripts/update-nina-link-jetson.sh --sirena-headless --restart`** (or **`pip install -r sirena_ui/requirements-headless.txt`**). For BreezySLAM’s C extension: **`sudo apt install -y build-essential python3-dev`** first. One-shot for new robots: **`./scripts/install-sirena-companion-jetson.sh --with-sirena-headless`**.
+- **Lidar health shows `/dev/ttyUSB0` missing**: recent builds auto-probe `/dev/ttyUSB*` + `/dev/ttyACM*` when `NINA_LIDAR_PORT` is not explicitly set. If your bot uses a fixed node, set it in systemd (`NINA_LIDAR_PORT=/dev/ttyUSB1`) and avoid sharing one port across `NINA_DXL_PORT`, `NINA_LIDAR_PORT`, and `NINA_NAV_REMOTE_PORT`.
 - **Drive shows “BLDC not connected” / Jetson.GPIO**: hardware path — confirm you run **on the Jetson**, **`nina-link.service`** uses **`/.venv-link/bin/python`**, user can access GPIO/UART (**`dialout`** etc.), and **desktop Drive** is not holding the bus. Not fixed by pip alone.
 - **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
@@ -258,7 +309,7 @@ If LiDAR errors mention the wrong device, set **`NINA_LIDAR_PORT`** (e.g. `/dev/
 
 ### RealSense (`pyrealsense2`) on Jetson (aarch64)
 
-Intel does not ship a universal aarch64 wheel; `pip install pyrealsense2` inside **`.venv-link`** often fails or mismatches the installed **`librealsense2`** version. Follow **`REQUIREMENTS.md` § 5.3.2** (build/install librealsense + Python bindings so `python3 -c "import pyrealsense2"` works **using the same interpreter** as **`nina-link`**, i.e. **`REPO_ROOT/.venv-link/bin/python`**). Until import succeeds in that venv, the companion Perception depth pane will show **`pyrealsense2 not ins`** from the daemon.
+Intel does not ship a universal aarch64 wheel; `pip install pyrealsense2` inside **`.venv-link`** often fails or mismatches the installed **`librealsense2`** version. Follow **`REQUIREMENTS.md` § 5.3.2** (build/install librealsense + Python bindings so `python3 -c "import pyrealsense2"` works **using the same interpreter** as **`nina-link`**, i.e. **`REPO_ROOT/.venv-link/bin/python`**). Until import succeeds in that venv, depth status reports `dependency missing` and Android surfaces **Depth: sim**.
 
 ### Kiosk vs tablet (exclusive hardware)
 
@@ -296,6 +347,16 @@ If the Gradle **`gradlew`** scripts exist in **`android/`**, from repo root:
 
 Share the **`.apk`** file; on each device allow **Install unknown apps** for the browser / Files app used to open it.
 
+## Tablet gateway verification (manual)
+
+With Sirena UI running on the Jetson (`python -m sirena_ui`, `NINA_ANDROID_GATEWAY=1`):
+
+1. `curl -s http://127.0.0.1:8787/health` — expect `"service":"sirena-tablet-gateway"` (or `"ok":true`).
+2. `curl -s http://127.0.0.1:8787/v1/robot/capabilities` — confirm expected endpoints.
+3. From the Android tablet (same LAN), set base URL to `http://<jetson-ip>:8787` and exercise Drive, Actions (play), Health, and Vision stream while the kiosk UI uses the same features — motion and bus access should serialize through one `NinaService` (no second serial opener).
+
+Automated guard: `python -m unittest tests.test_jetson_net_imports`. Route/client parity: `python -m unittest tests.test_link_api_linkclient_parity`. Refresh OpenAPI for Kotlin: `python scripts/sync_android_api.py --url http://<jetson>:8787`.
+
 ## REST API (summary)
 
 - `GET /health` — liveness.
@@ -307,12 +368,12 @@ Share the **`.apk`** file; on each device allow **Install unknown apps** for the
 - `DELETE /v1/wifi/saved/{id_or_uuid}` — remove saved NM profile.
 - `POST /v1/pair` — `{ "pin" }` → `{ "token" }` for session bearer.
 - `GET /v1/robot/capabilities` — which bridges are enabled and endpoint paths.
-- `GET /v1/robot/health` — JSON `{ "rows": [ { "key", "label", "detail", "status" } ] }` aggregated from SLAM / drive / vision / depth / autonomy bridges (companion Health screen).
+- `GET /v1/robot/health` — JSON `{ "rows": [ { "key", "label", "detail", "status" } ] }` from `health_collector` + Wi‑Fi (companion Health screen).
 - `POST /v1/robot/drive` / `POST /v1/robot/emergency-stop` — when `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`.
-- `GET /v1/actions` / `POST /v1/actions/play` — when `NINA_LINK_ENABLE_ACTION_BRIDGE=1`.
+- `GET /v1/actions` / `POST /v1/actions/play` — embedded Sirena always exposes play via `NinaService` (legacy `NINA_LINK_ENABLE_ACTION_BRIDGE` ignored).
 - `GET /v1/actions/recordings` — list `recordings/*.json` (no bus access).
 - `GET /v1/actions/record/status` / `POST /v1/actions/record/start` — when `NINA_LINK_ENABLE_RECORD_BRIDGE=1`.
-- `GET /v1/vision/status` / `GET /v1/vision/stream` (MJPEG) / `POST /v1/vision/options` / `POST /v1/vision/open` / `POST /v1/vision/stop` — when `NINA_LINK_ENABLE_VISION_BRIDGE=1`.
+- `GET /v1/vision/status` / `GET /v1/vision/stream` (MJPEG) / `GET /v1/vision/snapshot` (single JPEG) / `GET /v1/vision/faces` (enrolled names) / `POST /v1/vision/options` / `POST /v1/vision/open` / `POST /v1/vision/stop` / `POST /v1/vision/follow/start` / `POST /v1/vision/follow/stop` / `GET /v1/vision/follow/status` — when `NINA_LINK_ENABLE_VISION_BRIDGE=1`. Person follow uses the same `FaceFollowController` + `NinaService.drive` path as the PyQt Vision screen (not HTTP momentary drive).
 - `GET /v1/media/file?relative=audio/foo.mp3` — when `NINA_LINK_ENABLE_ACTIONS_STATIC=1` (path must stay under `nina/actions/`).
 - `GET /v1/autonomy/status` / `POST /v1/autonomy/enabled` — when `NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1`. Status returns the merged blob `{ "enabled", "mode": "idle"|"wander"|"goto", "health", "pilot", "goto", "last_pilot" }`. Enabled toggles wander.
 - `POST /v1/autonomy/goal` / `DELETE /v1/autonomy/goal` — same bridge flag. Body for POST is `{ "x_mm": <float>, "y_mm": <float> }` in the SLAM map frame (origin = map centre, +x right, +y forward). The Jetson plans an A* path on the live BreezySLAM grid (with footprint inflation), follows it with reactive obstacle avoidance, and stops on arrival. DELETE cancels the in-flight goto; if the goto turned autonomy on, autonomy also turns off.

@@ -11,8 +11,9 @@ android {
         applicationId = "com.sirena.nina.companion"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 7
+        /** Keep in sync with desktop [sirena_ui.main_window.APP_VERSION] (shown as v* in sidebar). */
+        versionName = "0.4.1"
     }
 
     buildTypes {
@@ -35,9 +36,21 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
+    @Suppress("DEPRECATION")
+    applicationVariants.configureEach {
+        if (buildType.name == "release") {
+            val v = versionName
+            outputs.configureEach {
+                (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                    .outputFileName = "Sirena UI-$v.apk"
+            }
+        }
     }
 }
 
@@ -55,6 +68,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    /** [rememberRipple] for glass buttons / tabs (not always re-exported by material3 alone). */
+    implementation("androidx.compose.material:material-ripple")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
 

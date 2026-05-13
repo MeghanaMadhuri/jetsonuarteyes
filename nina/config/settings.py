@@ -244,6 +244,25 @@ class NinaSettings:
     hoverboard_axis: HoverboardAxisSettings
 
 
+def serial_collision_warnings(settings: NinaSettings) -> list[str]:
+    """Return likely serial-port contention warnings."""
+    ports = {
+        "dynamixel": settings.serial_port.strip(),
+        "nav_remote": settings.navigation.remote_serial_port.strip(),
+        "lidar": settings.lidar.serial_port.strip(),
+    }
+    owners: dict[str, list[str]] = {}
+    for name, path in ports.items():
+        if not path:
+            continue
+        owners.setdefault(path, []).append(name)
+    warnings: list[str] = []
+    for path, names in owners.items():
+        if len(names) >= 2:
+            warnings.append(f"{path} shared by {', '.join(sorted(names))}")
+    return warnings
+
+
 def load_settings(repo_root: Path) -> NinaSettings:
     _scrub_obsolete_navigation_env()
 

@@ -1,0 +1,18 @@
+# Optional overrides for `nina-ui-kiosk.service` tablet HTTP / Wi‑Fi AP behaviour.
+#
+# Defaults for the companion API (host, port, bridges) are now in the main unit file:
+#   desktop/nina-ui-kiosk.service
+#
+# Use this only if you need to change something per-robot without editing the repo:
+#
+#   mkdir -p ~/.config/systemd/user/nina-ui-kiosk.service.d
+#   cp tablet-gateway.conf.example ~/.config/systemd/user/nina-ui-kiosk.service.d/override.conf
+#   # edit override.conf
+#   systemctl --user daemon-reload
+#   systemctl --user restart nina-ui-kiosk.service
+#
+# Example (uncomment and adjust):
+#
+# [Service]
+# Environment=NINA_LINK_PORT=8788
+# Environment=NINA_LINK_TOKEN=your-fleet-token

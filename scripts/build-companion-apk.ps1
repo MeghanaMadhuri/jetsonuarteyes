@@ -4,7 +4,7 @@
 # From repo root, if Gradle wrapper exists:
 #   .\scripts\build-companion-apk.ps1
 #
-# Output: android\app\build\outputs\apk\release\app-release.apk
+# Output: android\app\build\outputs\apk\release\Sirena UI-<versionName>.apk (see app/build.gradle.kts)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -20,10 +20,13 @@ try {
     if (Test-Path $Gradlew) {
         Write-Host "Building release APK..."
         & .\gradlew.bat assembleRelease --no-daemon
-        $apk = Join-Path $Android "app\build\outputs\apk\release\app-release.apk"
-        if (Test-Path $apk) {
+        $releaseDir = Join-Path $Android "app\build\outputs\apk\release"
+        $apk = Get-ChildItem $releaseDir -Filter "Sirena UI*.apk" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($apk -and (Test-Path $apk.FullName)) {
             Write-Host ""
-            Write-Host "OK: $apk"
+            Write-Host "OK: $($apk.FullName)"
             Write-Host "Share this file for sideload install (Settings → allow unknown sources)."
         }
     }

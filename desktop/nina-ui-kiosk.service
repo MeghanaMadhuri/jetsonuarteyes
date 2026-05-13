@@ -40,11 +40,28 @@ Environment=NINA_UI_FULLSCREEN=1
 # it here too so a stale env from the user session can't override it.
 Environment=QT_QPA_PLATFORM=xcb
 
-# BLDC / JYQD: drive GPIOs on this Jetson (default). Optional system-wide
-# pin overrides (same as nina-link): /etc/nina-link/navigation.env
+# Android companion gateway (same Python process as the kiosk — no
+# second daemon). Bind HTTP on all interfaces so the tablet/phone can
+# reach the Jetson on LAN. Closing the companion app only disconnects
+# the client; Sirena UI keeps running.
+Environment=NINA_ANDROID_GATEWAY=1
+Environment=NINA_ANDROID_GATEWAY_ALL=1
+Environment=NINA_LINK_HOST=0.0.0.0
+Environment=NINA_LINK_PORT=8787
+Environment=NINA_LINK_BOOT_AP=0
+Environment=NINA_ANDROID_GATEWAY_BOOT_AP=0
+
+# Locomotion: hoverboard lean axes on the Dynamixel bus (AX-18 IDs 12/13).
+# Per-bot tuning lives in /etc/nina-link/navigation.env (EnvironmentFile
+# below) — override NINA_HOVER_BRAKE_POS_*, NINA_HOVER_FWD_POS_*, etc.
+# there without touching this unit. Per-wheel polarity (left BLDC wired
+# the opposite way around from the right) is still expressed via the
+# nav layer's INVERT flags so DriveController.set_invert_* works.
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
+# Scrub legacy Pi-UART vars at unit start so a stale /etc env can't
+# put the bot back into "remote" mode after the Pi bridge removal.
 UnsetEnvironment=NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC NINA_NAV_LEGACY_PI_BRIDGE
 
 # Lidar selection. Current builds ship with the Slamtec RPLIDAR S2E

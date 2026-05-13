@@ -14,11 +14,30 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import sys
 import threading
 from typing import Any, Dict, Optional
 
 
 log = logging.getLogger("carbot.vision.motion_client")
+
+
+def _apply_tcp_stability_opts(sock: socket.socket) -> None:
+    """Keepalive + Linux tuning so idle peers and half-dead links surface sooner."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    if sys.platform.startswith("linux"):
+        try:
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 15)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
+        except OSError:
+            pass
 
 
 # ── Persistent connection registry ────────────────────────────────────────────
@@ -52,6 +71,7 @@ class _PersistentConn:
         s.settimeout(self.timeout)
         # Disable Nagle — we send short JSON lines, want them flushed immediately.
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        _apply_tcp_stability_opts(s)
         self._sock = s
         log.debug("motion_client: connected to %s:%s", self.host, self.port)
 

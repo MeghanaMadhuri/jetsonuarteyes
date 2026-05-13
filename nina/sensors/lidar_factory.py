@@ -49,6 +49,7 @@ log = logging.getLogger("nina.sensors.lidar_factory")
 _MODEL_S2E = "s2e"
 _MODEL_A1 = "a1"
 _MODEL_AUTO = "auto"
+_MODEL_DISABLED = "disabled"
 
 _MODEL_ALIASES = {
     "s2e": _MODEL_S2E,
@@ -65,6 +66,14 @@ _MODEL_ALIASES = {
     "rplidar": _MODEL_A1,
     "auto": _MODEL_AUTO,
     "": _MODEL_AUTO,
+    # Explicit "no lidar on this bot" — keeps the Health row green
+    # ("Lidar disabled") and skips both S2E and A1 open attempts.
+    # Useful for chassis builds without a lidar yet, or when the
+    # lidar harness is disconnected for service.
+    "disabled": _MODEL_DISABLED,
+    "off": _MODEL_DISABLED,
+    "none": _MODEL_DISABLED,
+    "skip": _MODEL_DISABLED,
 }
 
 
@@ -75,6 +84,29 @@ class LidarLike(Protocol):
     def close(self) -> None: ...
     def read(self) -> Optional[LidarScan]: ...
     def status(self) -> Tuple[bool, str]: ...
+
+
+class _DisabledLidar:
+    """No-op driver returned when ``NINA_LIDAR_MODEL=disabled``.
+
+    Honours the same surface as the real drivers so the SlamWorker
+    and AutonomyController don't need a special code path. ``open()``
+    succeeds immediately, ``read()`` always returns ``None`` (so SLAM
+    stays in placeholder mode), and ``status()`` reports a clear
+    'disabled by operator' message rather than a sim/error pill.
+    """
+
+    def open(self) -> None:  # noqa: D401 - matches Protocol
+        return None
+
+    def close(self) -> None:  # noqa: D401 - matches Protocol
+        return None
+
+    def read(self) -> Optional[LidarScan]:  # noqa: D401 - matches Protocol
+        return None
+
+    def status(self) -> Tuple[bool, str]:  # noqa: D401 - matches Protocol
+        return False, "disabled by NINA_LIDAR_MODEL=disabled"
 
 
 def configured_model() -> str:
@@ -96,6 +128,8 @@ def model_label(model: Optional[str] = None) -> str:
         return "Slamtec S2E"
     if m == _MODEL_A1:
         return "RPLIDAR A1"
+    if m == _MODEL_DISABLED:
+        return "Lidar (disabled)"
     return "Lidar"
 
 
@@ -115,6 +149,10 @@ def build_lidar(model: Optional[str] = None) -> LidarLike:
         requested = _MODEL_ALIASES.get(normalised, normalised)
     else:
         requested = configured_model()
+    if requested == _MODEL_DISABLED:
+        log.info("lidar factory: disabled by env (NINA_LIDAR_MODEL=disabled)")
+        return _DisabledLidar()
+
     if requested == _MODEL_AUTO:
         # Try S2E first because the current bring-up doc tells
         # operators that's the default. If the package isn't even
@@ -145,5 +183,5 @@ def build_lidar(model: Optional[str] = None) -> LidarLike:
 
     raise ValueError(
         f"Unknown NINA_LIDAR_MODEL={requested!r}; "
-        "expected one of: s2e, a1, auto"
+        "expected one of: s2e, a1, auto, disabled"
     )

@@ -1,9 +1,11 @@
-# Jetson companion link daemon (Wi-Fi AP/HN API). Install alongside Sirena UI:
+# Jetson: shared HTTP deps for ``nina.jetson_net`` (Wi‑Fi / pairing) used by embedded tablet API.
+# The daemon process is now ``python -m sirena_ui`` (FastAPI + Qt + ``NinaService``).
 #   pip install -r requirements-link.txt
+#   pip install -r sirena_ui/requirements.txt   # PyQt5 + vision + tablet gateway
 #
-# Run:
+# Run on robot:
 #   export PYTHONPATH=.
-#   python -m nina.link_daemon.main
+#   python -m sirena_ui
 
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0

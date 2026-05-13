@@ -15,6 +15,7 @@ Examples:
 
 Requirements (one-time):
     pip install --user gTTS
+    sudo apt install -y ffmpeg       # re-encode clips to 44.1 kHz / 48 kbps MP3
     sudo apt install -y mpg123       # so the GUI / CLI can play .mp3
 
 Run from the repo root.
@@ -26,6 +27,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def main() -> int:
@@ -62,16 +67,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[1]
-    actions_dir = repo_root / "nina" / "actions"
+    actions_dir = ROOT / "nina" / "actions"
     audio_dir = actions_dir / "audio"
     manifest_path = actions_dir / "manifest.json"
 
     if not args.skip_tts:
-        try:
-            from gtts import gTTS
-        except ImportError:
-            print("gTTS is not installed. Run: pip install --user gTTS", file=sys.stderr)
+        from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
+
+        err = AudioGenerator.is_available()
+        if err:
+            print(err, file=sys.stderr)
             return 1
 
         audio_dir.mkdir(parents=True, exist_ok=True)
@@ -79,9 +84,13 @@ def main() -> int:
         text = args.text or args.action.replace("_", " ").title()
         print(
             f"Generating audio for action '{args.action}': '{text}' "
-            f"(lang={args.lang}, tld={args.tld})"
+            f"(lang={args.lang}, tld={args.tld}, 44.1kHz 48kbps MP3 via ffmpeg)"
         )
-        gTTS(text=text, lang=args.lang, tld=args.tld, slow=False).save(str(out_path))
+        try:
+            AudioGenerator.generate(text, out_path, lang=args.lang, tld=args.tld, slow=False)
+        except AudioGeneratorError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(f"Saved {out_path} ({out_path.stat().st_size} bytes)")
 
     if args.no_register:

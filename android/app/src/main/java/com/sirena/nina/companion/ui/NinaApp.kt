@@ -1,471 +1,673 @@
 package com.sirena.nina.companion.ui
 
-import android.content.ClipData
-import android.content.Intent
-import android.provider.Settings
-import androidx.core.content.FileProvider
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sirena.nina.companion.R      
+import android.net.Uri
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
-import com.sirena.nina.companion.StatusUi
-import com.sirena.nina.companion.data.Prefs
-import com.sirena.nina.companion.util.NinaFileLogger
+import com.sirena.nina.companion.DiscoveryDiagnosticsUi
 import com.sirena.nina.companion.util.NinaLog
+import com.sirena.nina.companion.ui.sirena.SirenaBreadcrumbLine
+import com.sirena.nina.companion.ui.sirena.SirenaCard
+import com.sirena.nina.companion.ui.sirena.SirenaCardKind
+import com.sirena.nina.companion.ui.sirena.SirenaColors
+import com.sirena.nina.companion.ui.sirena.SirenaActionsScreen
+import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactHeight
+import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactSmallestWidthDp
+import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactWidth
+import com.sirena.nina.companion.ui.sirena.SirenaDriveScreen
+import com.sirena.nina.companion.ui.sirena.SirenaHealthScreen
+import com.sirena.nina.companion.ui.sirena.NavEntry
+import com.sirena.nina.companion.ui.sirena.SirenaHomeScreen
+import com.sirena.nina.companion.ui.sirena.SirenaMapScreen
+import com.sirena.nina.companion.ui.sirena.SirenaMutedText
+import com.sirena.nina.companion.ui.sirena.SirenaNavCatalog
+import com.sirena.nina.companion.ui.sirena.SirenaNetworkSettingsScrollContent
+import com.sirena.nina.companion.ui.sirena.SirenaPrimaryButton
+import com.sirena.nina.companion.ui.sirena.SirenaSecondaryButton
+import com.sirena.nina.companion.ui.sirena.SirenaSectionLabel
+import com.sirena.nina.companion.ui.sirena.SirenaType
+import com.sirena.nina.companion.ui.sirena.SirenaPerceptionScreen
+import com.sirena.nina.companion.ui.sirena.SirenaPlaceholderScreen
+import com.sirena.nina.companion.ui.sirena.SirenaSettingsScreen
+import com.sirena.nina.companion.ui.sirena.LocalSirenaShellCompact
+import com.sirena.nina.companion.ui.sirena.SirenaNavDrawerSheetContent
+import com.sirena.nina.companion.ui.sirena.SirenaShellFooter
+import com.sirena.nina.companion.ui.sirena.SirenaShellHeader
+import com.sirena.nina.companion.ui.sirena.SirenaSidebar
+import com.sirena.nina.companion.ui.sirena.SirenaVisionScreen
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.isActive
+import org.json.JSONObject
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Layout aligned with [sirena_ui.main_window.MainWindow]: **full-width** red header, **sidebar** (tablet)
+ * or **hamburger drawer** (compact phones), main **cloud** column, light **status strip** at bottom.
+ */
 @Composable
-fun NinaApp(vm: CompanionViewModel) {
-    val state by vm.state.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    var showNinaConsole by rememberSaveable { mutableStateOf(false) }
-    val snack = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-
-    Box(Modifier.fillMaxSize()) {
-        Scaffold(
-        snackbarHost = { SnackbarHost(snack) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "Sirena UI",
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = {
-                        NinaLog.tap("Main", "bottom_nav", "Home")
-                        tab = 0
-                    },
-                    icon = { Icon(Icons.Default.Home, null) },
-                    label = { Text("Home") },
-                )
-                NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = {
-                        NinaLog.tap("Main", "bottom_nav", "Networks")
-                        tab = 1
-                    },
-                    icon = { Icon(Icons.Default.Wifi, null) },
-                    label = { Text("Networks") },
-                )
-                NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = {
-                        NinaLog.tap("Main", "bottom_nav", "Setup")
-                        tab = 2
-                    },
-                    icon = { Icon(Icons.Default.Settings, null) },
-                    label = { Text("Setup") },
-                )
-            }
-        },
-    ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize(),
-        ) {
-            when (tab) {
-                0 ->
-                    HomeTab(
-                        vm = vm,
-                        snack = snack,
-                        onOpenNinaConsole = { showNinaConsole = true },
-                        onGoNetworks = { tab = 1 },
-                        onGoSetup = { tab = 2 },
-                    )
-                1 -> NetworksTab(state = state, vm = vm, snack = snack)
-                2 -> SetupTab(vm = vm, snack = snack)
-            }
-        }
-        }
-
-        if (showNinaConsole) {
-            NinaConsoleScreen(
-                vm = vm,
-                state = state,
-                onBack = { showNinaConsole = false },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    }
-
-    LaunchedEffect(showNinaConsole) {
-        vm.notifyRobotConsoleVisibility(showNinaConsole)
-    }
-
-    LaunchedEffect(state) {
-        if (state is CompanionUiState.Error) {
-            snack.showSnackbar((state as CompanionUiState.Error).text)
-        }
-    }
-}
-
-@Composable
-private fun HomeTab(
+fun NinaApp(
     vm: CompanionViewModel,
-    snack: SnackbarHostState,
-    onOpenNinaConsole: () -> Unit,
-    onGoNetworks: () -> Unit,
-    onGoSetup: () -> Unit,
+    onBackToProductHub: (() -> Unit)? = null,
 ) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val discovered by vm.discoveredDaemons.collectAsStateWithLifecycle()
+    val discoveryDiagnostics by vm.discoveryDiagnostics.collectAsStateWithLifecycle()
     val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
+    val robotCaps by vm.robotCapabilities.collectAsStateWithLifecycle()
 
-    Box(
+    var selectedNav by rememberSaveable { mutableStateOf("home") }
+    /** Deep-link from Home quick tiles into Actions subtabs (`playback` / `record` / `audio`). */
+    var actionsSubtab by rememberSaveable { mutableStateOf("playback") }
+    /** One-shot prefill for the Audio tab (Playback **Audio**). Cleared after apply. */
+    var actionsAudioPrefill by rememberSaveable { mutableStateOf<String?>(null) }
+    var clockText by remember {
+        mutableStateOf(LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")))
+    }
+    var batteryRowOk by remember { mutableStateOf(false) }
+
+    val ready = state as? CompanionUiState.Ready
+    val hostLabel = resolveRobotDisplayName(ready, discovered)
+
+    LaunchedEffect(Unit) {
+        vm.refreshStatus()
+    }
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { selectedNav }
+            .distinctUntilChanged()
+            .filter { it == "find" }
+            .collect {
+                vm.scanForDaemons()
+            }
+    }
+
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            clockText = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+            delay(30_000L)
+        }
+    }
+
+    LaunchedEffect(ready?.url, jetsonLink.isOnline) {
+        while (isActive) {
+            if (ready != null && jetsonLink.isOnline) {
+                val h = vm.fetchDaemonHealth()
+                batteryRowOk = healthBatteryOk(h)
+            } else {
+                batteryRowOk = false
+            }
+            delay(5000L)
+        }
+    }
+
+    val companionNavEntries =
+        remember(onBackToProductHub) {
+            buildList {
+                if (onBackToProductHub != null) {
+                    add(NavEntry("products", "\u25A4", "Products"))
+                }
+                addAll(SirenaNavCatalog.companionNav)
+            }
+        }
+
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+            .background(SirenaColors.cloud),
     ) {
-        val jetsonOnline = jetsonLink.isOnline
-        Text(
-            text = if (jetsonOnline) "Jetson online" else "Jetson offline",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Medium,
-            color =
-                if (jetsonOnline) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            modifier = Modifier.align(Alignment.TopEnd),
-        )
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.Center),
-        ) {
-            Image(
-                painter = painterResource(R.drawable.sirena_technologies_logo_color),
-                contentDescription = null,
-                modifier =
-                    Modifier
-                        .heightIn(max = 112.dp)
-                        .widthIn(max = 280.dp),
-                contentScale = ContentScale.Fit,
-            )
-            Text(
-                "Sirena UI",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                "Connection and diagnostics live under Setup.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Button(
-                onClick = {
-                    NinaLog.tap("Home", "open_robot_ui")
-                    onOpenNinaConsole()
-                },
-                modifier =
-                    Modifier
-                        .widthIn(min = 220.dp, max = 400.dp)
-                        .fillMaxWidth(0.85f),
-            ) {
-                Text("Nina")
+        val configuration = LocalConfiguration.current
+        /** Drawer + dense home: phones (`sw<600`) or physically small compose window (split-screen, etc.). */
+        val shellCompact =
+            configuration.smallestScreenWidthDp < SirenaBreakpointCompactSmallestWidthDp ||
+                maxWidth < SirenaBreakpointCompactWidth ||
+                maxHeight < SirenaBreakpointCompactHeight
+        val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+        val scope = rememberCoroutineScope()
+
+        fun applyNavSelection(key: String) {
+            if (key == "products") {
+                onBackToProductHub?.invoke()
+            } else {
+                selectedNav = key
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(
-                    onClick = {
-                        NinaLog.tap("Home", "networks_shortcut")
-                        onGoNetworks()
-                    },
+        }
+
+        val shellBody: @Composable () -> Unit = {
+            CompositionLocalProvider(LocalSirenaShellCompact provides shellCompact) {
+                Column(Modifier.fillMaxSize()) {
+                SirenaShellHeader(
+                    modifier = Modifier.fillMaxWidth(),
+                    title = SirenaNavCatalog.headerTitle(selectedNav),
+                    clockText = clockText,
+                    connectedLabel = hostLabel,
+                    jetsonOnline = jetsonLink.isOnline,
+                    showProductHubBack = onBackToProductHub != null,
+                    onProductHubBack = onBackToProductHub,
+                    showNavDrawerMenu = shellCompact,
+                    onNavDrawerMenuClick =
+                        if (shellCompact) {
+                            { scope.launch { drawerState.open() } }
+                        } else {
+                            null
+                        },
+                    compact = shellCompact,
+                )
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                 ) {
-                    Text("Networks")
+                    if (!shellCompact) {
+                        SirenaSidebar(
+                            modifier = Modifier.fillMaxHeight(),
+                            robotItems = SirenaNavCatalog.robotNav,
+                            companionItems = companionNavEntries,
+                            selectedKey = selectedNav,
+                            compact = false,
+                            onSelect = { applyNavSelection(it) },
+                            versionLabel = "v1.0.0",
+                            hostLabel = hostLabel,
+                        )
+                    }
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    ) {
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .background(SirenaColors.cloud),
+                        ) {
+                    when (val s = state) {
+                        is CompanionUiState.Error -> {
+                            SirenaCard(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                kind = SirenaCardKind.Error,
+                            ) {
+                                Text(
+                                    s.text,
+                                    color = SirenaColors.pillErrorFg,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                SirenaMutedText(
+                                    "You can retry the request or continue using Find robot, Network, and Settings.",
+                                    maxLines = 3,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            NinaLog.debug("NinaApp", "errorBanner Retry")
+                                            vm.refreshStatus()
+                                        },
+                                    ) { Text("Retry") }
+                                    TextButton(
+                                        onClick = {
+                                            NinaLog.debug("NinaApp", "errorBanner Continue")
+                                            vm.dismissErrorToDegradedReady()
+                                        },
+                                    ) {
+                                        Text("Continue")
+                                    }
+                                }
+                            }
+                        }
+                        is CompanionUiState.Loading -> {
+                            SirenaCard(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                kind = SirenaCardKind.Subtle,
+                            ) {
+                                Text("Loading robot status…", color = SirenaColors.text)
+                            }
+                        }
+                        else -> Unit
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth().fillMaxHeight()) {
+                    val navigateQuick: (String) -> Unit = { key ->
+                        NinaLog.debug("NinaApp", "navigateQuick key=$key")
+                        when {
+                            key.startsWith("actions:") -> {
+                                actionsSubtab = key.removePrefix("actions:")
+                                selectedNav = "actions"
+                            }
+                            else -> selectedNav = key
+                        }
+                    }
+                    when (selectedNav) {
+                        "find" ->
+                            DiscoveryTab(
+                                vm = vm,
+                                state = state,
+                                discovered = discovered,
+                                diagnostics = discoveryDiagnostics,
+                                shellCompact = shellCompact,
+                            )
+                        "network" ->
+                            NetworkTab(
+                                vm = vm,
+                                state = state,
+                                shellCompact = shellCompact,
+                            )
+                        "drive" ->
+                            SirenaDriveScreen(
+                                vm = vm,
+                                caps = robotCaps,
+                                daemonUrl = ready?.url,
+                                shellCompact = shellCompact,
+                            )
+                        "vision" ->
+                            SirenaVisionScreen(
+                                vm = vm,
+                                daemonUrl = ready?.url,
+                                caps = robotCaps,
+                                shellCompact = shellCompact,
+                            )
+                        "perception" ->
+                            SirenaPerceptionScreen(
+                                vm = vm,
+                                daemonUrl = ready?.url,
+                                shellCompact = shellCompact,
+                            )
+                        "map" ->
+                            SirenaMapScreen(
+                                vm = vm,
+                                daemonUrl = ready?.url,
+                                caps = robotCaps,
+                                shellCompact = shellCompact,
+                            )
+                        "home" ->
+                            SirenaHomeScreen(
+                                state = state,
+                                jetsonOnline = jetsonLink.isOnline,
+                                robotDisplayName = resolveRobotDisplayName(ready, discovered),
+                                systemId = robotHomeSystemId(ready),
+                                ipv4 = robotHomePublicSubtitle(ready),
+                                onNavigate = navigateQuick,
+                                shellCompact = shellCompact,
+                            )
+                        "actions" ->
+                            SirenaActionsScreen(
+                                vm = vm,
+                                initialSubtab = actionsSubtab,
+                                caps = robotCaps,
+                                shellCompact = shellCompact,
+                                prefillAudioAction = actionsAudioPrefill,
+                                onPrefillAudioConsumed = { actionsAudioPrefill = null },
+                                onPlaybackOpenAudioEditor = { name ->
+                                    actionsSubtab = "audio"
+                                    actionsAudioPrefill = name
+                                },
+                            )
+                        "settings" ->
+                            SirenaSettingsScreen(
+                                vm = vm,
+                                state = state,
+                                shellCompact = shellCompact,
+                                onOpenNetworkTab = { selectedNav = "network" },
+                                onNavigateToHealth = { selectedNav = "health" },
+                                onBackToProductHub = onBackToProductHub,
+                            )
+                        "health" -> SirenaHealthScreen(vm = vm, shellCompact = shellCompact)
+                        else -> SirenaPlaceholderScreen(selectedNav, selectedNav)
+                    }
+                    }
                 }
-                TextButton(
-                    onClick = {
-                        NinaLog.tap("Home", "setup_shortcut")
-                        onGoSetup()
-                    },
-                ) {
-                    Text("Setup")
-                }
+                SirenaShellFooter(
+                    modifier = Modifier.fillMaxWidth(),
+                    busOk = jetsonLink.isOnline,
+                    wifiOk = jetsonLink.isOnline,
+                    batteryOk = batteryRowOk,
+                    voiceOk = jetsonLink.isOnline,
+                    rightCaption =
+                        if (jetsonLink.isOnline) {
+                            "link OK"
+                        } else {
+                            "offline"
+                        },
+                )
             }
+        }
+            }
+            }
+        }
+
+        if (shellCompact) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(drawerContainerColor = Color.Transparent) {
+                        SirenaNavDrawerSheetContent(
+                            robotItems = SirenaNavCatalog.robotNav,
+                            companionItems = companionNavEntries,
+                            selectedKey = selectedNav,
+                            onSelect = { key ->
+                                scope.launch { drawerState.close() }
+                                applyNavSelection(key)
+                            },
+                            versionLabel = "v1.0.0",
+                            hostLabel = hostLabel,
+                        )
+                    }
+                },
+                content = shellBody,
+            )
+        } else {
+            shellBody()
         }
     }
 }
 
+/** Match saved daemon URL to scan results so hostname / system_id show before the next full status refresh. */
+private fun normalizeDaemonBaseUrl(url: String): String = url.trim().trimEnd('/').lowercase()
+
+private fun resolveRobotDisplayName(
+    ready: CompanionUiState.Ready?,
+    discovered: List<com.sirena.nina.companion.DiscoveredDaemonUi>,
+): String {
+    val st = ready?.status
+    val fromStatus =
+        st?.displayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: st?.hostname?.trim()?.takeIf { it.isNotEmpty() }
+    if (!fromStatus.isNullOrBlank()) return fromStatus
+    val base = ready?.url?.trim()?.takeIf { it.isNotEmpty() } ?: return "Nina"
+    val key = normalizeDaemonBaseUrl(base)
+    val row = discovered.firstOrNull { normalizeDaemonBaseUrl(it.baseUrl) == key }
+    val fromScan =
+        row?.displayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: row?.hostname?.trim()?.takeIf { it.isNotEmpty() }
+            ?: row?.systemId?.trim()?.takeIf { it.isNotEmpty() }
+    if (!fromScan.isNullOrBlank()) return fromScan
+    return Uri.parse(base).host?.takeIf { it.isNotEmpty() } ?: "Nina"
+}
+
+/** Shown under robot name (non-sensitive), e.g. IPv4. */
+private fun robotHomePublicSubtitle(ready: CompanionUiState.Ready?): String? =
+    ready?.status?.ipv4?.trim()?.takeIf { it.isNotBlank() }
+
+private fun robotHomeSystemId(ready: CompanionUiState.Ready?): String? =
+    ready?.status?.systemId?.trim()?.takeIf { it.isNotBlank() }
+
+private fun discoveredRobotTitle(d: com.sirena.nina.companion.DiscoveredDaemonUi): String {
+    val friendly = d.displayName?.trim()?.takeIf { it.isNotEmpty() }
+    if (!friendly.isNullOrBlank()) return friendly
+    val h = d.hostname?.trim()?.takeIf { it.isNotEmpty() }
+    if (!h.isNullOrBlank()) return h
+    val sid = d.systemId?.trim()?.takeIf { it.isNotEmpty() }
+    if (!sid.isNullOrBlank()) return sid
+    return Uri.parse(d.baseUrl).host?.takeIf { it.isNotEmpty() } ?: "Robot"
+}
+
+private fun healthBatteryOk(h: JSONObject?): Boolean {
+    val rows = h?.optJSONArray("rows") ?: return false
+    for (i in 0 until rows.length()) {
+        val o = rows.optJSONObject(i) ?: continue
+        if (o.optString("key") == "battery") {
+            val st = o.optString("state").lowercase()
+            return st == "ok" || st == "ready"
+        }
+    }
+    return false
+}
+
 @Composable
-private fun SetupDiagnosticsCard(snack: SnackbarHostState) {
-    val ctx = LocalContext.current
+private fun DiscoveryTab(
+    vm: CompanionViewModel,
+    state: CompanionUiState,
+    discovered: List<com.sirena.nina.companion.DiscoveredDaemonUi>,
+    diagnostics: DiscoveryDiagnosticsUi,
+    shellCompact: Boolean,
+) {
     val scope = rememberCoroutineScope()
-    val logFile = NinaFileLogger.activeLogFile(ctx)
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+    var findConnectError by remember { mutableStateOf<String?>(null) }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(
+                horizontal = if (shellCompact) 4.dp else 12.dp,
+                vertical = if (shellCompact) 3.dp else 10.dp,
+            ),
+        verticalArrangement = Arrangement.spacedBy(if (shellCompact) 3.dp else 10.dp),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Session log", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+        SirenaBreadcrumbLine(listOf("Nina", "Find robot"))
+
+        SirenaCard(kind = SirenaCardKind.Callout) {
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(if (shellCompact) 6.dp else 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        NinaFileLogger.ACTIVE_LOG_NAME,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        "logs/ · app-private storage",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "export_session_log")
-                        if (!logFile.exists()) {
-                            scope.launch {
-                                snack.showSnackbar("No log file yet — use the app, then try again.")
-                            }
-                            return@OutlinedButton
-                        }
-                        val uri =
-                            FileProvider.getUriForFile(
-                                ctx,
-                                "${ctx.packageName}.fileprovider",
-                                logFile,
-                            )
-                        val send =
-                            Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                clipData = ClipData.newUri(ctx.contentResolver, "Session log", uri)
-                            }
-                        ctx.startActivity(Intent.createChooser(send, "Export session log"))
-                    },
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(if (shellCompact) 3.dp else 4.dp),
                 ) {
-                    Text("Export")
+                    Text(
+                        "Discover Nina on your network",
+                        fontWeight = FontWeight.Bold,
+                        color = SirenaColors.text,
+                        fontSize = if (shellCompact) 13.sp else SirenaType.cardTitle,
+                    )
+                    SirenaMutedText(
+                        if (shellCompact) {
+                            "mDNS + LAN scan for link daemon (8787)."
+                        } else {
+                            "Scans mDNS and your LAN for the link daemon (port 8787). Use Connect to save a daemon — the app does not auto-pick one."
+                        },
+                        maxLines = if (shellCompact) 1 else 4,
+                    )
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(if (shellCompact) 4.dp else 6.dp),
+                ) {
+                    SirenaPrimaryButton(
+                        text = if (diagnostics.isScanning) "Scanning…" else "Scan LAN",
+                        onClick = { vm.scanForDaemons() },
+                        enabled = !diagnostics.isScanning,
+                        modifier = Modifier.widthIn(min = 120.dp),
+                    )
+                    SirenaSecondaryButton(
+                        text = "Refresh status",
+                        onClick = { vm.refreshStatus() },
+                    )
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun StatusGridCard(st: StatusUi) {
-    val rows =
-        buildList {
-            add("Wi‑Fi role" to st.wifiRole)
-            add("IPv4" to (st.ipv4 ?: "—"))
-            add("User mode" to st.userMode)
-            add("Boot window" to "${st.bootWaitRemainingSec}s")
-            add("Client seen" to if (st.clientSeen) "Yes" else "—")
-            st.apSsid?.let { add("AP SSID" to it) }
-            if (!st.activeStaSsid.isNullOrBlank()) {
-                add("STA SSID" to st.activeStaSsid!!)
-                st.activeStaProfile?.let { add("NM profile" to it) }
+        val tabReady = state as? CompanionUiState.Ready
+        val active = tabReady?.status
+        val connectedTitle = resolveRobotDisplayName(tabReady, discovered)
+
+        @Composable
+        fun DiagnosticsCard(modifier: Modifier = Modifier) {
+            SirenaCard(modifier = modifier, kind = SirenaCardKind.Subtle) {
+                Text("Discovery diagnostics", fontWeight = FontWeight.SemiBold, color = SirenaColors.text)
+                Spacer(Modifier.height(if (shellCompact) 4.dp else 6.dp))
+                SirenaMutedText("This tablet: ${diagnostics.deviceIpv4 ?: "—"}")
+                SirenaMutedText("Subnet scanned: ${(diagnostics.subnetPrefix?.plus(".x")) ?: "—"} · hosts ${diagnostics.hostCount}")
+                SirenaMutedText("Probes: ${diagnostics.probeAttempts} · responsive ${diagnostics.successfulHosts} · failed ${diagnostics.failedProbes}")
+                SirenaMutedText(
+                    "Last scan: ${diagnostics.durationMs?.let { "${it} ms" } ?: "—"}",
+                )
+                diagnostics.lastError?.let {
+                    SirenaMutedText(
+                        "Last scan did not finish cleanly — try Scan LAN again or use the product hub radar.",
+                        maxLines = 3,
+                    )
+                }
             }
         }
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Jetson link", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-            rows.chunked(2).forEach { pair ->
+
+        @Composable
+        fun ConnectedCard(modifier: Modifier = Modifier) {
+            SirenaCard(modifier = modifier) {
+                Text("Currently connected", fontWeight = FontWeight.SemiBold, color = SirenaColors.text)
+                Spacer(Modifier.height(if (shellCompact) 4.dp else 6.dp))
+                Text(
+                    connectedTitle,
+                    fontWeight = FontWeight.Bold,
+                    color = SirenaColors.text,
+                )
+                SirenaMutedText("Configured name: ${active?.displayName ?: "—"}")
+                SirenaMutedText("Reported host: ${active?.hostname ?: "—"}")
+                SirenaMutedText("System ID: ${active?.systemId ?: "—"} · Role: ${active?.wifiRole ?: "—"}")
+            }
+        }
+
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val split = maxWidth >= 520.dp
+            if (split) {
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    pair.forEach { (label, value) ->
-                        StatusStatCell(label, value, Modifier.weight(1f))
-                    }
-                    if (pair.size == 1) {
-                        Spacer(Modifier.weight(1f))
-                    }
+                    DiagnosticsCard(Modifier.weight(1f))
+                    ConnectedCard(Modifier.weight(1f))
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(if (shellCompact) 6.dp else 10.dp),
+                ) {
+                    DiagnosticsCard(Modifier.fillMaxWidth())
+                    ConnectedCard(Modifier.fillMaxWidth())
                 }
             }
-            st.lastError?.let {
+        }
+
+        SirenaSectionLabel("Nearby systems")
+        findConnectError?.let { err ->
+            SirenaCard(kind = SirenaCardKind.Error) {
                 Text(
-                    "Last error: $it",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
+                    err,
+                    color = SirenaColors.pillErrorFg,
+                    fontSize = if (shellCompact) 9.sp else SirenaType.muted,
+                    maxLines = 3,
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun StatusStatCell(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.padding(vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            value,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun NetworksTab(
-    state: CompanionUiState,
-    vm: CompanionViewModel,
-    snack: SnackbarHostState,
-) {
-    val scope = rememberCoroutineScope()
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-    ) {
-        Text(
-            "Saved on Jetson",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Connect Jetson asks the robot to join that profile (STA). Then join the same Wi‑Fi on " +
-                "this tablet and tap Refresh in Setup.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(12.dp))
-        when (state) {
-            is CompanionUiState.Ready -> {
-                val list = state.status?.savedNetworks.orEmpty()
-                if (list.isEmpty()) {
-                    Text(
-                        "No profiles yet. Add home Wi‑Fi under Setup.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(list, key = { it.uuid }) { net ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text(net.ssid, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                                    Text(
-                                        net.uuid,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        if (net.nmAutoconnect) "NM autoconnect: on" else "NM autoconnect: off",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.height(8.dp))
+        if (discovered.isEmpty()) {
+            SirenaCard(kind = SirenaCardKind.Subtle) {
+                SirenaMutedText(
+                    if (shellCompact) {
+                        "No systems — Scan LAN or use product hub."
+                    } else {
+                        "No systems found yet. Open the product hub radar or tap Scan LAN. Ensure nina-link is running."
+                    },
+                    maxLines = if (shellCompact) 2 else 4,
+                )
+            }
+        } else {
+            val shown = if (shellCompact) discovered.take(6) else discovered
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val cols =
+                    when {
+                        shellCompact && maxWidth >= 720.dp -> 3
+                        shellCompact -> 2
+                        maxWidth >= 520.dp -> 2
+                        else -> 1
+                    }
+                val gap = if (shellCompact) 5.dp else 10.dp
+                Column(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    shown.chunked(cols).forEach { row ->
+                        Row(
+                            Modifier
+                                .then(
+                                    if (shellCompact) {
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                    } else {
+                                        Modifier.fillMaxWidth()
+                                    },
+                                ),
+                            horizontalArrangement = Arrangement.spacedBy(gap),
+                        ) {
+                            row.forEach { d ->
+                                val title = discoveredRobotTitle(d)
+                                SirenaCard(
+                                    modifier = Modifier.weight(1f),
+                                ) {
                                     Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement =
+                                            Arrangement.spacedBy(if (shellCompact) 6.dp else 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Button(
+                                        Column(
+                                            Modifier.weight(1f),
+                                            verticalArrangement =
+                                                Arrangement.spacedBy(if (shellCompact) 3.dp else 4.dp),
+                                        ) {
+                                            Text(
+                                                title,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SirenaColors.text,
+                                                fontSize = if (shellCompact) 13.sp else SirenaType.cardTitle,
+                                            )
+                                            SirenaMutedText(d.baseUrl, maxLines = 2)
+                                            d.systemId?.let { sid ->
+                                                if (sid.isNotBlank()) {
+                                                    SirenaMutedText("ID · $sid", maxLines = 1)
+                                                }
+                                            }
+                                        }
+                                        SirenaPrimaryButton(
+                                            text = "Connect",
                                             onClick = {
-                                                NinaLog.tap("Networks", "connect_jetson", net.ssid)
-                                                vm.connectJetsonHome(net.ssid)
                                                 scope.launch {
-                                                    snack.showSnackbar(
-                                                        "Jetson is connecting to “${net.ssid}”. " +
-                                                            "When online, join that Wi‑Fi on this tablet, open the app, tap Refresh in Setup.",
-                                                    )
+                                                    findConnectError =
+                                                        vm.connectDiscoveredAndRefresh(d.baseUrl)
                                                 }
                                             },
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Text("Connect Jetson")
-                                        }
-                                        OutlinedButton(
-                                            onClick = {
-                                                NinaLog.tap("Networks", "delete_profile", net.ssid)
-                                                vm.deleteProfile(net.id)
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Text("Remove")
-                                        }
+                                            modifier = Modifier.height(40.dp),
+                                        )
                                     }
                                 }
                             }
@@ -473,376 +675,23 @@ private fun NetworksTab(
                     }
                 }
             }
-            else -> Text("Connect to the robot first (Refresh in Setup).")
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
-    val scope = rememberCoroutineScope()
-    val ctx = LocalContext.current
-    val gatewayHint by vm.gatewayHint.collectAsStateWithLifecycle(null)
-    val state by vm.state.collectAsStateWithLifecycle()
-    val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(Prefs.DEFAULT_BASE_URL)
-    var urlDraft by remember { mutableStateOf<String?>(null) }
-    val url = urlDraft ?: savedUrl
-    var bearer by remember { mutableStateOf("") }
-    var pin by remember { mutableStateOf("") }
-    var showToken by remember { mutableStateOf<String?>(null) }
-    var ssid by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-
-    if (showToken != null) {
-        AlertDialog(
-            onDismissRequest = { showToken = null },
-            confirmButton = {
-                TextButton(onClick = { showToken = null }) { Text("OK") }
-            },
-            title = { Text("Session token saved") },
-            text = { Text("Stored for API calls. You can paste a token manually below if needed.") },
-        )
-    }
-
-    val scrollState = rememberScrollState()
-
-    @Composable
-    fun WifiBlock() {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Home Wi‑Fi (Jetson)", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
-            Text(
-                "Saved on the Jetson (Network settings).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                ssid,
-                onValueChange = { ssid = it },
-                label = { Text("SSID") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = {
-                        NinaLog.tap("Setup", "save_wifi_credentials_only")
-                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = false)
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Save creds")
-                }
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "save_wifi_and_connect_jetson")
-                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = true)
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Save & connect")
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "connect_jetson_first_saved")
-                        vm.connectJetsonHome(null)
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Connect saved")
-                }
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "force_ap_on_jetson")
-                        vm.startApOnJetson()
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Force AP")
-                }
-            }
-        }
-    }
-
-    @Composable
-    fun DaemonAuthBlock() {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Daemon URL", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(
-                url,
-                onValueChange = { urlDraft = it },
-                label = { Text("http://gateway:8787") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Text(
-                "Use Wi‑Fi gateway, not this tablet’s IP.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(
-                onClick = {
-                    NinaLog.tap("Setup", "save_and_test_daemon_url")
-                    vm.saveBaseUrl(url)
-                    vm.ping(url)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Save & test")
-            }
-            Text("Auth", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(
-                bearer,
-                onValueChange = { bearer = it },
-                label = { Text("Bearer (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Button(
-                onClick = {
-                    NinaLog.tap("Setup", "save_bearer")
-                    vm.saveBearer(bearer.takeIf { it.isNotBlank() })
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Save token")
-            }
-            OutlinedTextField(
-                pin,
-                onValueChange = { pin = it },
-                label = { Text("Pairing PIN") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Button(
-                onClick = {
-                    NinaLog.tap("Setup", "pair_pin")
-                    vm.pair(pin) { tok ->
-                        showToken = tok
-                        scope.launch { snack.showSnackbar("Paired; token stored.") }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Pair")
-            }
-        }
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        Column(
+private fun NetworkTab(
+    vm: CompanionViewModel,
+    state: CompanionUiState,
+    shellCompact: Boolean,
+) {
+    SirenaNetworkSettingsScrollContent(
+        vm = vm,
+        state = state,
+        breadcrumbParts = listOf("Nina", "Network"),
+        modifier =
             Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .align(Alignment.TopCenter),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Column(
-                Modifier
-                    .widthIn(max = 720.dp)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Card(
-                    Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
-                ) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Connection", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Wi‑Fi shortcuts and live Jetson status.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    NinaLog.tap("Setup", "wifi_settings")
-                                    ctx.startActivity(
-                                        Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                    )
-                                    scope.launch {
-                                        snack.showSnackbar("Join the Jetson Wi‑Fi, then return and tap Refresh.")
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Wi‑Fi")
-                            }
-                            Button(
-                                onClick = {
-                                    NinaLog.tap("Setup", "refresh_status")
-                                    vm.refreshStatus()
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Refresh")
-                            }
-                        }
-                        gatewayHint?.let { hint ->
-                            Text(
-                                hint,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                }
-
-                when (state) {
-                    CompanionUiState.Loading ->
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-
-                    is CompanionUiState.Error ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                            Text(
-                                (state as CompanionUiState.Error).text,
-                                Modifier.padding(12.dp),
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                        }
-
-                    is CompanionUiState.Ready -> {
-                        val ready = state as CompanionUiState.Ready
-                        val st = ready.status
-                        if (st != null && st.wifiRole == "ap") {
-                            Card(
-                                Modifier.fillMaxWidth(),
-                                colors =
-                                    CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    ),
-                            ) {
-                                Text(
-                                    "On robot access point (Nina Link).",
-                                    Modifier.padding(12.dp),
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        }
-                        if (st != null) {
-                            Text(
-                                "Daemon: ${ready.url}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            StatusGridCard(st)
-                        }
-                    }
-                }
-
-                SetupDiagnosticsCard(snack = snack)
-
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val split = maxWidth >= 520.dp
-                    if (split) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Card(
-                                Modifier.weight(1f),
-                                colors = CardDefaults.cardColors(),
-                            ) {
-                                Column(Modifier.padding(12.dp)) {
-                                    WifiBlock()
-                                }
-                            }
-                            Card(
-                                Modifier.weight(1f),
-                                colors = CardDefaults.cardColors(),
-                            ) {
-                                Column(Modifier.padding(12.dp)) {
-                                    DaemonAuthBlock()
-                                }
-                            }
-                        }
-                    } else {
-                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-                            Column(Modifier.padding(12.dp)) {
-                                WifiBlock()
-                            }
-                        }
-                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-                            Column(Modifier.padding(12.dp)) {
-                                DaemonAuthBlock()
-                            }
-                        }
-                    }
-                }
-
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Boot mode", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Button(
-                                onClick = {
-                                    NinaLog.tap("Setup", "mode", "boot_default")
-                                    vm.setMode("boot_default")
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(
-                                    "Default",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    NinaLog.tap("Setup", "mode", "force_ap")
-                                    vm.setMode("force_ap")
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(
-                                    "AP",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    NinaLog.tap("Setup", "mode", "force_sta")
-                                    vm.setMode("force_sta")
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(
-                                    "STA",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                .padding(if (shellCompact) 4.dp else 10.dp),
+    )
 }

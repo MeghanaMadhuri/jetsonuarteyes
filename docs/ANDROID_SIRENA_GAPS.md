@@ -41,7 +41,7 @@ The Jetpack app is a **remote client** to **`nina-link`**. This document tracks 
 
 | Region | Desktop | Android |
 |--------|---------|---------|
-| Breadcrumb + sections | Cards for pipeline / face / object | **Partial** — HTTP-backed controls; layout tightened with section titles |
+| Breadcrumb + sections | Cards for pipeline / face / object / person follow | **Present** — follow + snapshot + enroll over `/v1/vision/*` (same Jetson stack as Qt) |
 
 ## Perception (`perception_screen.py` → `SirenaPerceptionScreen.kt`)
 

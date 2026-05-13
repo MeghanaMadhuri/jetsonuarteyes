@@ -136,17 +136,15 @@ say "import check"
 export PYTHONPATH="${REPO_ROOT}"
 IMPORT_ERR="$(mktemp "${TMPDIR:-/tmp}/nina-link-upd.XXXXXX.err")"
 if "${PY}" -c "
-from nina.link_daemon.config import load_config
-from nina.link_daemon.nm import mock_backend
-from nina.link_daemon.state import LinkCoordinator
-from nina.link_daemon.api import create_app
+from nina.jetson_net.config import load_config
+from nina.jetson_net.nm import mock_backend
+from nina.jetson_net.state import LinkCoordinator
 c = load_config()
 co = LinkCoordinator(c, mock_backend())
-app = create_app(c, co)
-print(app.title)
+print('ok', co.cfg.port)
 " 2>"${IMPORT_ERR}"; then
     rm -f "${IMPORT_ERR}"
-    ok "nina.link_daemon imports OK"
+    ok "nina.jetson_net imports OK"
 else
     bad "Import failed:"
     sed 's/^/    /' "${IMPORT_ERR}" >&2

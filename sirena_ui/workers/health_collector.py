@@ -30,6 +30,7 @@ import shutil
 from dataclasses import dataclass
 from typing import List, Optional
 
+from nina.config.settings import serial_collision_warnings
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -238,6 +239,7 @@ def _lidar_row(service: NinaService) -> HealthRow:
         connected = bool(st.get("lidar_connected", False))
         msg = str(st.get("lidar_message", "") or "")
         running = bool(st.get("running", False))
+        disabled = bool(st.get("lidar_disabled", False))
         # Worker-reported label takes precedence (it knows which
         # driver actually opened, which matters in 'auto' mode).
         worker_model = str(st.get("lidar_model", "") or "")
@@ -248,19 +250,32 @@ def _lidar_row(service: NinaService) -> HealthRow:
             "lidar", label, "\u25A6",
             f"status query failed: {exc}", STATUS_ERROR,
         )
+    if disabled:
+        # Operator explicitly opted out via NINA_LIDAR_MODEL=disabled;
+        # the SLAM stack runs in placeholder mode and we don't want to
+        # paint the row red just for that. Neutral pill, no collision
+        # warning (it's moot when the driver is a no-op).
+        return HealthRow(
+            "lidar", label, "\u25A6",
+            msg or "Lidar disabled by operator", STATUS_PENDING,
+        )
+    collisions = serial_collision_warnings(service.settings)
+    collision_hint = ""
+    if collisions:
+        collision_hint = f" | serial collision: {collisions[0]}"
     if not running:
         return HealthRow(
             "lidar", label, "\u25A6",
-            msg or "stopped", STATUS_PENDING,
+            (msg or "stopped") + collision_hint, STATUS_PENDING,
         )
     if not connected:
         return HealthRow(
             "lidar", label, "\u25A6",
-            msg or "Lidar not detected", STATUS_ERROR,
+            (msg or "Lidar not detected") + collision_hint, STATUS_ERROR,
         )
     return HealthRow(
         "lidar", label, "\u25A6",
-        msg or "scanning", STATUS_OK,
+        (msg or "scanning") + collision_hint, STATUS_OK,
     )
 
 
@@ -325,22 +340,37 @@ def _depth_row(service: NinaService) -> HealthRow:
 
 
 def _drive_row(service: NinaService) -> HealthRow:
+    # Label sourced from the active drive backend so we don't lie when
+    # the production stack swaps GPIO/JYQD for hoverboard-lean via
+    # Dynamixel. `HoverboardAxisDrive.DRIVER_LABEL` is
+    # "Hoverboard lean — Dynamixel AX-18 (ID 12+13)"; an older
+    # NavigationManager would set it to something starting with "BLDC".
+    try:
+        from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
+        default_label = HoverboardAxisDrive.DRIVER_LABEL
+    except Exception:
+        default_label = "Drive"
+
     drive = getattr(service, "_drive", None)
     if drive is None:
         return HealthRow(
-            "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
+            "bldc", default_label, "\u2B95",
             "Not opened yet (visit Drive tab)", STATUS_PENDING,
         )
+    # If a nav_manager is reachable, prefer its self-reported label so
+    # custom backends (sim, vendor-specific) surface their own name.
+    nav = getattr(drive, "_nav_manager", None)
+    label = getattr(nav, "DRIVER_LABEL", default_label) if nav is not None else default_label
     try:
         st = drive.state()
     except Exception as exc:
         return HealthRow(
-            "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
+            "bldc", label, "\u2B95",
             f"state() failed: {exc}", STATUS_ERROR,
         )
     if not isinstance(st, dict):
         return HealthRow(
-            "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
+            "bldc", label, "\u2B95",
             "state() returned unexpected type", STATUS_ERROR,
         )
     connected = bool(st.get("connected", False))
@@ -350,7 +380,7 @@ def _drive_row(service: NinaService) -> HealthRow:
     detail = f"{direction} @ {speed}%" + (f" - {msg}" if msg else "")
     if connected:
         return HealthRow(
-            "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
+            "bldc", label, "\u2B95",
             detail, STATUS_OK,
         )
     # Drive controller exists but the underlying nav backend hasn't
@@ -358,11 +388,9 @@ def _drive_row(service: NinaService) -> HealthRow:
     # _do_init task). That's normal during the first ~second after the
     # operator opens the Drive tab; reporting WARN is honest because
     # the user can't actually drive yet.
-    backend = "Jetson GPIO"
-    suffix = f" — {backend}"
     return HealthRow(
-        "bldc", "BLDC drive (JYQD V7.3E2)", "\u2B95",
-        (msg or "initialising") + suffix, STATUS_WARN,
+        "bldc", label, "\u2B95",
+        (msg or "initialising"), STATUS_WARN,
     )
 
 

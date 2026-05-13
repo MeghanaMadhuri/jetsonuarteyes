@@ -6,10 +6,18 @@ import android.util.Log
  * Diagnostics: **Logcat** (tag [TAG]) and **on-device file** via [NinaFileLogger]
  * (`files/logs/nina_companion.log`) after [NinaFileLogger.install].
  *
- * Filter Logcat: **`NinaCompanion`**. Pull file: `adb shell run-as com.sirena.nina.companion cat files/logs/nina_companion.log`
+ * Filter Logcat: **`NinaCompanion`** (verbose: show **Debug** level). Pull file:
+ * `adb shell run-as com.sirena.nina.companion cat files/logs/nina_companion.log`
  */
 object NinaLog {
     const val TAG = "NinaCompanion"
+
+    /** Structured diagnostics (ViewModel branches, HTTP summaries). Prefer over scattered `Log.d`. */
+    fun debug(where: String, message: String) {
+        val msg = "$where: $message"
+        Log.d(TAG, msg)
+        NinaFileLogger.append("DEBUG", msg)
+    }
 
     fun tap(screen: String, component: String, detail: String = "") {
         val tail = if (detail.isNotBlank()) " detail=$detail" else ""

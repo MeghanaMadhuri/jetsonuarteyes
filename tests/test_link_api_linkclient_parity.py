@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-API_FILE = REPO / "nina" / "link_daemon" / "api.py"
+API_FILE = REPO / "sirena_ui" / "android_gateway" / "fastapi_app.py"
+DEPTH_STREAM_FILE = REPO / "sirena_ui" / "android_gateway" / "depth_stream.py"
 LINK_CLIENT = (
     REPO
     / "android"
@@ -61,7 +62,7 @@ class TestLinkApiCompanionParity(unittest.TestCase):
 
         text = API_FILE.read_text(encoding="utf-8")
         routes = re.findall(r'@app\.(get|post|put|delete|patch)\(\s*"([^"]+)"', text)
-        self.assertTrue(routes, "expected @app.* route decorators in api.py")
+        self.assertTrue(routes, "expected @app.* route decorators in fastapi_app.py")
 
         blob = _companion_kotlin_blob()
         missing: list[tuple[str, str]] = []
@@ -75,6 +76,20 @@ class TestLinkApiCompanionParity(unittest.TestCase):
             "Add LinkClient (or companion .kt URL) coverage for:\n"
             + "\n".join(f"  {m} {p}" for m, p in missing),
         )
+
+    def test_vision_status_reports_real_toggle_state(self) -> None:
+        text = API_FILE.read_text(encoding="utf-8")
+        self.assertIn('"face_enabled": st.face_enabled', text)
+        self.assertIn('"object_enabled": st.object_enabled', text)
+        self.assertIn('"object_confidence": float(gw.service.vision.get_object_confidence())', text)
+        self.assertIn('"fps": round(fps_val, 2)', text)
+        self.assertNotIn('"face_enabled": True', text)
+        self.assertNotIn('"object_enabled": True', text)
+
+    def test_depth_status_includes_machine_readable_code(self) -> None:
+        text = DEPTH_STREAM_FILE.read_text(encoding="utf-8")
+        self.assertIn('"code"', text)
+        self.assertIn('"ready"', text)
 
 
 if __name__ == "__main__":

@@ -200,9 +200,20 @@ reverse / speed slider so the operator can't fight it on the wheels.
 Toggle off to take back manual control - the wheels park on the way
 out.
 
+On **Jetson + I2S DAC** setups, turning autonomy on can spike CPU and
+cause PulseAudio underruns (tick / hash on the speaker). Install-time
+mitigations live under `nina/systemd/pulse/` (see README there). In
+software you can also stretch bring-up with
+`NINA_AUTONOMY_ENABLE_STAGGER_MS` (default 200 ms total, split across
+steps; set `0` to disable).
+
 Useful env vars:
 
 ```bash
+# Soften CPU spikes when autonomy opens lidar + depth + ultrasonics (Jetson + PulseAudio).
+# Total milliseconds, split across four short sleeps. 0 = off.
+export NINA_AUTONOMY_ENABLE_STAGGER_MS=200
+
 # RPLIDAR
 export NINA_LIDAR_PORT=/dev/ttyUSB0
 export NINA_LIDAR_BAUD=115200

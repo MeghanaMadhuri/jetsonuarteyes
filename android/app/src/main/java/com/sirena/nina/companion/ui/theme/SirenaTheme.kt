@@ -60,11 +60,19 @@ private val DarkColors = darkColorScheme(
     outlineVariant = Color(0xFF48484A),
 )
 
+/**
+ * @param forceLight When true, always use the light “cloud” palette (matches desktop Sirena Qt).
+ */
 @Composable
-fun SirenaTheme(content: @Composable () -> Unit) {
+fun SirenaTheme(forceLight: Boolean = false, content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     MaterialTheme(
-        colorScheme = if (dark) DarkColors else LightColors,
+        colorScheme =
+            when {
+                forceLight -> LightColors
+                dark -> DarkColors
+                else -> LightColors
+            },
         content = content,
     )
 }

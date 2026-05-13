@@ -44,6 +44,8 @@ class VisionStatus:
     camera_open: bool = False
     face_ready: bool = False
     object_ready: bool = False
+    face_enabled: bool = False
+    object_enabled: bool = False
     message: str = ""
 
     def is_ok(self) -> bool:

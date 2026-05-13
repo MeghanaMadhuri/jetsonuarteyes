@@ -11,7 +11,6 @@ one-line fixes - we just need to tell the user which one.
 from __future__ import annotations
 
 import getpass
-import grp
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,6 +18,14 @@ if TYPE_CHECKING:
 
 
 def _user_in_dialout(user: str) -> bool:
+    # `grp` is Linux-only; importing it at module load breaks the
+    # gateway import on Windows dev hosts. The Jetson always has it,
+    # so a lazy import keeps cross-platform smoke tests green without
+    # changing runtime behavior on the bot.
+    try:
+        import grp
+    except ImportError:
+        return False
     try:
         return "dialout" in [g.gr_name for g in grp.getgrall() if user in g.gr_mem]
     except Exception:
@@ -34,6 +41,39 @@ def explain_error(exc: Exception, settings: "NinaSettings") -> str:
         serial_port in raw or "ttyUSB" in raw or "ttyACM" in raw or "/dev/tty" in raw
     )
 
+    # 0) Resource busy / device or resource busy -> serial collision.
+    # The kernel reports EBUSY when two processes open the same tty
+    # (e.g. Dynamixel manager and the RPLIDAR A1 driver both grabbing
+    # /dev/ttyUSB0). The fix is to pick a different port for one of
+    # them, NOT to retry.
+    busy = (
+        "Device or resource busy" in raw
+        or "Resource busy" in raw
+        or "could not exclusively lock" in raw.lower()
+    )
+    if busy and looks_like_serial:
+        from nina.config.settings import serial_collision_warnings
+
+        try:
+            collisions = serial_collision_warnings(settings)
+        except Exception:
+            collisions = []
+        collision_line = (
+            f"\n\nDetected: {collisions[0]}." if collisions else ""
+        )
+        return (
+            f"{serial_port} is already opened by another process."
+            + collision_line
+            + "\n\nThis usually means the Dynamixel bus and the lidar (or "
+            "nav-remote bridge) are both pointed at the same FTDI / "
+            "CP2102 adapter. Pick a different port for the lidar:\n\n"
+            "    export NINA_LIDAR_PORT=/dev/ttyUSB1\n"
+            "    # or set NINA_LIDAR_MODEL=s2e if you have the Slamtec "
+            "S2E (Ethernet) lidar\n\n"
+            "Then relaunch Nina. `ls /dev/ttyUSB* /dev/ttyACM*` shows "
+            "every serial node currently enumerated."
+        )
+
     # 1) FTDI cable missing / different device name
     no_such = (
         "No such file or directory" in raw
@@ -41,6 +81,7 @@ def explain_error(exc: Exception, settings: "NinaSettings") -> str:
         or "FileNotFound" in raw
     )
     if no_such and looks_like_serial:
+        lidar_port = getattr(settings.lidar, "serial_port", "/dev/ttyUSB0")
         return (
             f"Cannot open {serial_port} - the kernel does not see that device.\n\n"
             "Most likely the FTDI cable to the Dynamixel bus is unplugged or "
@@ -50,7 +91,10 @@ def explain_error(exc: Exception, settings: "NinaSettings") -> str:
             "    dmesg | tail -20              # last USB events\n\n"
             "If it came up as a different name (e.g. /dev/ttyUSB1), tell the "
             "app to use it before launching:\n"
-            "    export NINA_DXL_PORT=/dev/ttyUSB1"
+            "    export NINA_DXL_PORT=/dev/ttyUSB1\n"
+            f"    export NINA_LIDAR_PORT={lidar_port}   # for A1 lidar setups\n"
+            "Also ensure NINA_DXL_PORT, NINA_LIDAR_PORT and NINA_NAV_REMOTE_PORT "
+            "are not all set to the same ttyUSB device."
         )
 
     # 2) Permission denied on the serial port -> dialout group

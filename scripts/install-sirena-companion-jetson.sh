@@ -7,6 +7,9 @@
 #   4) Prints URL hints for the tablet Setup screen
 #
 # Run on the Jetson from the repo root (after git clone or copy):
+#   chmod +x scripts/jetson-tablet-setup.sh
+#   ./scripts/jetson-tablet-setup.sh
+#   # equivalent:
 #   chmod +x scripts/install-sirena-companion-jetson.sh
 #   ./scripts/install-sirena-companion-jetson.sh
 # Install SLAM / vision / sensor pip deps into .venv-link (same set as sirena_ui headless):

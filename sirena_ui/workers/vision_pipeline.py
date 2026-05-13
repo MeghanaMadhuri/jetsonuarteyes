@@ -1057,8 +1057,8 @@ class VisionPipeline:
         name: str,
         *,
         target_samples: int = 8,
-        max_attempts: int = 80,
-        min_confidence: float = 0.85,
+        max_attempts: int = 160,
+        min_confidence: float = 0.75,
         progress_cb=None,
     ) -> "EnrollmentResult":
         """Capture `target_samples` frames where exactly one face is
@@ -1178,6 +1178,16 @@ class VisionPipeline:
                 attempts=attempts,
                 message=reason,
             )
+        if len(embeddings) < target_samples:
+            return EnrollmentResult(
+                ok=False,
+                samples=len(embeddings),
+                attempts=attempts,
+                message=(
+                    f"Captured {len(embeddings)}/{target_samples} samples. "
+                    "Keep one face centered with steady light and retry."
+                ),
+            )
 
         # Average the embeddings element-wise. FaceDB.upsert L2-
         # normalizes the result, which is the standard SFace mean-of-
@@ -1235,6 +1245,8 @@ class VisionPipeline:
                 camera_open=self._status.camera_open,
                 face_ready=self._status.face_ready,
                 object_ready=self._status.object_ready,
+                face_enabled=self._face_enabled,
+                object_enabled=self._object_enabled,
                 message=self._status.message,
             )
 

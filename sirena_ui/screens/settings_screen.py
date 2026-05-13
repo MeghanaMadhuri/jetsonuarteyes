@@ -2,13 +2,16 @@
 
 Categories: General, Network, Display, Audio, Privacy, Autodock,
 Voice Module, Power, OTA. Most of these are scaffolds for now;
-General has working fields backed by `NinaSettings`.
+General has working fields backed by `NinaSettings`. Power exposes
+working Shutdown / Reboot / Quit-app buttons that drive the Jetson
+through `nina.jetson_net.host_control`.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Tuple
@@ -16,6 +19,7 @@ from typing import Any, Dict, List, Tuple
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -141,6 +145,8 @@ class SettingsScreen(QWidget):
             return self._build_general_pane()
         if key == "network":
             return self._build_network_pane()
+        if key == "power":
+            return self._build_power_pane()
         return self._build_placeholder_pane(label)
 
     def _link_base_url(self) -> str:
@@ -175,8 +181,9 @@ class SettingsScreen(QWidget):
             raise RuntimeError(str(parsed)) from e
         except urllib.error.URLError as e:
             raise RuntimeError(
-                f"Link daemon unreachable ({self._link_base_url()}). "
-                "Install requirements-link.txt and run: python -m nina.link_daemon.main"
+                f"Tablet gateway unreachable ({self._link_base_url()}). "
+                "Run Sirena UI on this Jetson (python -m sirena_ui) with "
+                "NINA_ANDROID_GATEWAY=1 and matching NINA_LINK_PORT / NINA_ANDROID_HTTP_PORT."
             ) from e
 
     def _build_network_pane(self) -> QWidget:
@@ -199,7 +206,7 @@ class SettingsScreen(QWidget):
         card.add(
             MutedLabel(
                 "Controls the Jetson Wi-Fi role (access-point vs home network). "
-                "Requires the nina-link daemon on this machine "
+                "Uses the tablet HTTP API embedded in Sirena UI on this machine "
                 f"({self._link_base_url()})."
             )
         )
@@ -498,6 +505,212 @@ class SettingsScreen(QWidget):
 
         return container
 
+    # ---------- Power ----------
+
+    def _build_power_pane(self) -> QWidget:
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+
+        v.addWidget(Breadcrumb("Nina", "Settings", "Power"))
+
+        card = Card(padding=12, spacing=10)
+        v.addWidget(card)
+
+        title = QLabel("Power")
+        title.setStyleSheet(
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
+            " background-color: transparent;"
+        )
+        card.add(title)
+        card.add(
+            MutedLabel(
+                "Shutdown or reboot the Jetson host without dropping to "
+                "a terminal. Quit closes the app but leaves the OS "
+                "running - handy for SSH'ing in to debug."
+            )
+        )
+
+        card.add(HRule())
+
+        # Shutdown row
+        shutdown_row = QHBoxLayout()
+        shutdown_row.setSpacing(10)
+        card.add_layout(shutdown_row)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        shutdown_row.addLayout(col, stretch=1)
+        col.addWidget(SectionLabel("Shutdown Jetson"))
+        col.addWidget(
+            MutedLabel(
+                "Brings the OS down cleanly via `systemctl poweroff`."
+                " The kiosk user needs passwordless sudo for this to "
+                "work without an admin prompt."
+            )
+        )
+        self._shutdown_btn = QPushButton("Shutdown")
+        self._shutdown_btn.setObjectName("dangerButton")
+        self._shutdown_btn.setCursor(Qt.PointingHandCursor)
+        self._shutdown_btn.setFixedWidth(140)
+        self._shutdown_btn.clicked.connect(self._on_power_shutdown)
+        shutdown_row.addWidget(self._shutdown_btn, alignment=Qt.AlignTop)
+
+        card.add(HRule())
+
+        # Reboot row
+        reboot_row = QHBoxLayout()
+        reboot_row.setSpacing(10)
+        card.add_layout(reboot_row)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        reboot_row.addLayout(col, stretch=1)
+        col.addWidget(SectionLabel("Reboot Jetson"))
+        col.addWidget(
+            MutedLabel(
+                "Restarts the OS. Use this after `git pull`s that touch "
+                "systemd units, kernel modules, or udev rules."
+            )
+        )
+        self._reboot_btn = QPushButton("Reboot")
+        self._reboot_btn.setObjectName("dangerButton")
+        self._reboot_btn.setCursor(Qt.PointingHandCursor)
+        self._reboot_btn.setFixedWidth(140)
+        self._reboot_btn.clicked.connect(self._on_power_reboot)
+        reboot_row.addWidget(self._reboot_btn, alignment=Qt.AlignTop)
+
+        card.add(HRule())
+
+        # Quit row (no OS-level effect)
+        quit_row = QHBoxLayout()
+        quit_row.setSpacing(10)
+        card.add_layout(quit_row)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        quit_row.addLayout(col, stretch=1)
+        col.addWidget(SectionLabel("Quit Sirena UI"))
+        col.addWidget(
+            MutedLabel(
+                "Closes this app window. The Jetson stays running so "
+                "you can re-launch from the desktop / `python -m "
+                "sirena_ui`."
+            )
+        )
+        self._quit_btn = QPushButton("Quit app")
+        self._quit_btn.setObjectName("secondaryButton")
+        self._quit_btn.setCursor(Qt.PointingHandCursor)
+        self._quit_btn.setFixedWidth(140)
+        self._quit_btn.clicked.connect(self._on_power_quit_app)
+        quit_row.addWidget(self._quit_btn, alignment=Qt.AlignTop)
+
+        card.add_stretch()
+
+        # Sudo-hint footer so non-Linux dev hosts (and a fresh Jetson
+        # without the sudoers drop-in) get a clear pointer to the fix
+        # instead of a silent button.
+        self._power_status = QLabel("")
+        self._power_status.setWordWrap(True)
+        self._power_status.setStyleSheet(
+            "color: #6e6e73; font-size: 11px; background-color: transparent;"
+        )
+        card.add(self._power_status)
+
+        return container
+
+    def _on_power_shutdown(self) -> None:
+        if not self._confirm_power_action(
+            "Shutdown Jetson",
+            "Bring the Jetson down NOW?\n\n"
+            "The screen will go dark in a few seconds. To bring "
+            "Nina back up you'll need to press the physical power "
+            "button on the chassis.",
+        ):
+            return
+        self._do_power_action("poweroff")
+
+    def _on_power_reboot(self) -> None:
+        if not self._confirm_power_action(
+            "Reboot Jetson",
+            "Reboot the Jetson NOW?\n\n"
+            "The current session will end. Nina will be back at the "
+            "login / kiosk screen in ~45 s.",
+        ):
+            return
+        self._do_power_action("reboot")
+
+    def _on_power_quit_app(self) -> None:
+        if not self._confirm_power_action(
+            "Quit Sirena UI",
+            "Close the Nina control center?\n\n"
+            "The Jetson keeps running - relaunch with "
+            "`python -m sirena_ui`.",
+        ):
+            return
+        try:
+            self._service.shutdown()
+        except Exception:
+            pass
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        else:
+            sys.exit(0)
+
+    def _confirm_power_action(self, title: str, body: str) -> bool:
+        reply = QMessageBox.question(
+            self,
+            title,
+            body,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
+
+    def _do_power_action(self, action: str) -> None:
+        """Invoke the host_control queue function and surface the result.
+
+        Uses the in-process helpers (not the HTTP gateway) so the
+        operator gets the same behaviour whether or not nina-link is
+        running on this Jetson. Drives bus shutdown first so motors
+        don't keep holding torque while the OS is brining services
+        down.
+        """
+        try:
+            self._service.shutdown()
+        except Exception:
+            pass
+        try:
+            from nina.jetson_net import host_control
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Power",
+                f"Could not import host_control: {exc}",
+            )
+            return
+        try:
+            if action == "poweroff":
+                result = host_control.queue_poweroff()
+            elif action == "reboot":
+                result = host_control.queue_reboot()
+            else:
+                raise ValueError(f"unknown action: {action}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Power", f"{action} failed: {exc}")
+            return
+        msg = (
+            result.get("message")
+            if isinstance(result, dict)
+            else f"{action} queued"
+        )
+        if self._power_status is not None:
+            self._power_status.setText(
+                f"{action} dispatched: {msg}\n"
+                "If nothing happens within ~10 s, add a passwordless sudo "
+                "entry for systemctl/poweroff/reboot (see "
+                "nina/jetson_net/host_control.py for the drop-in)."
+            )
+
     # ---------- placeholder panes ----------
 
     def _build_placeholder_pane(self, label: str) -> QWidget:
@@ -578,11 +791,6 @@ class SettingsScreen(QWidget):
             return [
                 ("Wake word", wake),
                 ("ESP firmware", QLabel("0.7")),
-            ]
-        if label == "Power":
-            return [
-                ("Battery", QLabel("\u2014")),
-                ("Idle behaviour", QComboBox()),
             ]
         if label.startswith("OTA"):
             return [

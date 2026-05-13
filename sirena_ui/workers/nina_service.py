@@ -27,6 +27,7 @@ from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
+from sirena_ui.workers.face_follow_controller import FaceFollowController
 from sirena_ui.workers.slam_worker import SlamWorker
 from sirena_ui.workers.face_greeter import FaceGreeter, FaceGreetReceiver
 from sirena_ui.workers.vision_worker import VisionWorker
@@ -55,6 +56,7 @@ class NinaService:
         self._bus_ready = False
         self._motor_count = len(DEFAULT_MOTOR_IDS)
         self._drive: Optional[DriveController] = None
+        self._face_follow: Optional[FaceFollowController] = None
         self._vision: Optional[VisionWorker] = None
         self._face_greeter: Optional[FaceGreeter] = None
         self._slam: Optional[SlamWorker] = None
@@ -101,6 +103,13 @@ class NinaService:
                 default_speed_percent=None,
             )
         return self._drive
+
+    @property
+    def face_follow(self) -> FaceFollowController:
+        """Lazy singleton for vision-guided person follow (same loop as Qt Vision)."""
+        if self._face_follow is None:
+            self._face_follow = FaceFollowController(self.drive, parent=None)
+        return self._face_follow
 
     @property
     def vision(self) -> VisionWorker:
@@ -172,6 +181,11 @@ class NinaService:
         with self.bus_lock:
             # Order matters: autonomy depends on slam (lidar) and drive,
             # so it has to come down first - that also parks the wheels.
+            if self._face_follow is not None:
+                try:
+                    self._face_follow.stop()
+                except Exception:
+                    pass
             if self._autonomy is not None:
                 try:
                     self._autonomy.shutdown()
@@ -191,6 +205,7 @@ class NinaService:
                     pass
                 self._vision = None
                 self._face_greeter = None
+            self._face_follow = None
             if self._drive is not None:
                 try:
                     self._drive.shutdown()

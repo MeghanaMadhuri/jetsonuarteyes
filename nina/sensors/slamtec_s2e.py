@@ -97,15 +97,44 @@ def _s2e_scan_child_main(cmd_q, data_q, host: str, port: int) -> None:
     """Slamtec SDK loop (separate interpreter — does NOT share Qt's GIL)."""
     import queue as std_queue
 
+    # multiprocessing.Queue.put is asynchronous: the item is appended to
+    # a thread-local list and a feeder thread flushes it to the pipe.
+    # If we put an error and `return` immediately, the child exits
+    # before the feeder runs and the parent reads queue.Empty — which
+    # is exactly how the "exited early (exitcode=0)" mystery surfaced
+    # in the field. Helper below puts the message and blocks until the
+    # feeder has actually serialised it through the pipe.
+    def _emit_terminal(payload) -> None:
+        try:
+            data_q.put(payload)
+        except Exception:
+            pass
+        # close() + join_thread() flushes the feeder before exit.
+        try:
+            data_q.close()
+            data_q.join_thread()
+        except Exception:
+            pass
+
     try:
         import pyrplidarsdk  # type: ignore
     except Exception as exc:
-        data_q.put(("status", "error", f"import pyrplidarsdk: {exc}"))
+        _emit_terminal(("status", "error", f"import pyrplidarsdk: {exc}"))
         return
 
-    drv = pyrplidarsdk.RplidarDriver(ip_address=host, udp_port=port)
+    try:
+        drv = pyrplidarsdk.RplidarDriver(ip_address=host, udp_port=port)
+    except Exception as exc:
+        _emit_terminal(("status", "error", f"RplidarDriver({host}:{port}): {exc}"))
+        return
+
     if not drv.connect():
-        data_q.put(("status", "error", "connect() returned False"))
+        _emit_terminal((
+            "status",
+            "error",
+            f"connect() returned False - is {host}:{port} reachable? "
+            f"Try `ping {host}` from the Jetson.",
+        ))
         return
     try:
         info = drv.get_device_info()
@@ -118,7 +147,11 @@ def _s2e_scan_child_main(cmd_q, data_q, host: str, port: int) -> None:
     except Exception:
         pass
     if not drv.start_scan():
-        data_q.put(("status", "error", "start_scan() returned False"))
+        _emit_terminal(("status", "error", "start_scan() returned False"))
+        try:
+            drv.disconnect()
+        except Exception:
+            pass
         return
 
     data_q.put(("status", "ready"))
@@ -163,6 +196,107 @@ def _import_sdk():
     cost just to find out they don't have it installed."""
     import pyrplidarsdk  # type: ignore
     return pyrplidarsdk
+
+
+def _route_to(host: str) -> Optional[str]:
+    """Best-effort: which interface would the kernel use to reach `host`?
+
+    Returns the source IP the routing table picked (e.g. "192.168.11.10"),
+    or None if no route exists. We use this purely to build a more
+    helpful error message — "ping went out via wlan0 because no wired
+    iface is in 192.168.11.0/24" is way more actionable than just
+    "connect() returned False".
+    """
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["ip", "route", "get", host],
+            capture_output=True, text=True, timeout=1.5,
+        )
+        if r.returncode != 0:
+            return None
+        # Output looks like: "192.168.11.2 dev eth0 src 192.168.11.10 uid 1000"
+        for token, value in zip(r.stdout.split(), r.stdout.split()[1:]):
+            if token == "src":
+                return value
+    except Exception:
+        return None
+    return None
+
+
+def _format_open_error(host: str, port: int, raw: str) -> str:
+    """Turn a raw S2E connect failure into something the operator can act on.
+
+    The Slamtec S2E lives on Ethernet, not USB - which means the
+    failure mode is always one of:
+
+      1. **Lidar unpowered**       - 12 V barrel jack disconnected.
+                                     USB will NOT power the S2E motor.
+      2. **Ethernet unplugged**    - link LED on the lidar's adapter
+                                     board is dark, `ethtool` shows
+                                     'Link detected: no'.
+      3. **Wrong host subnet**     - the wired iface isn't in
+                                     192.168.11.0/24, so the kernel
+                                     routes via Wi-Fi (default gw)
+                                     and the UDP packets vanish.
+      4. **pyrplidarsdk missing**  - the SDK wrapper isn't installed
+                                     in the venv the GUI is running
+                                     under.
+      5. **Firmware in protection mode** - rare; cleared by a 12 V
+                                     power cycle.
+
+    The diagnostic block below is the same checklist the install
+    script prints, just compacted into a single status-pill tooltip.
+    """
+    raw_lower = raw.lower()
+    base = f"open udp://{host}:{port}: {raw}"
+
+    if "pyrplidarsdk" in raw_lower or "no module named" in raw_lower:
+        return (
+            base
+            + "\n\nThe Slamtec Python wrapper isn't installed in the "
+            "venv this app is running under. Run:\n"
+            "  scripts/install-slamtec-s2e-jetson.sh\n"
+            "(or `pip install --user pyrplidarsdk` if you've already "
+            "done the rest of the bring-up)."
+        )
+
+    # Connect / start_scan / generic network failure.
+    src = _route_to(host)
+    if src is None:
+        route_line = (
+            f"  No route to {host} on this host. The Jetson's wired "
+            "interface needs a static IP in the lidar's subnet."
+        )
+    elif not src.startswith(host.rsplit(".", 1)[0] + "."):
+        route_line = (
+            f"  Kernel would route {host} via src={src} - that's NOT in the "
+            f"lidar's subnet ({host.rsplit('.', 1)[0]}.0/24), so the packets "
+            f"go out the default gateway (Wi-Fi / cellular) instead of the "
+            f"wired link to the lidar."
+        )
+    else:
+        route_line = (
+            f"  Routing looks correct (src={src}), so the host networking "
+            f"is fine. The lidar itself is likely unpowered, the Ethernet "
+            f"cable is unplugged, or the firmware is wedged."
+        )
+
+    return (
+        base
+        + "\n\nS2E is reached over Ethernet (UDP), not USB. Check, in this order:\n"
+        " 1. 12 V barrel jack on the lidar is plugged in (USB will NOT "
+        "power the S2E motor — it draws ~1 A).\n"
+        " 2. Ethernet cable from the Jetson to the lidar adapter is "
+        "seated. Link LED on the adapter board should be solid green.\n"
+        " 3. Jetson's wired interface is at 192.168.11.10/24:\n"
+        "      ip -4 addr show\n"
+        "      ping -c 3 " + host + "\n"
+        " 4. If `ping` works but Nina still fails, re-run\n"
+        "      scripts/install-slamtec-s2e-jetson.sh\n"
+        "    (it tunes UDP buffers and smoke-tests the SDK).\n"
+        + route_line
+    )
 
 
 def is_available() -> Tuple[bool, str]:
@@ -254,9 +388,8 @@ class SlamtecS2E:
         try:
             sdk = _import_sdk()
         except Exception as exc:
-            self._message = (
-                f"pyrplidarsdk not installed ({exc}); "
-                "run scripts/install-slamtec-s2e-jetson.sh"
+            self._message = _format_open_error(
+                self._host, self._udp_port, f"pyrplidarsdk import failed: {exc}"
             )
             raise RuntimeError(self._message) from exc
 
@@ -266,11 +399,7 @@ class SlamtecS2E:
                 udp_port=self._udp_port,
             )
             if not self._driver.connect():
-                raise RuntimeError(
-                    f"connect() returned False - is {self._host}:"
-                    f"{self._udp_port} reachable? Try "
-                    f"`ping {self._host}` from the Jetson."
-                )
+                raise RuntimeError("connect() returned False")
             try:
                 info = self._driver.get_device_info()
                 if info is not None:
@@ -297,7 +426,7 @@ class SlamtecS2E:
                 raise RuntimeError("start_scan() returned False")
         except Exception as exc:
             self._driver = None
-            self._message = f"open {self._host}:{self._udp_port}: {exc}"
+            self._message = _format_open_error(self._host, self._udp_port, str(exc))
             raise RuntimeError(self._message) from exc
 
         self._stop_evt.clear()
@@ -337,18 +466,49 @@ class SlamtecS2E:
 
         deadline = time.monotonic() + 45.0
         err_msg: Optional[str] = None
+
+        def _drain_and_summarise_exit() -> str:
+            """The child puts (status,error,msg) then returns. The
+            multiprocessing.Queue feeder thread may still be flushing
+            when the process is reaped, so a single .get(timeout=0.5)
+            after exit can race past the pipe. Drain everything still
+            buffered and prefer the most specific error we can find
+            over the generic 'exited early' fallback."""
+            code = (
+                self._mp_proc.exitcode if self._mp_proc is not None else None
+            )
+            specific: Optional[str] = None
+            for _ in range(8):
+                try:
+                    leftover = self._mp_data_q.get(timeout=0.25)
+                except queue.Empty:
+                    break
+                except Exception:
+                    break
+                if not isinstance(leftover, tuple) or not leftover:
+                    continue
+                if leftover[0] == "status" and len(leftover) >= 3 and leftover[1] == "error":
+                    specific = str(leftover[2])
+                    break
+                if leftover[0] == "exc" and len(leftover) >= 2:
+                    specific = str(leftover[1])
+            if specific:
+                return specific
+            return (
+                f"lidar scan process exited early (exitcode={code}). "
+                "Check `journalctl --user-unit nina-ui-kiosk -e` or run "
+                "`python -m sirena_ui` from a terminal for the child's "
+                "stderr; common causes: the S2E is not on the Jetson's "
+                "Ethernet subnet, the wrong NINA_LIDAR_MODEL is set, or "
+                "pyrplidarsdk is missing."
+            )
+
         while time.monotonic() < deadline:
             try:
                 msg = self._mp_data_q.get(timeout=0.5)
             except queue.Empty:
                 if self._mp_proc is None or not self._mp_proc.is_alive():
-                    code = (
-                        self._mp_proc.exitcode
-                        if self._mp_proc is not None else None
-                    )
-                    err_msg = (
-                        f"lidar scan process exited early (exitcode={code})"
-                    )
+                    err_msg = _drain_and_summarise_exit()
                     break
                 continue
             if msg[0] == "status":
@@ -364,8 +524,8 @@ class SlamtecS2E:
         if err_msg:
             self._terminate_subprocess()
             self._subprocess_mode = False
-            self._message = err_msg
-            raise RuntimeError(err_msg)
+            self._message = _format_open_error(self._host, self._udp_port, err_msg)
+            raise RuntimeError(self._message)
 
         self._stop_evt.clear()
         self._thread = threading.Thread(
