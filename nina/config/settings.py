@@ -315,9 +315,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         id_left=_env_int("NINA_HOVER_ID_LEFT", 12),
         id_right=_env_int("NINA_HOVER_ID_RIGHT", 13),
         brake_pos_left=(
-            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 525)
+            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 515)
             if "NINA_HOVER_BRAKE_POS_LEFT" in os.environ
-            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 525)
+            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 515)
         ),
         brake_pos_right=(
             _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 500)
