@@ -18,7 +18,8 @@ from PyQt5.QtCore import Qt
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.controllers.navigation_factory import build_navigation_manager
+from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS
+from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
@@ -28,7 +29,7 @@ from sirena_ui.workers.face_greeter import FaceGreeter, FaceGreetReceiver
 from sirena_ui.workers.vision_worker import VisionWorker
 
 
-DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+DEFAULT_MOTOR_IDS: List[int] = list(EXPECTED_DYNAMIXEL_IDS)
 
 
 class NinaService:
@@ -77,15 +78,16 @@ class NinaService:
 
     @property
     def drive(self) -> DriveController:
-        """Lazy singleton for the BLDC drive controller.
+        """Lazy singleton for the drive controller (hoverboard lean via Dynamixel)."""
 
-        Created on first access so the GUI doesn't pay the GPIO cost until
-        the user actually navigates to the Drive screen. The navigation manager
-        is built by `nina.controllers.navigation_factory.build_navigation_manager`.
-        """
         if self._drive is None:
             nav_settings = self.settings.navigation
-            nav_manager = build_navigation_manager(nav_settings)
+            nav_manager = HoverboardAxisDrive(
+                self.dxl,
+                self.bus_lock,
+                self.settings.hoverboard_axis,
+                nav_settings,
+            )
             # Manual drive duty is fixed in DriveController (no slider); do not
             # seed the GUI state from nav_settings.default_speed_percent.
             self._drive = DriveController(

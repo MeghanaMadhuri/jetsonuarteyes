@@ -1,7 +1,7 @@
-"""Optional BLDC control from nina-link HTTP (same NavigationManager as desktop UI).
+"""Optional drive motion from nina-link HTTP (same ``HoverboardAxisDrive`` as desktop UI).
 
 Enable with ``NINA_LINK_ENABLE_ROBOT_BRIDGE=1``. Do not run Sirena UI Drive screen
-simultaneously — both compete for GPIO / the navigation manager.
+simultaneously — both compete for the Dynamixel bus / drive backend.
 
 Momentary moves run on a worker thread so FastAPI returns immediately.
 Navigation init is validated **synchronously** before queuing motion so HTTP clients
@@ -21,7 +21,7 @@ log = logging.getLogger("nina.link_daemon.robot_bridge")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _motion_lock = threading.Lock()
-_nav = None  # lazy NavigationManager
+_nav = None  # lazy HoverboardAxisDrive
 _nav_init_lock = threading.Lock()
 
 # HTTP momentary drive refuses while autonomy holds the wheels (matches desktop expectation).
@@ -41,7 +41,7 @@ def autonomy_blocks_drive() -> bool:
 
 
 def navigation_for_autonomy():
-    """Same lazy NavigationManager singleton as ``momentary_drive`` / E-stop."""
+    """Same lazy drive singleton as ``momentary_drive`` / E-stop."""
     return _navigation()
 
 
@@ -76,14 +76,14 @@ def _navigation():
     global _nav
     with _nav_init_lock:
         if _nav is None:
+            from nina.app.main import build_navigation
             from nina.config.settings import load_settings
-            from nina.controllers.navigation_factory import build_navigation_manager
 
             settings = load_settings(_REPO_ROOT)
-            nm = build_navigation_manager(settings.navigation)
+            nm = build_navigation(settings)
             nm.initialize()
             _nav = nm
-            log.info("Robot bridge: NavigationManager ready")
+            log.info("Robot bridge: hoverboard drive ready")
     return _nav
 
 

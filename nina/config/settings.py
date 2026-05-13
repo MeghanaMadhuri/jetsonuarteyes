@@ -11,6 +11,20 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on", "y")
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip(), 0)
+    except ValueError:
+        return default
+
+
+def _env_sign(name: str, default: int) -> int:
+    return -1 if _env_int(name, default) < 0 else 1
+
+
 # Upper bound for breakaway timing (seconds). Longer holds behave like
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
@@ -73,6 +87,23 @@ class NavigationSettings:
     pivot_turn_left_extra_pp: int = 6
     turn_left_prep_back_sec: float = 0.12
     turn_left_prep_fwd_sec: float = 0.12
+
+
+@dataclass(frozen=True)
+class HoverboardAxisSettings:
+    """Hoverboard locomotion via lean axes (AX-18 on Dynamixel bus).
+
+    ``DriveController`` always uses ``HoverboardAxisDrive``. Env:
+    ``NINA_HOVER_ID_LEFT`` / ``RIGHT``, ``NINA_HOVER_TILT_DEG``,
+    ``NINA_HOVER_MOVING_SPEED``, ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1).
+    """
+
+    id_left: int
+    id_right: int
+    tilt_deg: float
+    moving_speed: int
+    sign_left: int
+    sign_right: int
 
 
 @dataclass(frozen=True)
@@ -192,6 +223,7 @@ class NinaSettings:
     slam: SlamSettings
     lidar: LidarSettings
     goto: GotoSettings
+    hoverboard_axis: HoverboardAxisSettings
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
@@ -268,6 +300,15 @@ def load_settings(repo_root: Path) -> NinaSettings:
                 ),
             ),
         ),
+    )
+
+    hoverboard_axis = HoverboardAxisSettings(
+        id_left=_env_int("NINA_HOVER_ID_LEFT", 12),
+        id_right=_env_int("NINA_HOVER_ID_RIGHT", 13),
+        tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
+        moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
+        sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
+        sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
     )
 
     autonomy = AutonomySettings(
@@ -439,4 +480,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         slam=slam,
         lidar=lidar,
         goto=goto,
+        hoverboard_axis=hoverboard_axis,
     )

@@ -760,11 +760,11 @@ class DriveController(QObject):
             # leaves us in. Make that explicit anyway.
             nav.engage_brake()
             self._init_attempted = True
-            drv_msg = "BLDC L+R — Jetson GPIO"
+            drv_msg = getattr(nav, "DRIVER_LABEL", "BLDC L+R — Jetson GPIO")
             with self._lock:
                 self._state["connected"] = True
                 self._state["driver_message"] = drv_msg
-            log.info("DriveController: BLDC drivers connected (%s)", drv_msg)
+            log.info("DriveController: drives connected (%s)", drv_msg)
         except Exception as exc:
             if nav is not None:
                 try:

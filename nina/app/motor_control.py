@@ -1,14 +1,13 @@
 """
-Operator CLI for Nina's BLDC navigation.
+Operator CLI for Nina's drive (hoverboard lean via Dynamixel).
 
 Run with the package path so imports resolve correctly:
 
     python3 -m nina.app.motor_control
 
-Drives the JYQDs from the Jetson Orin Nano GPIOs. `NINA_NAV_BACKEND`
-picks 'jetson' or 'pigpio'.
+Drives hoverboard lean axes (Dynamixel AX-18 IDs from ``NINA_HOVER_*``).
 
-All other tunables (default_speed_percent, invert_*_dir, etc.) come
+Navigation timing / polarity tunables (``NINA_NAV_*``, ``invert_*_dir``) come
 from `nina.config.settings.load_settings()` so this CLI behaves
 identically to the GUI's Drive screen - the same env-var overrides
 apply to both.
@@ -18,7 +17,7 @@ import logging
 from pathlib import Path
 
 from nina.config.settings import load_settings
-from nina.controllers.navigation_factory import build_navigation_manager
+from nina.app.main import build_navigation
 
 
 CONTROLS_HELP = (
@@ -43,9 +42,9 @@ def main() -> None:
     print("--------------------------------------------------")
 
     repo_root = Path(__file__).resolve().parents[2]
-    nav_settings = load_settings(repo_root).navigation
-    print("[INIT] Navigation: Jetson GPIO")
-    nav = build_navigation_manager(nav_settings)
+    settings = load_settings(repo_root)
+    print("[INIT] Navigation: Hoverboard lean (Dynamixel AX-18)")
+    nav = build_navigation(settings)
     try:
         nav.initialize()
     except Exception as exc:

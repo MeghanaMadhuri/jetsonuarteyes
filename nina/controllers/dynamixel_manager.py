@@ -219,6 +219,18 @@ class DynamixelManager:
             payload[sid] = [v & 0xFF, (v >> 8) & 0xFF]
         self.sync_write(*REG_GOAL_POSITION, payload)
 
+    def sync_write_moving_speed_subset(self, speeds: Dict[int, int]) -> None:
+        """SyncWrite moving speed (0..1023) for a subset of IDs (e.g. lean axes only)."""
+        if not speeds:
+            return
+        payload: Dict[int, List[int]] = {}
+        for sid, speed in speeds.items():
+            if sid not in self.expected_motor_ids:
+                continue
+            sp = max(0, min(1023, int(speed)))
+            payload[sid] = [sp & 0xFF, (sp >> 8) & 0xFF]
+        self.sync_write(*REG_MOVING_SPEED, payload)
+
     def set_moving_speed_all(self, speed: int) -> None:
         speed = max(0, min(1023, int(speed)))
         lo = speed & 0xFF

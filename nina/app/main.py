@@ -8,13 +8,14 @@ from typing import List
 from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.controllers.navigation_factory import build_navigation_manager
+from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS
+from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
 from nina.controllers.navigation_manager import DEFAULT_PINS, jetson_orin_nano_board_pin
 from nina.services.audio_player import AudioPlayer
 from nina.services.startup_service import StartupService
 
 
-DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+DEFAULT_MOTOR_IDS: List[int] = list(EXPECTED_DYNAMIXEL_IDS)
 
 
 def ensure_motors_ready(dxl: DynamixelManager) -> None:
@@ -47,9 +48,27 @@ def build_app():
     return settings, dxl, action_runner, startup_service
 
 
-def build_navigation(settings):
-    """Return an un-initialised Jetson GPIO `NavigationManager`."""
-    return build_navigation_manager(settings.navigation)
+def build_navigation(settings, dxl=None, bus_lock=None):
+    """Return ``HoverboardAxisDrive`` (AX-18 lean axes on the Dynamixel bus).
+
+    Pass ``dxl`` + ``bus_lock`` from the running app when available; otherwise a
+    temporary ``DynamixelManager`` is opened (CLI / link-daemon use).
+    """
+    import threading
+
+    lock = bus_lock or threading.RLock()
+    if dxl is None:
+        tmp = DynamixelManager(
+            settings.serial_port,
+            settings.baudrate,
+            list(EXPECTED_DYNAMIXEL_IDS),
+        )
+        tmp.initialize_bus()
+        dxl = tmp
+    return HoverboardAxisDrive(
+        dxl, lock, settings.hoverboard_axis, settings.navigation
+    )
+
 
 
 def run_nav_command(nav, command: str,
