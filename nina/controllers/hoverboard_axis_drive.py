@@ -193,6 +193,18 @@ class HoverboardAxisDrive:
             fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
             return {self._left_id: fl, self._right_id: fr}
 
+        lb = left_dir == self.DIR_BACKWARD
+        rb = right_dir == self.DIR_BACKWARD
+        if (
+            lb
+            and rb
+            and left_speed > 0
+            and right_speed > 0
+        ):
+            bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
+            br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
+            return {self._left_id: bl, self._right_id: br}
+
         dl = self._speed_to_delta_raw(left_speed) if left_speed > 0 else 0
         dr = self._speed_to_delta_raw(right_speed) if right_speed > 0 else 0
 

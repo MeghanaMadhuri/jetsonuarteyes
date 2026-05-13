@@ -88,6 +88,20 @@ def _straight_sequence_spec() -> List[Tuple[str, int]]:
     return [("fwd", ms)]
 
 
+def _straight_back_sequence_spec() -> List[Tuple[str, int]]:
+    """Single backward segment duration (direction is set on the screen)."""
+    raw = (os.environ.get("NINA_STRAIGHT_BACK_TEST_MS") or "").strip()
+    if raw:
+        try:
+            ms = int(raw)
+        except ValueError:
+            ms = 10_000
+    else:
+        ms = 10_000
+    ms = max(100, min(120_000, ms))
+    return [("back", ms)]
+
+
 class DriveScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
@@ -109,6 +123,7 @@ class DriveScreen(QWidget):
         self._straight_sequence_spec: List[Tuple[str, int]] = []
         self._straight_seq_index: int = -1
         self._straight_seq_fwd_dir: str = "forward"
+        self._straight_run_backward = False
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -354,6 +369,19 @@ class DriveScreen(QWidget):
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
         straight_row.addWidget(self._straight_test_btn, stretch=1)
+        self._straight_back_test_btn = QPushButton("Straight back")
+        self._straight_back_test_btn.setObjectName("secondaryButton")
+        self._straight_back_test_btn.setCursor(Qt.PointingHandCursor)
+        self._straight_back_test_btn.setFocusPolicy(Qt.NoFocus)
+        self._straight_back_test_btn.setMinimumHeight(32)
+        self._straight_back_test_btn.setToolTip(
+            "Drives straight backward for NINA_STRAIGHT_BACK_TEST_MS (default 10 s) "
+            "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Ignores the Reverse toggle. "
+            "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
+            "Turn off autonomous mode and release the brake first."
+        )
+        self._straight_back_test_btn.clicked.connect(self._on_straight_back_clicked)
+        straight_row.addWidget(self._straight_back_test_btn, stretch=1)
         card.add_layout(straight_row)
 
         # Row freed from per-wheel Flip L/R toggles: full width for timed pivots.
@@ -472,7 +500,7 @@ class DriveScreen(QWidget):
         # reaches our key handlers instead of the EMERGENCY STOP button.
         self.setFocus()
 
-    def _on_straight_test_clicked(self) -> None:
+    def _begin_straight_bench_run(self, *, backward: bool) -> None:
         if self._straight_test_timer.isActive() or self._straight_pending:
             return
         if self._autonomy.is_enabled():
@@ -486,11 +514,13 @@ class DriveScreen(QWidget):
             QMessageBox.information(
                 self,
                 "Brake engaged",
-                "Release the brake (Brake: OFF) before running a straight test.",
+                "Release the brake (Brake: OFF) before running Straight or Straight back.",
             )
             return
         self._drive.ensure_hardware()
+        self._straight_run_backward = backward
         self._straight_test_btn.setEnabled(False)
+        self._straight_back_test_btn.setEnabled(False)
         self._dpad.set_enabled(False)
         self._turn_90_left_btn.setEnabled(False)
         self._turn_90_right_btn.setEnabled(False)
@@ -499,6 +529,12 @@ class DriveScreen(QWidget):
         self._render_state(self._drive.state())
         QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
         self.setFocus()
+
+    def _on_straight_test_clicked(self) -> None:
+        self._begin_straight_bench_run(backward=False)
+
+    def _on_straight_back_clicked(self) -> None:
+        self._begin_straight_bench_run(backward=True)
 
     def _try_straight_when_ready(self) -> None:
         """Start straight test only after BLDC init finishes (async worker)."""
@@ -515,17 +551,21 @@ class DriveScreen(QWidget):
                     "Drive hardware did not initialize in time. On the robot, "
                     "confirm the Dynamixel bus (USB cable, NINA_DXL_PORT / baud, "
                     "IDs 12 and 13), and wait for the status pill to show the "
-                    "hoverboard driver connected. Then try Straight again.",
+                    "hoverboard driver connected. Then try Straight or Straight back again.",
                 )
                 self._restore_after_straight_test()
                 return
             QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
             return
         self._straight_pending = False
-        self._straight_seq_fwd_dir = (
-            "back" if self._drive.state().get("reverse") else "forward"
-        )
-        self._straight_sequence_spec = _straight_sequence_spec()
+        if self._straight_run_backward:
+            self._straight_seq_fwd_dir = "back"
+            self._straight_sequence_spec = _straight_back_sequence_spec()
+        else:
+            self._straight_seq_fwd_dir = (
+                "back" if self._drive.state().get("reverse") else "forward"
+            )
+            self._straight_sequence_spec = _straight_sequence_spec()
         self._straight_seq_index = -1
         self._apply_straight_sequence_segment(0)
         self.setFocus()
@@ -567,14 +607,17 @@ class DriveScreen(QWidget):
         self._straight_sequence_spec = []
         self._straight_seq_index = -1
         self._straight_pending = False
+        self._straight_run_backward = False
         if not self._autonomy.is_enabled():
             self._straight_test_btn.setEnabled(True)
+            self._straight_back_test_btn.setEnabled(True)
             st = self._drive.state()
             self._dpad.set_enabled(not st["brake"])
             self._turn_90_left_btn.setEnabled(True)
             self._turn_90_right_btn.setEnabled(True)
         else:
             self._straight_test_btn.setEnabled(False)
+            self._straight_back_test_btn.setEnabled(False)
             self._turn_90_left_btn.setEnabled(False)
             self._turn_90_right_btn.setEnabled(False)
         self._render_state(self._drive.state())
@@ -649,6 +692,7 @@ class DriveScreen(QWidget):
             self._brake_btn.setEnabled(False)
             self._reverse_btn.setEnabled(False)
             self._straight_test_btn.setEnabled(False)
+            self._straight_back_test_btn.setEnabled(False)
             self._turn_90_left_btn.setEnabled(False)
             self._turn_90_right_btn.setEnabled(False)
         else:
@@ -657,6 +701,7 @@ class DriveScreen(QWidget):
             self._brake_btn.setEnabled(True)
             self._reverse_btn.setEnabled(True)
             self._straight_test_btn.setEnabled(True)
+            self._straight_back_test_btn.setEnabled(True)
             self._turn_90_left_btn.setEnabled(True)
             self._turn_90_right_btn.setEnabled(True)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
@@ -837,7 +882,7 @@ class DriveScreen(QWidget):
             if self._straight_pending:
                 self._manual_hint.setText(
                     "Connecting to motor drivers — keep this screen open "
-                    "(Straight test will start when ready or show an error)."
+                    "(Straight / Straight back will start when ready or show an error)."
                 )
             elif dm:
                 self._manual_hint.setText(
@@ -854,7 +899,7 @@ class DriveScreen(QWidget):
         elif state["brake"]:
             self._manual_hint.setText(
                 "Brake is ON — tap Brake: OFF to use the D-pad. "
-                "Straight / Turn will pop a reminder if you try while braked."
+                "Straight / Straight back / Turn will pop a reminder if you try while braked."
             )
             self._manual_hint.show()
         else:
@@ -863,7 +908,7 @@ class DriveScreen(QWidget):
         # Autonomy lock takes priority over the brake-lock for D-pad
         # enablement: while autonomy is on, the D-pad stays disabled
         # regardless of the manual brake state. Brake ON also disables
-        # the D-pad (release brake first); Straight / Turn stay enabled
+        # the D-pad (release brake first); Straight / Straight back / Turn stay enabled
         # so their handlers can show an explicit dialog instead of dead clicks.
         if not self._autonomy.is_enabled():
             if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
