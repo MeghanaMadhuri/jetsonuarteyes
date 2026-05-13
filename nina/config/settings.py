@@ -94,9 +94,9 @@ class HoverboardAxisSettings:
     """Hoverboard locomotion via lean axes (AX-18 on Dynamixel bus).
 
     ``DriveController`` always uses ``HoverboardAxisDrive``. Env:
-    ``NINA_HOVER_ID_LEFT`` / ``RIGHT``, ``NINA_HOVER_BRAKE_POS_LEFT`` /
-    ``NINA_HOVER_BRAKE_POS_RIGHT`` (brake / stop / boot goals; if unset, legacy
-    ``NINA_HOVER_NEUTRAL_*`` is read instead),
+    ``NINA_HOVER_ID_LEFT`` / ``RIGHT`` (default 12 / 13), ``NINA_HOVER_BRAKE_POS_LEFT`` /
+    ``NINA_HOVER_BRAKE_POS_RIGHT`` — brake / idle / boot goals (defaults 515 left,
+    500 right; legacy ``NINA_HOVER_NEUTRAL_*`` is read if the ``BRAKE`` vars are unset),
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
     uses ``NINA_HOVER_FWD_POS_*`` (defaults 525 / 500); straight backward uses
