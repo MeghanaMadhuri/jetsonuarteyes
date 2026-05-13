@@ -311,14 +311,14 @@ def load_settings(repo_root: Path) -> NinaSettings:
         id_left=_env_int("NINA_HOVER_ID_LEFT", 12),
         id_right=_env_int("NINA_HOVER_ID_RIGHT", 13),
         brake_pos_left=(
-            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 515)
+            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 525)
             if "NINA_HOVER_BRAKE_POS_LEFT" in os.environ
-            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 515)
+            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 525)
         ),
         brake_pos_right=(
-            _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 510)
+            _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 520)
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
-            else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 510)
+            else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 520)
         ),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
