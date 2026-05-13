@@ -15,7 +15,7 @@ Two input modes are supported:
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same as straight
   FWD/REV); duration ``NINA_DRIVE_TURN_90_SEC`` / ``NINA_NAV_TURN_SEC``;
   speed ``NINA_DRIVE_TURN_90_PCT``. Extra lean vs brake: ``NINA_HOVER_TURN_PUSH_TICKS``
-  (default 5). Optional ``NINA_HOVER_SWAP_TURN_LR`` if yaw sense is reversed.
+  (default 10). Optional ``NINA_HOVER_SWAP_TURN_LR`` if yaw sense is reversed.
 * D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
 * Keyboard — W/A/S/D forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
@@ -401,7 +401,7 @@ class DriveScreen(QWidget):
             "In-place pivot: left lean axis to REV goal (NINA_HOVER_REV_POS_LEFT), "
             "right to FWD goal (NINA_HOVER_FWD_POS_RIGHT), held for "
             "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
-            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 5). "
+            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 10). "
             "If the robot spins the wrong way, set NINA_HOVER_SWAP_TURN_LR=1. "
             "D-pad left uses the same pairing while held."
         )
@@ -416,7 +416,7 @@ class DriveScreen(QWidget):
             "In-place pivot: left lean axis to FWD goal (NINA_HOVER_FWD_POS_LEFT), "
             "right to REV goal (NINA_HOVER_REV_POS_RIGHT), held for "
             "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
-            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 5). "
+            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 10). "
             "If the robot spins the wrong way, set NINA_HOVER_SWAP_TURN_LR=1. "
             "D-pad right uses the same pairing while held."
         )

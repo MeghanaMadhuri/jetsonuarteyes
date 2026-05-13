@@ -104,7 +104,7 @@ class HoverboardAxisSettings:
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     Set ``NINA_HOVER_SWAP_TURN_LR=1`` if the robot yaw sense vs. the labels is
     reversed. Pivot goals can be nudged further from brake with
-    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 5). ``tilt_deg`` remains for any legacy
+    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 10). ``tilt_deg`` remains for any legacy
     asymmetric fallback.
     """
 
@@ -339,7 +339,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 510),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", False),
         turn_push_ticks=max(
-            0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 5))
+            0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 10))
         ),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
