@@ -102,9 +102,9 @@ class HoverboardAxisSettings:
     uses ``NINA_HOVER_FWD_POS_*`` (defaults 525 / 500); straight backward uses
     ``NINA_HOVER_REV_POS_*`` (defaults 500 / 510). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
-    Set ``NINA_HOVER_SWAP_TURN_LR=1`` if the robot yaw sense vs. the labels is
-    reversed. Pivot goals can be nudged further from brake with
-    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
+    ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI ``Turn left`` / ``Turn right`` and
+    D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
+    if yaw sense is reversed. ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback.
     """
 
@@ -337,7 +337,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 500),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 500),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 510),
-        swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", False),
+        swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
         turn_push_ticks=max(
             0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 20))
         ),
