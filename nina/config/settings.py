@@ -99,7 +99,7 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_NEUTRAL_*`` is read instead),
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
-    uses ``NINA_HOVER_FWD_POS_*`` (defaults 520 / 500); straight backward uses
+    uses ``NINA_HOVER_FWD_POS_*`` (defaults 522 / 498); straight backward uses
     ``NINA_HOVER_REV_POS_*`` (defaults 505 / 510). In-place turns still use
     ``tilt_deg`` deltas from brake.
     """
@@ -327,8 +327,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
             else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 500)
         ),
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 520),
-        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 500),
+        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 522),
+        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 498),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 505),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 510),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
