@@ -881,8 +881,7 @@ class DriveScreen(QWidget):
         super().keyReleaseEvent(event)
 
     def _render_state(self, state: dict) -> None:
-        # Keep the brake pill aligned with DriveController (autonomy uses a
-        # software-only brake release that does not energise the hover pack).
+        # Keep the brake pill aligned with DriveController (autonomy may toggle brake in software).
         br = bool(state.get("brake", True))
         self._brake_btn.blockSignals(True)
         self._brake_btn.setChecked(br)

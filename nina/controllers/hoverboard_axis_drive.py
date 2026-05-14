@@ -14,10 +14,6 @@ from typing import Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.controllers.hoverboard_power_relay import (
-    HoverboardPowerRelay,
-    build_power_relay,
-)
 
 log = logging.getLogger("nina.hoverboard_axis")
 
@@ -79,11 +75,6 @@ class HoverboardAxisDrive:
         self._brake_left = 2048
         self._brake_right = 2048
         self._is_initialized = False
-        self._power_relay: Optional[HoverboardPowerRelay] = build_power_relay(
-            axis_cfg.power_relay_bcm,
-            power_on_level=int(axis_cfg.power_relay_power_on_level),
-            status_led_bcm=axis_cfg.power_relay_status_led_bcm,
-        )
 
     # ------------------------------------------------------------------
     def initialize(self) -> None:
@@ -98,10 +89,6 @@ class HoverboardAxisDrive:
             )
             apply_hoverboard_brake_positions(self._dxl, self._axis)
         self._is_initialized = True
-        # Parked / brake pose must match de-energised pack when a relay is wired
-        # (kiosk already primed cut at NinaService boot; repeat here after DXL goals).
-        if self._power_relay is not None:
-            self._power_relay.set_power_cut()
         log.info(
             "HoverboardAxisDrive init brake L(id%s)=%s R(id%s)=%s tilt=%s°",
             self._left_id,
@@ -173,17 +160,11 @@ class HoverboardAxisDrive:
         return
 
     def engage_brake(self) -> None:
-        """Hold brake pose; optional GPIO cuts hoverboard pack power (see settings)."""
+        """Hold brake pose (lean servos at configured brake goals)."""
         self.stop()
-        if self._power_relay is not None:
-            self._power_relay.set_power_cut()
 
-    def release_brake(self, *, energize_pack: bool = True) -> None:
-        """Re-energise hoverboard pack when a power relay is configured."""
-        if not energize_pack:
-            return
-        if self._power_relay is not None:
-            self._power_relay.set_power_allowed()
+    def release_brake(self) -> None:
+        """Logical brake off; hoverboard lean axes need no extra action here."""
 
     def stop(self) -> None:
         if not self._is_initialized:
@@ -194,15 +175,8 @@ class HoverboardAxisDrive:
         time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
+        _ = routine_shutdown  # Same keyword shape as NavigationManager; no extra GPIO.
         self.stop()
-        if self._power_relay is None:
-            return
-        if routine_shutdown:
-            self._power_relay.apply_shutdown_policy(
-                allow_power=bool(self._axis.power_relay_shutdown_allows_power),
-            )
-        else:
-            self._power_relay.set_power_cut()
 
     def _apply_goals(self, goals: Dict[int, int]) -> None:
         if not self._is_initialized:

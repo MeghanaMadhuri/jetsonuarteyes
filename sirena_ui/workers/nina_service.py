@@ -23,7 +23,6 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     apply_hoverboard_brake_positions,
 )
-from nina.controllers.hoverboard_power_relay import prime_hoverboard_relay_cut_at_boot
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
@@ -43,7 +42,6 @@ class NinaService:
             repo_root = Path(__file__).resolve().parents[2]
             settings = load_settings(repo_root)
         self.settings = settings
-        prime_hoverboard_relay_cut_at_boot(settings.hoverboard_axis)
         self.dxl = DynamixelManager(
             serial_port=settings.serial_port,
             baudrate=settings.baudrate,

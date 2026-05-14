@@ -26,48 +26,6 @@ def _env_sign(name: str, default: int) -> int:
     return -1 if _env_int(name, default) < 0 else 1
 
 
-def _parse_hoverboard_power_relay_bcm() -> Optional[int]:
-    """Resolve relay line: prefer **40-pin header index** (Nina default pin 37)."""
-    header_raw = os.environ.get("NINA_HOVER_RELAY_HEADER_PIN", "").strip()
-    if header_raw:
-        try:
-            header_pin = int(header_raw, 0)
-        except ValueError:
-            _log.warning("NINA_HOVER_RELAY_HEADER_PIN=%r is not an integer", header_raw)
-            return None
-        if header_pin <= 0:
-            return None
-        # Jetson Orin Nano 40-pin (same BCM↔header table as navigation PINMAP).
-        if header_pin == 37:
-            return 26
-        _log.warning(
-            "NINA_HOVER_RELAY_HEADER_PIN=%s is not mapped; use 37 for the stock "
-            "relay IN wire or set NINA_HOVER_POWER_RELAY_BCM to the Jetson BCM number",
-            header_pin,
-        )
-        return None
-    raw = os.environ.get("NINA_HOVER_POWER_RELAY_BCM", "").strip()
-    if not raw:
-        return None
-    try:
-        v = int(raw, 0)
-    except ValueError:
-        return None
-    return v if v > 0 else None
-
-
-def _parse_hoverboard_relay_status_led_bcm() -> Optional[int]:
-    """Optional Jetson BCM for a **pack status** LED (see ``HOVERBOARD_POWER_RELAY.md``)."""
-    raw = os.environ.get("NINA_HOVER_RELAY_STATUS_LED_BCM", "").strip()
-    if not raw:
-        return None
-    try:
-        v = int(raw, 0)
-    except ValueError:
-        return None
-    return v if v > 0 else None
-
-
 # Upper bound for breakaway timing (seconds). Longer holds behave like
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
@@ -154,15 +112,6 @@ class HoverboardAxisSettings:
     a stop use a **brake-centered** lean of that many degrees at 100% speed (scaled by
     the commanded duty), instead of the fixed ``NINA_HOVER_FWD_POS_*`` /
     ``NINA_HOVER_REV_POS_*`` goal table — gentler for IMU-sensitive hoverboards (~2–3°).
-
-    Optional **hoverboard pack power relay** (GPIO → 5 V relay module IN pin; see
-    ``docs/HOVERBOARD_POWER_RELAY.md``): prefer ``NINA_HOVER_RELAY_HEADER_PIN=37`` for
-    the Jetson **40-pin header** (relay IN on pin 37). Advanced: ``NINA_HOVER_POWER_RELAY_BCM``
-    (Jetson BCM index, unset = off), ``NINA_HOVER_RELAY_POWER_ON_LEVEL`` (``0``/``1`` = GPIO when pack is energised),
-    ``NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER`` (default ``0`` = cut pack on kiosk exit).
-    Optional ``NINA_HOVER_RELAY_STATUS_LED_BCM``: second GPIO (**HIGH** = pack allowed,
-    **LOW** = pack cut) for an external LED + resistor to GND — easier to see than the
-    tiny LED on some relay boards.
     """
 
     id_left: int
@@ -179,10 +128,6 @@ class HoverboardAxisSettings:
     moving_speed: int
     sign_left: int
     sign_right: int
-    power_relay_bcm: Optional[int] = None
-    power_relay_power_on_level: int = 1
-    power_relay_shutdown_allows_power: bool = False
-    power_relay_status_led_bcm: Optional[int] = None
     straight_tilt_deg: float = 0.0
 
 
@@ -431,14 +376,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
-        power_relay_bcm=_parse_hoverboard_power_relay_bcm(),
-        power_relay_power_on_level=max(
-            0, min(1, _env_int("NINA_HOVER_RELAY_POWER_ON_LEVEL", 1))
-        ),
-        power_relay_shutdown_allows_power=_env_bool(
-            "NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER", False
-        ),
-        power_relay_status_led_bcm=_parse_hoverboard_relay_status_led_bcm(),
         straight_tilt_deg=float(
             os.environ.get("NINA_HOVER_STRAIGHT_TILT_DEG", "0") or 0
         ),

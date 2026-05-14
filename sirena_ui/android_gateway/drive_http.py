@@ -170,7 +170,7 @@ def set_wheel_invert(
 
 
 def robot_set_brake(service: NinaService, *, on: bool) -> Dict[str, Any]:
-    """Match kiosk ``DriveController.set_brake`` (servo brake pose + optional hover pack relay)."""
+    """Match kiosk ``DriveController.set_brake`` (servo brake pose)."""
     if _autonomy_blocks(service) and not on:
         return {
             "ok": False,

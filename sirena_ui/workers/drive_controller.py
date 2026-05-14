@@ -9,7 +9,7 @@ replacement:
   state_changed(dict)  signal
   state()              snapshot
   set_speed(pct)
-  set_brake(on, *, energize_pack=True)
+  set_brake(on)
   set_reverse(on)
   drive(direction)     direction in {forward, back, left, right}
   turn_90(which)       \"left\" or \"right\" — one timed ~90° in-place pivot
@@ -531,11 +531,8 @@ class DriveController(QObject):
         it just re-applies whatever is in `state`."""
         self._apply_polarity_to_nav()
 
-    def set_brake(self, on: bool, *, energize_pack: bool = True) -> None:
-        """Toggle brake. *energize_pack* applies to hoverboard pack relay: ``False``
-        clears software brake only (used when autonomy arms motion without
-        operator pack release). Operator UI / HTTP brake always pass default
-        ``True`` when releasing."""
+    def set_brake(self, on: bool) -> None:
+        """Toggle brake (servo brake pose for hoverboard lean axes)."""
         with self._lock:
             self._state["brake"] = bool(on)
             if on:
@@ -544,7 +541,7 @@ class DriveController(QObject):
         if on:
             self._enqueue(self._do_brake_on)
         else:
-            self._enqueue(lambda ep=energize_pack: self._do_brake_off(energize_pack=ep))
+            self._enqueue(self._do_brake_off)
 
     def drive(self, direction: str) -> None:
         if direction not in _VALID_DIRECTIONS:
@@ -830,11 +827,11 @@ class DriveController(QObject):
         except Exception as exc:
             log.exception("engage_brake failed: %s", exc)
 
-    def _do_brake_off(self, *, energize_pack: bool = True) -> None:
+    def _do_brake_off(self) -> None:
         if self._nav is None:
             return
         try:
-            self._nav.release_brake(energize_pack=energize_pack)
+            self._nav.release_brake()
         except Exception as exc:
             log.exception("release_brake failed: %s", exc)
 

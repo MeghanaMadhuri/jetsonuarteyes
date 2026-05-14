@@ -127,8 +127,8 @@ class _FakeDrive:
         self.brake_calls: list = []
         self.stop_calls = 0
 
-    def set_brake(self, on: bool, *, energize_pack: bool = True) -> None:
-        self.brake_calls.append((bool(on), energize_pack))
+    def set_brake(self, on: bool) -> None:
+        self.brake_calls.append((bool(on),))
 
     def ensure_hardware(self) -> None:
         pass

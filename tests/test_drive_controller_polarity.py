@@ -73,8 +73,8 @@ class FakeNav:
         self.calls.append(("engage_brake",))
         self.brake_engaged = True
 
-    def release_brake(self, *, energize_pack: bool = True) -> None:
-        self.calls.append(("release_brake", energize_pack))
+    def release_brake(self) -> None:
+        self.calls.append(("release_brake",))
         self.brake_engaged = False
 
     def set_invert_left(self, on: bool) -> None:

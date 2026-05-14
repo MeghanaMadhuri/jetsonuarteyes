@@ -33,7 +33,7 @@ class _FakeDrive:
     def __init__(self) -> None:
         self.calls: list = []
 
-    def set_brake(self, on: bool, *, energize_pack: bool = True) -> None:
+    def set_brake(self, on: bool) -> None:
         pass
 
     def stop(self) -> None:

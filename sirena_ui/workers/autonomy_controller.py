@@ -627,7 +627,7 @@ class AutonomyController(QObject):
         # issuing wheel commands.
         _yield_autonomy_stagger()
         try:
-            self._drive.set_brake(False, energize_pack=False)
+            self._drive.set_brake(False)
             self._drive.ensure_hardware()
         except Exception as exc:
             log.warning("drive.ensure_hardware: %s", exc)

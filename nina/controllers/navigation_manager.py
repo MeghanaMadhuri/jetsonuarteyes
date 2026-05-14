@@ -732,15 +732,13 @@ class NavigationManager:
         self.stop()
         log.info("brake engaged (PWM=0; motors coast)")
 
-    def release_brake(self, *, energize_pack: bool = True) -> None:
+    def release_brake(self) -> None:
         """Logical 'brake off'. No-op for the RPi-mirror config.
 
         JYQD has no separate brake pin; ``stop()`` leaves drivers armed with
         PWM=0. Kept on the API so existing GUI / CLI callers don't need
-        to change. *energize_pack* is ignored here (hoverboard relay only).
+        to change.
         """
-        if not energize_pack:
-            return
         log.info("brake released (no-op; ready for next motion command)")
 
     def set_status(self, mode: str) -> None:

@@ -16,8 +16,6 @@ then keep the **Daily flow** section pinned somewhere.
 The historic `nina-arm` branch is **obsolete** — its work has been
 forward-ported into `feature/nina-app` as commit `9263f52`.
 
-**Hardware add-on:** optional GPIO relay to cut hoverboard DC when Brake is ON — [`docs/HOVERBOARD_POWER_RELAY.md`](HOVERBOARD_POWER_RELAY.md).
-
 ## One-time per-clone setup (already done in both clones)
 
 These are local-repo settings, not global. They ensure pulls stay

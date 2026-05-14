@@ -154,7 +154,7 @@ class DriveInvertBody(BaseModel):
 class DriveBrakeBody(BaseModel):
     """Same semantics as kiosk ``DriveScreen`` brake pill (``DriveController.set_brake``)."""
 
-    on: bool = Field(..., description="True = brake engaged (pack cut when relay configured)")
+    on: bool = Field(..., description="True = brake engaged (servos to brake pose)")
 
 
 class PlayActionBody(BaseModel):

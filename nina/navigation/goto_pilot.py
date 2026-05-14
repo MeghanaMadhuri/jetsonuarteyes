@@ -263,7 +263,7 @@ class GotoPilot:
             return
 
         try:
-            self._drive.set_brake(False, energize_pack=False)
+            self._drive.set_brake(False)
         except Exception:
             pass
 
