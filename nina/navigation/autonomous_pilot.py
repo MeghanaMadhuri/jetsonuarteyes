@@ -83,12 +83,12 @@ class _DriveLike:
     framework-agnostic in tests. Required methods:
         drive_wheels(left_dir, left_speed, right_dir, right_speed)
         stop()
-        set_brake(on)
+        set_brake(on, *, energize_pack: bool = True)
     """
     def drive_wheels(self, left_dir: str, left_speed: int,
                      right_dir: str, right_speed: int) -> None: ...
     def stop(self) -> None: ...
-    def set_brake(self, on: bool) -> None: ...
+    def set_brake(self, on: bool, *, energize_pack: bool = True) -> None: ...
 
 
 class AutonomousPilot:
@@ -158,7 +158,7 @@ class AutonomousPilot:
 
         # Make sure the BLDCs are armed.
         try:
-            self._drive.set_brake(False)
+            self._drive.set_brake(False, energize_pack=False)
         except Exception:
             pass
 

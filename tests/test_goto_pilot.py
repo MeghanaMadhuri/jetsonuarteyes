@@ -104,7 +104,7 @@ class FakeDrive:
         self.calls: List[Tuple[str, str, int, str, int]] = []
         self._brake = False
 
-    def set_brake(self, on: bool) -> None:
+    def set_brake(self, on: bool, *, energize_pack: bool = True) -> None:
         self._brake = bool(on)
 
     def stop(self) -> None:

@@ -1,6 +1,7 @@
-# Optional overrides for hoverboard pack relay (BCM 26 = pin 37 is already set in
-# desktop/nina-ui-kiosk.service). Use this drop-in only to change BCM / polarity /
-# shutdown policy without editing the main unit.
+# Optional overrides for hoverboard pack relay. The main
+# desktop/nina-ui-kiosk.service already sets NINA_HOVER_RELAY_HEADER_PIN=37
+# (relay IN on Jetson 40-pin header pin 37). Use this drop-in only to change
+# pin / polarity / shutdown policy without editing the main unit.
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user/nina-ui-kiosk.service.d
@@ -9,10 +10,11 @@
 #   systemctl --user daemon-reload
 #   systemctl --user restart nina-ui-kiosk.service
 #
-# BCM 26 = physical pin 37 on the 40-pin header. Do NOT use if rear-right
-# HC-SR04 echo is wired to that pin (see nina/sensors/hcsr04.py defaults).
+# If rear-right HC-SR04 echo is wired to pin 37, move the relay IN to another
+# free header pin and set NINA_HOVER_POWER_RELAY_BCM to the Jetson BCM for that
+# pin (advanced — see docs/HOVERBOARD_POWER_RELAY.md).
 
 [Service]
-Environment=NINA_HOVER_POWER_RELAY_BCM=26
+Environment=NINA_HOVER_RELAY_HEADER_PIN=37
 Environment=NINA_HOVER_RELAY_POWER_ON_LEVEL=1
 Environment=NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER=0

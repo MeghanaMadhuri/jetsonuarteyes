@@ -27,6 +27,25 @@ def _env_sign(name: str, default: int) -> int:
 
 
 def _parse_hoverboard_power_relay_bcm() -> Optional[int]:
+    """Resolve relay line: prefer **40-pin header index** (Nina default pin 37)."""
+    header_raw = os.environ.get("NINA_HOVER_RELAY_HEADER_PIN", "").strip()
+    if header_raw:
+        try:
+            header_pin = int(header_raw, 0)
+        except ValueError:
+            _log.warning("NINA_HOVER_RELAY_HEADER_PIN=%r is not an integer", header_raw)
+            return None
+        if header_pin <= 0:
+            return None
+        # Jetson Orin Nano 40-pin (same BCM↔header table as navigation PINMAP).
+        if header_pin == 37:
+            return 26
+        _log.warning(
+            "NINA_HOVER_RELAY_HEADER_PIN=%s is not mapped; use 37 for the stock "
+            "relay IN wire or set NINA_HOVER_POWER_RELAY_BCM to the Jetson BCM number",
+            header_pin,
+        )
+        return None
     raw = os.environ.get("NINA_HOVER_POWER_RELAY_BCM", "").strip()
     if not raw:
         return None
@@ -125,8 +144,9 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_REV_POS_*`` goal table — gentler for IMU-sensitive hoverboards (~2–3°).
 
     Optional **hoverboard pack power relay** (GPIO → 5 V relay module IN pin; see
-    ``docs/HOVERBOARD_POWER_RELAY.md``): ``NINA_HOVER_POWER_RELAY_BCM`` (unset = off),
-    ``NINA_HOVER_RELAY_POWER_ON_LEVEL`` (``0``/``1`` = GPIO when pack is energised),
+    ``docs/HOVERBOARD_POWER_RELAY.md``): prefer ``NINA_HOVER_RELAY_HEADER_PIN=37`` for
+    the Jetson **40-pin header** (relay IN on pin 37). Advanced: ``NINA_HOVER_POWER_RELAY_BCM``
+    (Jetson BCM index, unset = off), ``NINA_HOVER_RELAY_POWER_ON_LEVEL`` (``0``/``1`` = GPIO when pack is energised),
     ``NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER`` (default ``0`` = cut pack on kiosk exit).
     """
 

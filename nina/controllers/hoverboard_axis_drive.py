@@ -177,8 +177,10 @@ class HoverboardAxisDrive:
         if self._power_relay is not None:
             self._power_relay.set_power_cut()
 
-    def release_brake(self) -> None:
+    def release_brake(self, *, energize_pack: bool = True) -> None:
         """Re-energise hoverboard pack when a power relay is configured."""
+        if not energize_pack:
+            return
         if self._power_relay is not None:
             self._power_relay.set_power_allowed()
 

@@ -15,6 +15,13 @@ from typing import Optional
 
 log = logging.getLogger("nina.hoverboard_power_relay")
 
+
+def _relay_line_label(bcm: int) -> str:
+    """Human label for logs (Nina default relay IN on 40-pin header pin 37)."""
+    if int(bcm) == 26:
+        return "Jetson 40-pin header pin 37"
+    return f"Jetson GPIO BCM {int(bcm)}"
+
 # One relay instance per process so kiosk boot-prime and HoverboardAxisDrive share GPIO.
 _relay_singleton: Optional["HoverboardPowerRelay"] = None
 _relay_singleton_sig: Optional[tuple[int, int]] = None
@@ -31,6 +38,8 @@ class HoverboardPowerRelay:
         self._gpio = None  # lazy module
         self._configured = False
         self._disabled = False
+        # Last value sent to GPIO.output (for edge-only INFO logs).
+        self._last_out: Optional[int] = None
 
     def _setup_once(self) -> bool:
         if self._disabled:
@@ -70,17 +79,18 @@ class HoverboardPowerRelay:
                 )
             except Exception as exc:
                 log.warning(
-                    "Hoverboard power relay: setup BCM %s failed (%s) — relay disabled",
-                    self._bcm,
+                    "Hoverboard power relay: setup %s failed (%s) — relay disabled",
+                    _relay_line_label(self._bcm),
                     exc,
                 )
                 self._disabled = True
                 self._gpio = None
                 return False
             self._configured = True
+            self._last_out = self._power_cut_level
             log.info(
-                "Hoverboard power relay: BCM %s power_on_level=%s (cut=%s)",
-                self._bcm,
+                "Hoverboard power relay: %s power_on_level=%s (cut=%s)",
+                _relay_line_label(self._bcm),
                 self._power_on_level,
                 self._power_cut_level,
             )
@@ -93,6 +103,13 @@ class HoverboardPowerRelay:
         assert self._gpio is not None
         try:
             self._gpio.output(self._bcm, self._power_on_level)
+            if self._last_out != self._power_on_level:
+                self._last_out = self._power_on_level
+                log.info(
+                    "Hoverboard power relay: %s GPIO=%s (pack energised; brake OFF path)",
+                    _relay_line_label(self._bcm),
+                    self._power_on_level,
+                )
         except Exception:
             log.exception("Hoverboard power relay: set_power_allowed failed")
 
@@ -103,6 +120,13 @@ class HoverboardPowerRelay:
         assert self._gpio is not None
         try:
             self._gpio.output(self._bcm, self._power_cut_level)
+            if self._last_out != self._power_cut_level:
+                self._last_out = self._power_cut_level
+                log.info(
+                    "Hoverboard power relay: %s GPIO=%s (pack cut; brake ON path)",
+                    _relay_line_label(self._bcm),
+                    self._power_cut_level,
+                )
         except Exception:
             log.exception("Hoverboard power relay: set_power_cut failed")
 
@@ -132,9 +156,9 @@ def get_power_relay(
         if _relay_singleton_sig == sig:
             return _relay_singleton
         log.warning(
-            "Hoverboard power relay: ignoring second BCM %s (already using BCM %s)",
-            bcm_i,
-            _relay_singleton_sig[0] if _relay_singleton_sig else "?",
+            "Hoverboard power relay: ignoring second line %s (already using %s)",
+            _relay_line_label(bcm_i),
+            _relay_line_label(_relay_singleton_sig[0]) if _relay_singleton_sig else "?",
         )
         return _relay_singleton
     _relay_singleton = HoverboardPowerRelay(bcm_i, power_on_level=pol)
