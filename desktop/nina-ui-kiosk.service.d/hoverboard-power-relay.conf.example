@@ -1,5 +1,6 @@
-# Optional: GPIO line to cut hoverboard DC power when Brake is ON (Songle-style
-# 5 V relay module on IN / GND / VCC). See docs/HOVERBOARD_POWER_RELAY.md.
+# Optional overrides for hoverboard pack relay (BCM 26 = pin 37 is already set in
+# desktop/nina-ui-kiosk.service). Use this drop-in only to change BCM / polarity /
+# shutdown policy without editing the main unit.
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user/nina-ui-kiosk.service.d

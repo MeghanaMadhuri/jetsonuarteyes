@@ -12,13 +12,16 @@ When `NINA_HOVER_POWER_RELAY_BCM` is set, [`HoverboardAxisDrive`](../nina/contro
 
 | Event | Servo / bus | Relay GPIO |
 | --- | --- | --- |
-| `initialize()` | Applies brake pose on AX-18 | **Power allowed** (pack energised) before touching the bus |
+| Kiosk process start (`NinaService`) | (none yet) | **Power cut** — GPIO is configured as soon as the relay module is first used |
+| `initialize()` | Applies brake pose on AX-18 | **Power cut** (parked = pack off) |
 | `engage_brake()` (Brake **ON** in UI) | `stop()` → brake goals | **Power cut** |
 | `release_brake()` (Brake **OFF**) | No servo change | **Power allowed** |
 | `emergency_stop()` | `stop()` | **Power cut** |
 | `emergency_stop(routine_shutdown=True)` (kiosk exit) | `stop()` | **Cut** by default; see shutdown env below |
 
 The Android companion issues the same brake transitions over **`POST /v1/robot/drive/brake`** (`{ "on": true|false }`), which maps to **`DriveController.set_brake`** on the Jetson (same queue as the kiosk).
+
+The shipped ``desktop/nina-ui-kiosk.service`` sets ``NINA_HOVER_POWER_RELAY_BCM=26`` (physical pin 37) so a **pull + reinstall** enables the relay without an extra drop-in. Override in ``/etc/nina-link/navigation.env`` if your harness differs.
 
 If `NINA_HOVER_POWER_RELAY_BCM` is **unset**, nothing changes from the
 pre-relay build (relay code is inactive).

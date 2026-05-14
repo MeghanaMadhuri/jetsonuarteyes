@@ -1,19 +1,24 @@
 """Unit tests for hoverboard pack power relay helpers (no Jetson.GPIO)."""
 
-from nina.controllers.hoverboard_power_relay import build_power_relay
+import unittest
+
+from nina.controllers.hoverboard_power_relay import HoverboardPowerRelay, build_power_relay
 
 
-def test_build_power_relay_disabled_when_none() -> None:
-    assert build_power_relay(None, power_on_level=1) is None
+class TestHoverboardPowerRelay(unittest.TestCase):
+    def test_build_power_relay_disabled_when_none(self) -> None:
+        self.assertIsNone(build_power_relay(None, power_on_level=1))
+
+    def test_build_power_relay_disabled_when_zero(self) -> None:
+        self.assertIsNone(build_power_relay(0, power_on_level=1))
+
+    def test_build_power_relay_returns_helper_and_singleton(self) -> None:
+        a = build_power_relay(26, power_on_level=0)
+        self.assertIsNotNone(a)
+        self.assertIsInstance(a, HoverboardPowerRelay)
+        b = build_power_relay(26, power_on_level=0)
+        self.assertIs(a, b)
 
 
-def test_build_power_relay_disabled_when_zero() -> None:
-    assert build_power_relay(0, power_on_level=1) is None
-
-
-def test_build_power_relay_returns_helper_for_positive_bcm() -> None:
-    from nina.controllers.hoverboard_power_relay import HoverboardPowerRelay
-
-    r = build_power_relay(26, power_on_level=0)
-    assert r is not None
-    assert isinstance(r, HoverboardPowerRelay)
+if __name__ == "__main__":
+    unittest.main()

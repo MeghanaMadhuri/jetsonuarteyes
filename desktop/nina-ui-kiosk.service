@@ -70,6 +70,13 @@ Environment=NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
 # there without touching this unit. Per-wheel polarity (left BLDC wired
 # the opposite way around from the right) is still expressed via the
 # nav layer's INVERT flags so DriveController.set_invert_* works.
+#
+# Pack power relay on Orin 40-pin **BCM 26 = physical pin 37** (see
+# docs/HOVERBOARD_POWER_RELAY.md). Override in navigation.env if your
+# relay IN is on another BCM or if pin 37 is used for HC-SR04 echo.
+Environment=NINA_HOVER_POWER_RELAY_BCM=26
+Environment=NINA_HOVER_RELAY_POWER_ON_LEVEL=1
+Environment=NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER=0
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env

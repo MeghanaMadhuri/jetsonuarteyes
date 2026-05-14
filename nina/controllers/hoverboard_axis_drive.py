@@ -88,8 +88,6 @@ class HoverboardAxisDrive:
     def initialize(self) -> None:
         if self._is_initialized:
             return
-        if self._power_relay is not None:
-            self._power_relay.set_power_allowed()
         with self._bus_lock:
             self._brake_left = self._dxl._clamp_pos(
                 int(self._axis.brake_pos_left)
@@ -99,6 +97,10 @@ class HoverboardAxisDrive:
             )
             apply_hoverboard_brake_positions(self._dxl, self._axis)
         self._is_initialized = True
+        # Parked / brake pose must match de-energised pack when a relay is wired
+        # (kiosk already primed cut at NinaService boot; repeat here after DXL goals).
+        if self._power_relay is not None:
+            self._power_relay.set_power_cut()
         log.info(
             "HoverboardAxisDrive init brake L(id%s)=%s R(id%s)=%s tilt=%s°",
             self._left_id,
