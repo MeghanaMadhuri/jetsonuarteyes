@@ -343,7 +343,7 @@ def _drive_row(service: NinaService) -> HealthRow:
     # Label sourced from the active drive backend so we don't lie when
     # the production stack swaps GPIO/JYQD for hoverboard-lean via
     # Dynamixel. `HoverboardAxisDrive.DRIVER_LABEL` is
-    # "Hoverboard lean — Dynamixel AX-18 (ID 12+13)"; an older
+    # "Hoverboard lean — Dynamixel MX-28 (ID 12+13)"; an older
     # NavigationManager would set it to something starting with "BLDC".
     try:
         from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive

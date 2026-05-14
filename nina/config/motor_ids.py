@@ -2,7 +2,7 @@
 
 from typing import List
 
-# Body DOF 1..11; hoverboard module lean mounted on AX-18 at 12 (L) and 13 (R).
+# Body DOF 1..11; hoverboard driver tilt: MX-28 at 12 (L) and 13 (R).
 ARM_MOTOR_IDS: List[int] = list(range(1, 12))
 HOVERBOARD_LEAN_IDS: List[int] = [12, 13]
 

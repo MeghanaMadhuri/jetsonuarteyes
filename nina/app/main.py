@@ -51,7 +51,7 @@ def build_app():
 
 
 def build_navigation(settings, dxl=None, bus_lock=None):
-    """Return ``HoverboardAxisDrive`` (AX-18 lean axes on the Dynamixel bus).
+    """Return ``HoverboardAxisDrive`` (MX-28 lean axes on the Dynamixel bus).
 
     Pass ``dxl`` + ``bus_lock`` from the running app when available; otherwise a
     temporary ``DynamixelManager`` is opened (CLI / link-daemon use).

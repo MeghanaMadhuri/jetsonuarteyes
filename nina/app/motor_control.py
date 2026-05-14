@@ -5,7 +5,7 @@ Run with the package path so imports resolve correctly:
 
     python3 -m nina.app.motor_control
 
-Drives hoverboard lean axes (Dynamixel AX-18 IDs from ``NINA_HOVER_*``).
+Drives hoverboard lean axes (Dynamixel MX-28 IDs from ``NINA_HOVER_*``).
 
 Navigation timing / polarity tunables (``NINA_NAV_*``, ``invert_*_dir``) come
 from `nina.config.settings.load_settings()` so this CLI behaves
@@ -43,7 +43,7 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     settings = load_settings(repo_root)
-    print("[INIT] Navigation: Hoverboard lean (Dynamixel AX-18)")
+    print("[INIT] Navigation: Hoverboard lean (Dynamixel MX-28)")
     nav = build_navigation(settings)
     try:
         nav.initialize()

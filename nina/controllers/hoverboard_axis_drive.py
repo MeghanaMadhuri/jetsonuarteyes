@@ -1,8 +1,8 @@
 """
-Drive Nina locomotion by tilting hoverboard gyro modules via Dynamixel AX-18.
+Drive Nina locomotion by tilting hoverboard driver modules via Dynamixel MX-28.
 
-Primary Nina locomotion: lean servos on the Dynamixel bus. API subset matches
-``NavigationManager`` as used by ``DriveController`` / autonomy / goto.
+Primary Nina locomotion: lean servos on the Dynamixel bus (joint mode). API subset
+matches ``NavigationManager`` as used by ``DriveController``, autonomy, and goto.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 class HoverboardAxisDrive:
     """Lean servos: straight lines use FWD/REV goals; pivots use those goals in opposition."""
 
-    DRIVER_LABEL = "Hoverboard lean — Dynamixel AX-18 (ID 12+13)"
+    DRIVER_LABEL = "Hoverboard lean — Dynamixel MX-28 (ID 12+13)"
     DIR_FORWARD = "forward"
     DIR_BACKWARD = "backward"
     SIDE_LEFT = "left"

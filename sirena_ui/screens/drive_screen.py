@@ -1,7 +1,7 @@
 """Drive screen: front camera placeholder + manual control cockpit.
 
 The screen talks to locomotion through `NinaService.drive`, a Qt facade over
-`HoverboardAxisDrive` (Dynamixel AX-18 lean axes, typically IDs 12+13) via
+`HoverboardAxisDrive` (Dynamixel MX-28 lean axes, typically IDs 12+13) via
 `DriveController`. Hardware init runs lazily on first visit to this screen.
 
 On a dev host without a live Dynamixel bus, init may fail and the status pill

@@ -64,7 +64,7 @@ Environment=NINA_LINK_ENABLE_SLAM_BRIDGE=1
 Environment=NINA_LINK_ENABLE_DEPTH_BRIDGE=1
 Environment=NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
 
-# Locomotion: hoverboard lean axes on the Dynamixel bus (AX-18 IDs 12/13).
+# Locomotion: hoverboard lean axes on the Dynamixel bus (MX-28 IDs 12/13; hall idle ~2048).
 # Per-bot tuning lives in /etc/nina-link/navigation.env (EnvironmentFile
 # below) — override NINA_HOVER_BRAKE_POS_*, NINA_HOVER_FWD_POS_*, etc.
 # there without touching this unit. Per-wheel polarity (left BLDC wired
