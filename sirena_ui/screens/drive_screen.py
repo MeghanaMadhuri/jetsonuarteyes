@@ -27,6 +27,7 @@ Two input modes are supported:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import List, Optional, Tuple
 
@@ -57,6 +58,8 @@ from sirena_ui.workers.drive_controller import MAX_SPEED_PCT, MIN_SPEED_PCT
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.straight_bench_speed import straight_bench_speed_pct
 
+
+log = logging.getLogger("sirena_ui.drive_screen")
 
 # Keyboard map for held-while-pressed driving.
 _KEY_TO_DIRECTION = {
@@ -721,6 +724,13 @@ class DriveScreen(QWidget):
         """Lazily initialise the BLDC drivers the first time the user
         opens the Drive screen. Re-entry is cheap; the controller
         dedupes inside its worker."""
+        # HoverboardAxisDrive.initialize() talks to the Dynamixel bus; open
+        # the bus and enable torque *before* the drive worker runs so a fast
+        # navigation to Drive cannot race MainWindow's deferred ensure_bus.
+        try:
+            self._service.ensure_bus()
+        except Exception as exc:
+            log.warning("ensure_bus before drive init failed: %s", exc)
         self._drive.ensure_hardware()
         # Reflect the current autonomy state in case the user toggled
         # it from the Map screen.
