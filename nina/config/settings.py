@@ -95,12 +95,12 @@ class HoverboardAxisSettings:
 
     ``DriveController`` always uses ``HoverboardAxisDrive``. Env:
     ``NINA_HOVER_ID_LEFT`` / ``RIGHT`` (default 12 / 13), ``NINA_HOVER_BRAKE_POS_LEFT`` /
-    ``NINA_HOVER_BRAKE_POS_RIGHT`` — brake / idle / boot goals (defaults 515 left,
-    500 right; legacy ``NINA_HOVER_NEUTRAL_*`` is read if the ``BRAKE`` vars are unset),
+    ``NINA_HOVER_BRAKE_POS_RIGHT`` — brake / idle / boot goals (defaults 2046 left,
+    2059 right; legacy ``NINA_HOVER_NEUTRAL_*`` is read if the ``BRAKE`` vars are unset),
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
-    uses ``NINA_HOVER_FWD_POS_*`` (defaults 525 / 500); straight backward uses
-    ``NINA_HOVER_REV_POS_*`` (defaults 500 / 510). In-place pivots pair
+    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2056 / 2059); straight backward uses
+    ``NINA_HOVER_REV_POS_*`` (defaults 2031 / 2069). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI ``Turn left`` / ``Turn right`` and
     D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
@@ -343,19 +343,19 @@ def load_settings(repo_root: Path) -> NinaSettings:
         id_left=_env_int("NINA_HOVER_ID_LEFT", 12),
         id_right=_env_int("NINA_HOVER_ID_RIGHT", 13),
         brake_pos_left=(
-            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 515)
+            _env_int("NINA_HOVER_BRAKE_POS_LEFT", 2046)
             if "NINA_HOVER_BRAKE_POS_LEFT" in os.environ
-            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 515)
+            else _env_int("NINA_HOVER_NEUTRAL_LEFT", 2046)
         ),
         brake_pos_right=(
-            _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 500)
+            _env_int("NINA_HOVER_BRAKE_POS_RIGHT", 2059)
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
-            else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 500)
+            else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 2059)
         ),
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 525),
-        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 500),
-        backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 500),
-        backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 510),
+        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2056),
+        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2059),
+        backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2031),
+        backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2069),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
         turn_push_ticks=max(
             0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 20))
