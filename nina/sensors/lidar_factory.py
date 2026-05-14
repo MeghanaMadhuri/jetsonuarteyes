@@ -174,7 +174,17 @@ def build_lidar(model: Optional[str] = None) -> LidarLike:
         return RPLidarA1()
 
     if requested == _MODEL_S2E:
-        from nina.sensors.slamtec_s2e import SlamtecS2E
+        try:
+            from nina.sensors.slamtec_s2e import SlamtecS2E
+        except ImportError as exc:
+            msg = (
+                "NINA_LIDAR_MODEL=s2e requires pyrplidarsdk "
+                "(pip install pyrplidarsdk or scripts/install-slamtec-s2e-jetson.sh). "
+                "Use NINA_LIDAR_MODEL=auto to fall back to A1 when the SDK is missing, "
+                "or NINA_LIDAR_MODEL=disabled to silence lidar until install."
+            )
+            log.error("%s (%s)", msg, exc)
+            raise ImportError(msg) from exc
         return SlamtecS2E()
 
     if requested == _MODEL_A1:

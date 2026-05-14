@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import logging
 import os
-
+#with ax-18 a 
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -106,6 +106,11 @@ class HoverboardAxisSettings:
     D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
     if yaw sense is reversed. ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback.
+
+    ``NINA_HOVER_STRAIGHT_TILT_DEG`` (default **0**): when **> 0**, forward/back from
+    a stop use a **brake-centered** lean of that many degrees at 100% speed (scaled by
+    the commanded duty), instead of the fixed ``NINA_HOVER_FWD_POS_*`` /
+    ``NINA_HOVER_REV_POS_*`` goal table — gentler for IMU-sensitive hoverboards (~2–3°).
     """
 
     id_left: int
@@ -122,6 +127,7 @@ class HoverboardAxisSettings:
     moving_speed: int
     sign_left: int
     sign_right: int
+    straight_tilt_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -246,9 +252,14 @@ class NinaSettings:
 
 def serial_collision_warnings(settings: NinaSettings) -> list[str]:
     """Return likely serial-port contention warnings."""
+    # Pi UART ``remote_serial_port`` was removed from NavigationSettings;
+    # tolerate older pickled settings objects via getattr.
+    nav_remote = str(
+        getattr(settings.navigation, "remote_serial_port", "") or ""
+    ).strip()
     ports = {
         "dynamixel": settings.serial_port.strip(),
-        "nav_remote": settings.navigation.remote_serial_port.strip(),
+        "nav_remote": nav_remote,
         "lidar": settings.lidar.serial_port.strip(),
     }
     owners: dict[str, list[str]] = {}
@@ -364,6 +375,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
+        straight_tilt_deg=float(
+            os.environ.get("NINA_HOVER_STRAIGHT_TILT_DEG", "0") or 0
+        ),
     )
 
     autonomy = AutonomySettings(

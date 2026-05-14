@@ -57,6 +57,15 @@ chmod +x "${INSTALL}" "${UPDATE}" 2>/dev/null || true
 say "Step 1 — Install nina-link (venv, pip, systemd)"
 "${INSTALL}" --all
 
+if [[ -x "${REPO_ROOT}/.venv-link/bin/pip" ]]; then
+    say "Step 1b — Slamtec S2E SDK into .venv-link (same interpreter as kiosk)"
+    if "${REPO_ROOT}/.venv-link/bin/pip" install -q "pyrplidarsdk>=0.1.2"; then
+        ok "pyrplidarsdk installed in .venv-link (Map tab / NINA_LIDAR_MODEL=s2e)"
+    else
+        warn "pyrplidarsdk pip into .venv-link failed — re-run scripts/install-slamtec-s2e-jetson.sh after this script, or: .venv-link/bin/pip install pyrplidarsdk"
+    fi
+fi
+
 say "Step 2 — Enable HTTP bridges + restart (companion features)"
 if [[ ! -f "${UPDATE}" ]]; then
     warn "Missing ${UPDATE} — install bridges manually: docs/COMPANION_APP.md"

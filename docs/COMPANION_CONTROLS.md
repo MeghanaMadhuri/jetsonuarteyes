@@ -28,6 +28,8 @@ These are read from **`GET /v1/robot/capabilities`** and mirrored in the app (ca
 
 Set the variable to **`1`** / **`true`**, then **restart** `nina-link` (systemd). Example fragment is in [`docs/nina-link-bridge.env.example`](nina-link-bridge.env.example).
 
+**Kiosk with embedded gateway:** the repo’s [`desktop/nina-ui-kiosk.service`](../desktop/nina-ui-kiosk.service) enables the same bridge flags for `python -m sirena_ui` (tablet hits the same process as the panel). Re-run `./scripts/install-nina-ui-kiosk.sh` or merge those `Environment=` lines into your user override so upgrades pick them up.
+
 **Safety:** turning on **drive** and **autonomy** together with desktop **Drive** can conflict — only one pilot should command the base at a time.
 
 ## 3. Playback vs bridges

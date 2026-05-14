@@ -410,11 +410,26 @@ else
     exit 1
 fi
 
+# Same as scripts/launch-sirena.sh: many `.venv-link` trees are created
+# *without* --system-site-packages, so apt's PyQt5 under dist-packages
+# must be on PYTHONPATH for `import PyQt5` to succeed.
+_PYQT_EXTRA="${REPO_ROOT}"
+for _d in \
+    "/usr/lib/python3/dist-packages" \
+    "/usr/lib/aarch64-linux-gnu/python3/dist-packages" \
+    "/usr/lib/x86_64-linux-gnu/python3/dist-packages"
+do
+    if [[ -d "${_d}/PyQt5" ]]; then
+        _PYQT_EXTRA="${REPO_ROOT}:${_d}"
+        break
+    fi
+done
+export PYTHONPATH="${_PYQT_EXTRA}"
 if "${PY}" -c "from PyQt5.QtCore import QT_VERSION_STR; print('pyqt_ok', QT_VERSION_STR)" 2>"${IMPORT_ERR}"; then
     rm -f "${IMPORT_ERR}"
     ok "PyQt5 importable (required for python -m sirena_ui)"
 else
-    bad "PyQt5 not importable in this venv — tablet gateway needs Qt."
+    bad "PyQt5 not importable with PYTHONPATH=${PYTHONPATH} — tablet gateway needs Qt."
     sed 's/^/    /' "${IMPORT_ERR}" >&2
     rm -f "${IMPORT_ERR}"
     echo ""

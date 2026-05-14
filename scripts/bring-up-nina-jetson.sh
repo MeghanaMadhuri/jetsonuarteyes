@@ -7,8 +7,9 @@
 # should be pointed at.
 #
 # What you get after this finishes successfully:
-#   * Slamtec RPLIDAR S2E (Ethernet/UDP) reachable + pyrplidarsdk wheel
-#     installed into the link daemon's venv.
+#   * Slamtec RPLIDAR S2E (Ethernet/UDP) reachable + pyrplidarsdk installed
+#     (``--user`` for smoke tests + into ``.venv-link`` when that venv exists
+#     or via install-sirena-companion step 1b so the kiosk interpreter sees it).
 #   * Sirena UI companion gateway venv (`.venv-link`) populated with
 #     vision/SLAM/sensor deps and the embedded HTTP gateway service
 #     enabled.
@@ -32,7 +33,11 @@
 #
 # Logs: each underlying installer logs to stdout/stderr; the final
 # banner reproduces the most actionable bits. To see kiosk runtime
-# logs after this finishes:  journalctl --user -u nina-ui-kiosk -f
+# logs after this finishes:
+#   journalctl --user -u nina-ui-kiosk -f
+# If that prints "No journal files were found", use:
+#   tail -f ~/.cache/sirena/launch.log
+# (user journal needs a login session or `sudo loginctl enable-linger "$USER"`).
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
@@ -163,6 +168,8 @@ echo "  Next steps:"
 echo "    * Open Sirena Companion on the tablet, Setup -> use that URL."
 echo "    * Hard reboot the Jetson once to confirm the kiosk autostarts."
 echo "    * Tail logs: journalctl --user -u nina-ui-kiosk -f"
+echo "      (if 'No journal files': loginctl enable-linger, log in graphically once,"
+echo "       or: tail -f ~/.cache/sirena/launch.log)"
 echo ""
 echo "  If the Drive screen says 'BLDC checking...' for >30s, see:"
 echo "    journalctl --user -u nina-ui-kiosk -n 200 | grep -i hover"

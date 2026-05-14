@@ -126,6 +126,16 @@ modifying the system distro packages, only the user's site-packages)."
     install_sdk --break-system-packages
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VENV_PIP="${REPO_ROOT}/.venv-link/bin/pip"
+if [[ -x "${VENV_PIP}" ]]; then
+    log "pip install ${PIP_PACKAGE} into ${REPO_ROOT}/.venv-link (Sirena kiosk interpreter)"
+    if ! "${VENV_PIP}" install -q "${PIP_PACKAGE}"; then
+        warn "venv pip install failed — kiosk may still see the module via --user site-packages"
+    fi
+fi
+
 # --------------------------------------------------------------------
 # 4) Network configuration
 # --------------------------------------------------------------------

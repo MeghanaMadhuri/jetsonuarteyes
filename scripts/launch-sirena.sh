@@ -153,12 +153,47 @@ else
 fi
 # Ensure the repo is importable even if the user has nuked PYTHONPATH.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+# If ``.venv-link`` was created without ``--system-site-packages``, apt's
+# ``python3-pyqt5`` (under ``/usr/lib/python3/dist-packages``) is invisible and
+# the GUI dies with ``ModuleNotFoundError: No module named 'PyQt5'``. Appending
+# that dir (after the repo) preserves venv-first resolution for other packages
+# while still allowing distro Qt bindings — same end state as a correctly built
+# Jetson venv per docs/COMPANION_APP.md.
+if [[ "${PYTHON_BIN}" == "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    _sys_py_d="/usr/lib/python3/dist-packages"
+    if [[ -d "${_sys_py_d}/PyQt5" ]]; then
+        case ":${PYTHONPATH}:" in
+            *":${_sys_py_d}:"*) : ;;
+            *) export PYTHONPATH="${PYTHONPATH}:${_sys_py_d}" ;;
+        esac
+    fi
+fi
 
 # Legacy Pi UART bridge vars — remove so GUI / children never inherit stale
 # NINA_NAV_MODE=remote from ~/.bashrc or old navigation.env (Jetson is GPIO-only).
 unset NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD \
     NINA_NAV_REMOTE_TIMEOUT_SEC NINA_NAV_REMOTE_TURN_TICK_SEC \
     NINA_NAV_LEGACY_PI_BRIDGE 2>/dev/null || true
+
+# Embedded Android gateway: if the operator did not set NINA_LINK_ENABLE_*,
+# default tablet HTTP bridges on so the companion matches in-process Sirena UI
+# (same defaults as desktop/nina-ui-kiosk.service). Explicit 0 is preserved.
+case "${NINA_ANDROID_GATEWAY:-}" in
+    1|true|TRUE|yes|YES|y|Y|on|ON)
+        : "${NINA_LINK_ENABLE_ROBOT_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_ACTION_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_RECORD_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_VISION_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_ACTIONS_STATIC:=1}"
+        : "${NINA_LINK_ENABLE_SLAM_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_DEPTH_BRIDGE:=1}"
+        : "${NINA_LINK_ENABLE_AUTONOMY_BRIDGE:=1}"
+        export NINA_LINK_ENABLE_ROBOT_BRIDGE NINA_LINK_ENABLE_ACTION_BRIDGE \
+            NINA_LINK_ENABLE_RECORD_BRIDGE NINA_LINK_ENABLE_VISION_BRIDGE \
+            NINA_LINK_ENABLE_ACTIONS_STATIC NINA_LINK_ENABLE_SLAM_BRIDGE \
+            NINA_LINK_ENABLE_DEPTH_BRIDGE NINA_LINK_ENABLE_AUTONOMY_BRIDGE
+        ;;
+esac
 
 # ---------------------------------------------------------------------
 # Kiosk-mode panel: force 1024 x 600 on the connected display.

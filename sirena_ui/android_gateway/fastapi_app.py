@@ -1311,9 +1311,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
 
         resp = gw.plane.submit(_occ, timeout=30.0)
         if resp is None:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, detail="no occupancy grid yet"
-            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         return resp
 
     @app.post("/v1/slam/save")

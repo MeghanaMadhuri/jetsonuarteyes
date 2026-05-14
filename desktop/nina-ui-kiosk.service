@@ -51,6 +51,19 @@ Environment=NINA_LINK_PORT=8787
 Environment=NINA_LINK_BOOT_AP=0
 Environment=NINA_ANDROID_GATEWAY_BOOT_AP=0
 
+# Tablet HTTP bridges: without these, the Android companion gets 503 on Drive /
+# Vision / SLAM / etc. while Sirena UI still works (Qt uses NinaService directly).
+# Operators who want HTTP read-only can `systemctl --user edit nina-ui-kiosk` and
+# set the matching NINA_LINK_ENABLE_* vars to 0.
+Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
+Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
+Environment=NINA_LINK_ENABLE_SLAM_BRIDGE=1
+Environment=NINA_LINK_ENABLE_DEPTH_BRIDGE=1
+Environment=NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
+
 # Locomotion: hoverboard lean axes on the Dynamixel bus (AX-18 IDs 12/13).
 # Per-bot tuning lives in /etc/nina-link/navigation.env (EnvironmentFile
 # below) — override NINA_HOVER_BRAKE_POS_*, NINA_HOVER_FWD_POS_*, etc.
@@ -77,6 +90,10 @@ UnsetEnvironment=NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD NINA_NA
 Environment=NINA_LIDAR_MODEL=s2e
 Environment=NINA_LIDAR_HOST=192.168.11.2
 Environment=NINA_LIDAR_UDP_PORT=8089
+
+# Hoverboard IMU: gentler straight-line lean (deg at 100% stick, scaled by speed).
+# D-pad left/right still use opposite-wheel goals (pivot); tune with NINA_HOVER_*_POS_* if needed.
+Environment=NINA_HOVER_STRAIGHT_TILT_DEG=2.5
 
 ExecStart=__EXEC__
 
