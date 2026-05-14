@@ -40,7 +40,7 @@ changes, the logger emits an **INFO** line from `nina.hoverboard_power_relay`
 the user journal while toggling **Brake OFF / ON** on Drive:
 
 ```bash
-journalctl --user -u nina-ui-kiosk.service -f | grep -i 'power relay'
+journalctl --user -u nina-ui-kiosk.service -f | grep -iE 'power relay|pack status'
 ```
 
 (or your usual `launch.log` path if the GUI logs there).
@@ -48,6 +48,23 @@ journalctl --user -u nina-ui-kiosk.service -f | grep -i 'power relay'
 **Confirm on the bench (kiosk stopped):** with only **VCC + GND** on the relay
 module, jumper **IN** between **3V3 (pin 1)** and **GND** and listen — that
 tells you how loud *your* module is.
+
+### Onboard LEDs (red / green on the relay PCB)
+
+Many **5 V Songle-style** boards have a **red** LED for **module power** (VCC
+present) and a **second** LED (often **green**) that tracks the **driver / IN**
+line or the **coil state**, depending on the exact PCB revision. Nina does **not**
+address that SMD LED separately in software: if the green LED is wired to follow
+**IN**, it should already **toggle with brake** (same as the coil click). If the
+green LED stays fixed while logs show GPIO edges, the LED may be **power-only** or
+your **IN** wire is not reaching the module — use a multimeter on **IN vs GND**
+(see below).
+
+**Optional bigger indicator:** set **`NINA_HOVER_RELAY_STATUS_LED_BCM`** to a
+**second** Jetson BCM (not the relay **IN** pin). Nina drives that line
+**HIGH = pack allowed** (brake path that energises the pack) and **LOW = pack
+cut**. Wire a normal LED + **~330 Ω** in series to **GND** from that GPIO so you
+get a large, unambiguous blink while toggling **Brake** in the UI.
 
 For a raw GPIO line exercise, `nav-test-pin` still takes the **Jetson BCM
 index** used under the hood for header pin **37** (Orin Nano: **`--pin 26`**).
@@ -73,6 +90,7 @@ is set in the **same** environment as the kiosk process and scan logs for
 | `NINA_HOVER_POWER_RELAY_BCM` | Advanced: Jetson **BCM** index if the relay IN is **not** on pin 37 | unset |
 | `NINA_HOVER_RELAY_POWER_ON_LEVEL` | `0` or `1` — logic level on **IN** when the hoverboard **must be energised** | `1` |
 | `NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER` | `1` = on kiosk exit, return GPIO to *power on*; `0` = leave at *power cut* after shutdown | `0` |
+| `NINA_HOVER_RELAY_STATUS_LED_BCM` | Optional **second** Jetson **BCM** for an external “pack allowed” LED (**HIGH** = allowed, **LOW** = cut); must **not** match the relay **IN** BCM | unset |
 
 If **`NINA_HOVER_RELAY_HEADER_PIN`** is set, it **wins** over `NINA_HOVER_POWER_RELAY_BCM`.
 Use **`NINA_HOVER_POWER_RELAY_BCM`** only when the relay IN is soldered to a
@@ -152,6 +170,9 @@ systemctl --user restart nina-ui-kiosk.service
 6. Reboot Jetson → confirm default pack state matches your fail-safe design.
 7. `journalctl --user -u nina-ui-kiosk -f` — look for
    `Hoverboard power relay: Jetson 40-pin header pin 37` at first setup.
+8. If **`NINA_HOVER_RELAY_STATUS_LED_BCM`** is set, confirm the external LED
+   matches **Brake OFF** (on) vs **Brake ON** (off) and check logs for
+   `Hoverboard pack status LED`.
 
 ## Related code
 

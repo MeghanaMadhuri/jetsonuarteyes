@@ -18,3 +18,6 @@
 Environment=NINA_HOVER_RELAY_HEADER_PIN=37
 Environment=NINA_HOVER_RELAY_POWER_ON_LEVEL=1
 Environment=NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER=0
+# Optional: second GPIO (BCM) for a visible “pack allowed” LED (HIGH=allowed, LOW=cut).
+# Pick a free BCM — must not be the same BCM as the relay IN line.
+# Environment=NINA_HOVER_RELAY_STATUS_LED_BCM=16

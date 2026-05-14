@@ -4,7 +4,10 @@ import os
 import unittest
 from unittest.mock import patch
 
-from nina.config.settings import _parse_hoverboard_power_relay_bcm
+from nina.config.settings import (
+    _parse_hoverboard_power_relay_bcm,
+    _parse_hoverboard_relay_status_led_bcm,
+)
 
 
 class TestHoverboardRelayEnv(unittest.TestCase):
@@ -34,6 +37,12 @@ class TestHoverboardRelayEnv(unittest.TestCase):
             clear=False,
         ):
             self.assertEqual(_parse_hoverboard_power_relay_bcm(), 26)
+
+    def test_status_led_bcm_optional(self) -> None:
+        with patch.dict(os.environ, {"NINA_HOVER_RELAY_STATUS_LED_BCM": ""}, clear=False):
+            self.assertIsNone(_parse_hoverboard_relay_status_led_bcm())
+        with patch.dict(os.environ, {"NINA_HOVER_RELAY_STATUS_LED_BCM": "8"}, clear=False):
+            self.assertEqual(_parse_hoverboard_relay_status_led_bcm(), 8)
 
 
 if __name__ == "__main__":

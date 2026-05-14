@@ -82,6 +82,7 @@ class HoverboardAxisDrive:
         self._power_relay: Optional[HoverboardPowerRelay] = build_power_relay(
             axis_cfg.power_relay_bcm,
             power_on_level=int(axis_cfg.power_relay_power_on_level),
+            status_led_bcm=axis_cfg.power_relay_status_led_bcm,
         )
 
     # ------------------------------------------------------------------
