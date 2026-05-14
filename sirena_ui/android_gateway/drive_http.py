@@ -100,15 +100,17 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
     try:
         dc.ensure_hardware()
         nav = dc._nav  # noqa: SLF001
+        st = dc.state()
+        brake = bool(st.get("brake", True))
         if nav is None:
             # init still in flight
-            st = dc.state()
             body: Dict[str, Any] = {
                 "ok": True,
                 "connected": bool(st.get("connected")),
                 "message": str(st.get("driver_message", "")),
                 "invert_left": bool(st.get("invert_left", False)),
                 "invert_right": bool(st.get("invert_right", False)),
+                "brake": brake,
             }
             if err:
                 body["last_drive_error"] = err
@@ -119,6 +121,7 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
             "message": "BLDC L+R connected",
             "invert_left": bool(nav.get_invert_left()),
             "invert_right": bool(nav.get_invert_right()),
+            "brake": brake,
         }
         if err:
             body["last_drive_error"] = err
@@ -131,6 +134,7 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
             "message": msg,
             "invert_left": False,
             "invert_right": False,
+            "brake": bool(dc.state().get("brake", True)),
         }
         if err:
             out["last_drive_error"] = err
@@ -163,6 +167,20 @@ def set_wheel_invert(
         "invert_left": bool(st.get("invert_left", False)),
         "invert_right": bool(st.get("invert_right", False)),
     }
+
+
+def robot_set_brake(service: NinaService, *, on: bool) -> Dict[str, Any]:
+    """Match kiosk ``DriveController.set_brake`` (servo brake pose + optional hover pack relay)."""
+    if _autonomy_blocks(service) and not on:
+        return {
+            "ok": False,
+            "error": "autonomy active — disable autonomy before releasing brake",
+        }
+    dc = service.drive
+    dc.ensure_hardware()
+    dc.set_brake(bool(on))
+    st = dc.state()
+    return {"ok": True, "brake": bool(st.get("brake", on))}
 
 
 def emergency_stop(service: NinaService) -> Dict[str, Any]:

@@ -572,6 +572,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         return client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
     }
 
+    suspend fun robotSetBrake(on: Boolean): JSONObject {
+        NinaLog.tap("Drive", "brake", if (on) "on" else "off")
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveBrake(url, bearer, on)
+    }
+
     suspend fun fetchRobotDriveStatus(): JSONObject? =
         try {
             val url = prefs.baseUrl.first()

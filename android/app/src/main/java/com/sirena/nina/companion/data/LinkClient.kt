@@ -150,6 +150,16 @@ class LinkClient {
         post("$baseUrl/v1/robot/drive", bearer, json.toString())
     }
 
+    /** Same stack as kiosk ``DriveController.set_brake`` (servo brake + optional hover pack relay). */
+    suspend fun robotDriveBrake(baseUrl: String, bearer: String?, on: Boolean): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/brake",
+                bearer,
+                JSONObject().put("on", on).toString(),
+            )
+        }
+
     suspend fun robotEmergencyStop(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
             post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")

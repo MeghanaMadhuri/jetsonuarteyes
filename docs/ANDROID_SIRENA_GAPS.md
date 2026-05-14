@@ -34,7 +34,7 @@ The Jetpack app is a **remote client** to **`nina-link`**. This document tracks 
 | Manual card | Title row + Auto toggle | **Present** — autonomy toggle on manual card |
 | D-pad + speed | D-pad, slider, % pill | **Present** — hold-to-repeat pulses (HTTP momentary drive); `ok: false` / autonomy block surfaced |
 | Wheels Flip L / R | `set_invert_*` + persist | **Present** — `POST /v1/robot/drive/invert` + status fields |
-| Brake / Reverse / E‑STOP | Same row | **Present** — E‑stop shows Jetson init errors when BLDC path is down |
+| Brake / Reverse / E‑STOP | Same row | **Present** — brake uses `POST /v1/robot/drive/brake` + `brake` in drive status (same `DriveController.set_brake` as kiosk); E‑stop unchanged |
 | Keyboard hint | WASD line | **Present** (touch-focused copy) |
 
 ## Vision (`vision_screen.py` → `SirenaVisionScreen.kt`)

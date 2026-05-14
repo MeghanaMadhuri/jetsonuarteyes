@@ -18,6 +18,8 @@ When `NINA_HOVER_POWER_RELAY_BCM` is set, [`HoverboardAxisDrive`](../nina/contro
 | `emergency_stop()` | `stop()` | **Power cut** |
 | `emergency_stop(routine_shutdown=True)` (kiosk exit) | `stop()` | **Cut** by default; see shutdown env below |
 
+The Android companion issues the same brake transitions over **`POST /v1/robot/drive/brake`** (`{ "on": true|false }`), which maps to **`DriveController.set_brake`** on the Jetson (same queue as the kiosk).
+
 If `NINA_HOVER_POWER_RELAY_BCM` is **unset**, nothing changes from the
 pre-relay build (relay code is inactive).
 

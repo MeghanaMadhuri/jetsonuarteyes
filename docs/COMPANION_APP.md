@@ -369,7 +369,7 @@ Automated guard: `python -m unittest tests.test_jetson_net_imports`. Route/clien
 - `POST /v1/pair` — `{ "pin" }` → `{ "token" }` for session bearer.
 - `GET /v1/robot/capabilities` — which bridges are enabled and endpoint paths.
 - `GET /v1/robot/health` — JSON `{ "rows": [ { "key", "label", "detail", "status" } ] }` from `health_collector` + Wi‑Fi (companion Health screen).
-- `POST /v1/robot/drive` / `POST /v1/robot/emergency-stop` — when `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`.
+- `POST /v1/robot/drive` / `POST /v1/robot/drive/brake` (`{ "on": true|false }`, same `DriveController.set_brake` as kiosk) / `POST /v1/robot/emergency-stop` — when `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`.
 - `GET /v1/actions` / `POST /v1/actions/play` — embedded Sirena always exposes play via `NinaService` (legacy `NINA_LINK_ENABLE_ACTION_BRIDGE` ignored).
 - `GET /v1/actions/recordings` — list `recordings/*.json` (no bus access).
 - `GET /v1/actions/record/status` / `POST /v1/actions/record/start` — when `NINA_LINK_ENABLE_RECORD_BRIDGE=1`.

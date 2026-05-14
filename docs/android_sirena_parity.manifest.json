@@ -49,7 +49,7 @@
       "desktop_doc_section": "Drive — manual BLDC control + autonomy hand-off",
       "android": {
         "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaDriveScreen.kt",
-        "http": ["/v1/robot/drive", "/v1/robot/drive/invert", "/v1/robot/emergency-stop", "/v1/robot/drive/status", "/v1/autonomy/enabled", "/v1/autonomy/status", "/v1/slam/status", "/v1/robot/health"]
+        "http": ["/v1/robot/drive", "/v1/robot/drive/brake", "/v1/robot/drive/invert", "/v1/robot/emergency-stop", "/v1/robot/drive/status", "/v1/autonomy/enabled", "/v1/autonomy/status", "/v1/slam/status", "/v1/robot/health"]
       }
     },
     {

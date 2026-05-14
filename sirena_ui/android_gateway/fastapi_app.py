@@ -32,6 +32,7 @@ from sirena_ui.android_gateway.drive_http import (
     emergency_stop,
     momentary_drive,
     navigation_hw_status,
+    robot_set_brake,
     set_wheel_invert,
 )
 from sirena_ui.android_gateway.health_build import build_robot_health, safe_map_filename
@@ -148,6 +149,12 @@ class DriveBody(BaseModel):
 class DriveInvertBody(BaseModel):
     left: Optional[bool] = None
     right: Optional[bool] = None
+
+
+class DriveBrakeBody(BaseModel):
+    """Same semantics as kiosk ``DriveScreen`` brake pill (``DriveController.set_brake``)."""
+
+    on: bool = Field(..., description="True = brake engaged (pack cut when relay configured)")
 
 
 class PlayActionBody(BaseModel):
@@ -553,6 +560,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             "drive": "momentary" if cfg.enable_robot_bridge else "disabled",
             "robot_bridge_enabled": cfg.enable_robot_bridge,
             "drive_endpoint": "/v1/robot/drive",
+            "drive_brake_endpoint": "/v1/robot/drive/brake",
             "default_duration_ms": cfg.robot_drive_default_duration_ms,
             "default_speed_percent": cfg.robot_drive_speed_percent,
             "drive_speed_min_percent": 8,
@@ -648,6 +656,20 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             timeout=30.0,
         )
 
+    @app.post("/v1/robot/drive/brake")
+    def robot_drive_brake(
+        body: DriveBrakeBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1",
+            )
+        return gw.plane.submit(lambda: robot_set_brake(gw.service, on=body.on), timeout=30.0)
+
     @app.post("/v1/robot/emergency-stop")
     def robot_emergency_stop(
         request: Request,
@@ -668,6 +690,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "message": "Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1.",
                 "invert_left": False,
                 "invert_right": False,
+                "brake": True,
             }
         st = gw.plane.submit(lambda: navigation_hw_status(gw.service), timeout=30.0)
         st["bridge_enabled"] = True

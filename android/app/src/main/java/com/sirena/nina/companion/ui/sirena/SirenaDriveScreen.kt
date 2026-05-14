@@ -174,6 +174,7 @@ fun SirenaDriveScreen(
                         }
                     if (j.has("invert_left")) invertLeft = j.optBoolean("invert_left")
                     if (j.has("invert_right")) invertRight = j.optBoolean("invert_right")
+                    if (j.has("brake")) brakeOn = j.optBoolean("brake", true)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -484,7 +485,32 @@ fun SirenaDriveScreen(
                         },
                         brakeOn = brakeOn,
                         reverseOn = reverseOn,
-                        onBrakeChange = { brakeOn = it },
+                        onBrakeChange = { wantOn ->
+                            if (!bridgeOn || !jetsonOnline) {
+                                brakeOn = wantOn
+                            } else {
+                                scope.launch {
+                                    val prev = brakeOn
+                                    brakeOn = wantOn
+                                    try {
+                                        val j = vm.robotSetBrake(wantOn)
+                                        val err = j.driveCommandErrorOrNull()
+                                        if (err != null) {
+                                            brakeOn = prev
+                                            actionErr = err
+                                            return@launch
+                                        }
+                                        brakeOn = j.optBoolean("brake", wantOn)
+                                        actionErr = null
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        brakeOn = prev
+                                        actionErr = e.message ?: "Brake request failed"
+                                    }
+                                }
+                            }
+                        },
                         onReverseChange = { reverseOn = it },
                         speedMin = speedMin,
                         speedMax = speedMax,
