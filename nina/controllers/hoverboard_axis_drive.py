@@ -14,6 +14,10 @@ from typing import Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import DynamixelManager
+from nina.controllers.hoverboard_power_relay import (
+    HoverboardPowerRelay,
+    build_power_relay,
+)
 
 log = logging.getLogger("nina.hoverboard_axis")
 
@@ -75,11 +79,17 @@ class HoverboardAxisDrive:
         self._brake_left = 2048
         self._brake_right = 2048
         self._is_initialized = False
+        self._power_relay: Optional[HoverboardPowerRelay] = build_power_relay(
+            axis_cfg.power_relay_bcm,
+            power_on_level=int(axis_cfg.power_relay_power_on_level),
+        )
 
     # ------------------------------------------------------------------
     def initialize(self) -> None:
         if self._is_initialized:
             return
+        if self._power_relay is not None:
+            self._power_relay.set_power_allowed()
         with self._bus_lock:
             self._brake_left = self._dxl._clamp_pos(
                 int(self._axis.brake_pos_left)
@@ -160,12 +170,15 @@ class HoverboardAxisDrive:
         return
 
     def engage_brake(self) -> None:
-        """Hold brake pose: both lean axes at ``brake_pos_*`` from settings."""
+        """Hold brake pose; optional GPIO cuts hoverboard pack power (see settings)."""
         self.stop()
+        if self._power_relay is not None:
+            self._power_relay.set_power_cut()
 
     def release_brake(self) -> None:
-        """No separate hardware unlock; brake pose is the driving reference."""
-        return
+        """Re-energise hoverboard pack when a power relay is configured."""
+        if self._power_relay is not None:
+            self._power_relay.set_power_allowed()
 
     def stop(self) -> None:
         if not self._is_initialized:
@@ -177,6 +190,14 @@ class HoverboardAxisDrive:
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
         self.stop()
+        if self._power_relay is None:
+            return
+        if routine_shutdown:
+            self._power_relay.apply_shutdown_policy(
+                allow_power=bool(self._axis.power_relay_shutdown_allows_power),
+            )
+        else:
+            self._power_relay.set_power_cut()
 
     def _apply_goals(self, goals: Dict[int, int]) -> None:
         if not self._is_initialized:

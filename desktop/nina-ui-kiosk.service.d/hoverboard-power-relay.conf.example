@@ -1,0 +1,17 @@
+# Optional: GPIO line to cut hoverboard DC power when Brake is ON (Songle-style
+# 5 V relay module on IN / GND / VCC). See docs/HOVERBOARD_POWER_RELAY.md.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user/nina-ui-kiosk.service.d
+#   cp /path/to/repo/desktop/nina-ui-kiosk.service.d/hoverboard-power-relay.conf.example \
+#      ~/.config/systemd/user/nina-ui-kiosk.service.d/hoverboard-power-relay.conf
+#   systemctl --user daemon-reload
+#   systemctl --user restart nina-ui-kiosk.service
+#
+# BCM 26 = physical pin 37 on the 40-pin header. Do NOT use if rear-right
+# HC-SR04 echo is wired to that pin (see nina/sensors/hcsr04.py defaults).
+
+[Service]
+Environment=NINA_HOVER_POWER_RELAY_BCM=26
+Environment=NINA_HOVER_RELAY_POWER_ON_LEVEL=1
+Environment=NINA_HOVER_RELAY_SHUTDOWN_ALLOWS_POWER=0
