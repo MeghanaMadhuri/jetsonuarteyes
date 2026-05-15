@@ -148,14 +148,6 @@ class HoverboardAxisDrive:
         raw = int(round(abs(deg) * _POS_SCALE))
         return max(2, raw)
 
-    def _straight_tilt_delta_raw(self, base_deg: float, speed_pct: int) -> int:
-        """Raw Dynamixel delta for ``base_deg`` at full stick, scaled by speed %."""
-        sp = max(0, min(100, int(speed_pct)))
-        scale = sp / 100.0
-        deg = float(base_deg) * scale
-        raw = int(round(abs(deg) * _POS_SCALE))
-        return max(2, raw)
-
     def prime_turn_left_straight(self, speed: int) -> None:
         return
 
@@ -208,13 +200,6 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            tdeg = float(getattr(self._axis, "straight_tilt_deg", 0.0) or 0.0)
-            if tdeg > 0.0:
-                sp = min(int(left_speed), int(right_speed))
-                raw = self._straight_tilt_delta_raw(tdeg, sp)
-                lg = self._dxl._clamp_pos(nl + sl * raw)
-                rg = self._dxl._clamp_pos(nr + sr * raw)
-                return {self._left_id: lg, self._right_id: rg}
             fl = self._dxl._clamp_pos(int(self._axis.forward_pos_left))
             fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
             return {self._left_id: fl, self._right_id: fr}
@@ -227,13 +212,6 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            tdeg = float(getattr(self._axis, "straight_tilt_deg", 0.0) or 0.0)
-            if tdeg > 0.0:
-                sp = min(int(left_speed), int(right_speed))
-                raw = self._straight_tilt_delta_raw(tdeg, sp)
-                lg = self._dxl._clamp_pos(nl - sl * raw)
-                rg = self._dxl._clamp_pos(nr - sr * raw)
-                return {self._left_id: lg, self._right_id: rg}
             bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
             br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
             return {self._left_id: bl, self._right_id: br}

@@ -45,6 +45,10 @@ _OBSOLETE_NAV_ENV_KEYS = (
 )
 _scrub_obsolete_nav_env_logged = False
 
+# Removed brake-centered straight tilt (use NINA_HOVER_FWD_POS_* / REV_* only).
+_OBSOLETE_HOVER_ENV_KEYS = ("NINA_HOVER_STRAIGHT_TILT_DEG",)
+_scrub_obsolete_hover_env_logged = False
+
 
 def _scrub_obsolete_navigation_env() -> None:
     """Pop legacy Pi-bridge keys from ``os.environ`` (once-per-process log)."""
@@ -58,6 +62,20 @@ def _scrub_obsolete_navigation_env() -> None:
             ", ".join(removed),
         )
         _scrub_obsolete_nav_env_logged = True
+
+
+def _scrub_obsolete_hover_env() -> None:
+    """Pop removed hover tuning keys from ``os.environ`` (once-per-process log)."""
+    global _scrub_obsolete_hover_env_logged
+    removed = [k for k in _OBSOLETE_HOVER_ENV_KEYS if k in os.environ]
+    for k in _OBSOLETE_HOVER_ENV_KEYS:
+        os.environ.pop(k, None)
+    if removed and not _scrub_obsolete_hover_env_logged:
+        _log.info(
+            "Cleared obsolete hover env vars: %s",
+            ", ".join(removed),
+        )
+        _scrub_obsolete_hover_env_logged = True
 
 
 @dataclass(frozen=True)
@@ -112,12 +130,7 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI ``Turn left`` / ``Turn right`` and
     D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
     if yaw sense is reversed. ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
-    asymmetric fallback.
-
-    ``NINA_HOVER_STRAIGHT_TILT_DEG`` (default **0**): when **> 0**, forward/back from
-    a stop use a **brake-centered** lean of that many degrees at 100% speed (scaled by
-    the commanded duty), instead of the fixed ``NINA_HOVER_FWD_POS_*`` /
-    ``NINA_HOVER_REV_POS_*`` goal table — gentler for IMU-sensitive hoverboards (~2–3°).
+    asymmetric fallback (non-straight paths).
     """
 
     id_left: int
@@ -134,7 +147,6 @@ class HoverboardAxisSettings:
     moving_speed: int
     sign_left: int
     sign_right: int
-    straight_tilt_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -283,6 +295,7 @@ def serial_collision_warnings(settings: NinaSettings) -> list[str]:
 
 def load_settings(repo_root: Path) -> NinaSettings:
     _scrub_obsolete_navigation_env()
+    _scrub_obsolete_hover_env()
 
     actions_dir = repo_root / "nina" / "actions"
     recordings_dir = repo_root / "nina" / "actions" / "recordings"
@@ -382,9 +395,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
-        straight_tilt_deg=float(
-            os.environ.get("NINA_HOVER_STRAIGHT_TILT_DEG", "0") or 0
-        ),
     )
 
     autonomy = AutonomySettings(
