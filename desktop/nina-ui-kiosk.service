@@ -91,9 +91,10 @@ Environment=NINA_LIDAR_MODEL=s2e
 Environment=NINA_LIDAR_HOST=192.168.11.2
 Environment=NINA_LIDAR_UDP_PORT=8089
 
-# Hoverboard IMU: gentler straight-line lean (deg at 100% stick, scaled by speed).
-# D-pad left/right still use opposite-wheel goals (pivot); tune with NINA_HOVER_*_POS_* if needed.
-Environment=NINA_HOVER_STRAIGHT_TILT_DEG=2.5
+# Straight D-pad forward/back use NINA_HOVER_FWD_POS_* / NINA_HOVER_REV_POS_* (see
+# load_settings) unless NINA_HOVER_STRAIGHT_TILT_DEG>0, which switches to brake-
+# centered tilt **scaled by GUI speed** — at low manual cruise duty that mode
+# barely moves; set IMU-soft straight only in /etc/nina-link/navigation.env.
 
 ExecStart=__EXEC__
 

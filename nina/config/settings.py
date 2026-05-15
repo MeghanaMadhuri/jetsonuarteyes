@@ -102,7 +102,8 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_ID_LEFT`` / ``RIGHT`` (default 12 / 13), ``NINA_HOVER_BRAKE_POS_LEFT`` /
     ``NINA_HOVER_BRAKE_POS_RIGHT`` — brake / idle / boot goals (defaults 2048 each;
     legacy ``NINA_HOVER_NEUTRAL_*`` is read if the ``BRAKE`` vars are unset),
-    ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED``,
+    ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED`` (0–1023; **0** = fastest
+    joint move on Protocol 1, higher = slower — default 0),
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
     uses ``NINA_HOVER_FWD_POS_*`` (defaults 1648 / 2448 — **±400** ticks from 2048 for
     stronger lean; tune down via env if the IMU is too lively); straight backward uses
@@ -378,7 +379,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
             0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 20))
         ),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
-        moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 400))),
+        moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
         straight_tilt_deg=float(
