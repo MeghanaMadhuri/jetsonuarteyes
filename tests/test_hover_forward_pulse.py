@@ -73,6 +73,8 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_series_coast_initial_sec=0.01,
         pulse_series_coast_increment_sec=0.01,
         pulse_series_min_transition_sec=0.015,
+        pulse_series_coast_initial_pct=10.0,
+        pulse_series_coast_step_pct=10.0,
     )
 
 
@@ -175,7 +177,8 @@ def test_forward_pulse_series_ends_at_full_brake() -> None:
         pulse_series_coast_increment_sec=0.01,
         pulse_series_min_transition_sec=0.012,
         pulse_forward_return_ramp_sec=0.02,
-        pulse_forward_coast_blend=0.2,
+        pulse_series_coast_initial_pct=20.0,
+        pulse_series_coast_step_pct=0.0,
     )
     cfg = SimpleNamespace(
         default_speed_percent=10,
