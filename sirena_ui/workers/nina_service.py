@@ -103,7 +103,7 @@ class NinaService:
         backward_pos_left: Optional[int] = None,
         backward_pos_right: Optional[int] = None,
     ) -> None:
-        """Append to JSON on disk, refresh in-memory axis, rebuild lazy `drive` + rebind."""
+        """Append to JSON on disk and refresh in-memory lean goals (no drive rebuild)."""
         updates: Dict[str, int] = {}
         for key, val in (
             ("forward_pos_left", forward_pos_left),
@@ -119,15 +119,8 @@ class NinaService:
         save_hover_calibration_partial(updates)
         new_axis = replace(self.settings.hoverboard_axis, **updates)
         self.settings = replace(self.settings, hoverboard_axis=new_axis)
-        self._invalidate_drive_and_rebind()
-
-    def _invalidate_drive_and_rebind(self) -> None:
-        self._drive = None
-        new_drive = self.drive
-        if self._face_follow is not None:
-            self._face_follow.rebind_drive(new_drive)
-        if self._autonomy is not None:
-            self._autonomy.rebind_drive(new_drive)
+        if self._drive is not None:
+            self._drive.update_hoverboard_axis(new_axis)
 
     def ensure_bus(self) -> Dict[str, object]:
         """Initialize the bus once, run a non-fatal health check, enable torque."""

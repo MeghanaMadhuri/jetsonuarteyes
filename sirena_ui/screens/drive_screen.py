@@ -743,6 +743,9 @@ class DriveScreen(QWidget):
         """Lazily initialise the BLDC drivers the first time the user
         opens the Drive screen. Re-entry is cheap; the controller
         dedupes inside its worker."""
+        # Motion calibration save updates NinaService settings in place; keep
+        # the same DriveController the screen was constructed with.
+        self._drive = self._service.drive
         # HoverboardAxisDrive.initialize() talks to the Dynamixel bus; open
         # the bus and enable torque *before* the drive worker runs so a fast
         # navigation to Drive cannot race MainWindow's deferred ensure_bus.

@@ -411,6 +411,12 @@ class DriveController(QObject):
         with self._lock:
             return dict(self._state)
 
+    def update_hoverboard_axis(self, axis_cfg: object) -> None:
+        """Apply new lean goal ticks without rebuilding this controller."""
+        nav = self._nav if self._nav is not None else self._injected_nav
+        if nav is not None and hasattr(nav, "update_axis_config"):
+            nav.update_axis_config(axis_cfg)
+
     def ensure_hardware(self) -> None:
         """Kick off lazy initialisation of the BLDC drivers.
 

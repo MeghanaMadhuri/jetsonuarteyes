@@ -77,6 +77,10 @@ class HoverboardAxisDrive:
         self._is_initialized = False
 
     # ------------------------------------------------------------------
+    def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
+        """Refresh FWD/REV (and related) goals after motion calibration save."""
+        self._axis = axis_cfg
+
     def initialize(self) -> None:
         if self._is_initialized:
             return
