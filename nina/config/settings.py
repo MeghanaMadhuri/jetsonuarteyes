@@ -36,6 +36,23 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_pulse_ramp_profile() -> str:
+    raw = (os.environ.get("NINA_HOVER_PULSE_RAMP_PROFILE") or "smootherstep").strip().lower()
+    if raw in ("smoothstep", "smootherstep", "cubic_io", "trapezoid"):
+        return raw
+    return "smootherstep"
+
+
+def _env_optional_int_clamped(name: str, lo: int, hi: int) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return max(lo, min(hi, int(str(raw).strip(), 0)))
+    except ValueError:
+        return None
+
+
 # Upper bound for breakaway timing (seconds). Longer holds behave like
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
@@ -145,9 +162,13 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
     to disable) oscillates between **full forward** lean (calibrated ``forward_pos_*``) and a
     **coast** pose near brake (see ``NINA_HOVER_PULSE_COAST_BLEND``) so the lean never fully
-    “dead-stops” at brake—smoother, hoverboard-like reversals. Ramps use smoothstep over
+    “dead-stops” at brake—smoother, hoverboard-like reversals. Ramp duration is
     ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **3** s each way; if ``0`` with no holds, a
-    safe minimum ramp is applied). Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
+    safe minimum ramp is applied). Ramp shape: ``NINA_HOVER_PULSE_RAMP_PROFILE`` =
+    ``smootherstep`` (default quintic), ``smoothstep``, ``cubic_io`` (faster mid), or
+    ``trapezoid`` (accel / cruise / decel; edge ``NINA_HOVER_PULSE_RAMP_TRAP_EDGE`` 0.08–0.35).
+    Optional ``NINA_HOVER_PULSE_RAMP_MOVING_SPEED`` (0–1023): MX Moving Speed **only during**
+    pulse ramps; unset uses ``NINA_HOVER_MOVING_SPEED``. Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
     ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **0** / **0** s for continuous coast↔FWD;
     wave is continuous when ``ramp`` > 0). Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
     step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
@@ -177,6 +198,9 @@ class HoverboardAxisSettings:
     pulse_forward_sync_present: bool
     pulse_forward_present_tol_ticks: int
     pulse_forward_present_step_timeout_sec: float
+    pulse_ramp_profile: str
+    pulse_ramp_trap_edge: float
+    pulse_ramp_moving_speed: Optional[int]
 
 
 @dataclass(frozen=True)
@@ -448,6 +472,14 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pulse_forward_present_step_timeout_sec=max(
             0.02,
             min(1.0, _env_float("NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT", 0.25)),
+        ),
+        pulse_ramp_profile=_env_pulse_ramp_profile(),
+        pulse_ramp_trap_edge=max(
+            0.08,
+            min(0.35, _env_float("NINA_HOVER_PULSE_RAMP_TRAP_EDGE", 0.18)),
+        ),
+        pulse_ramp_moving_speed=_env_optional_int_clamped(
+            "NINA_HOVER_PULSE_RAMP_MOVING_SPEED", 0, 1023
         ),
     )
 

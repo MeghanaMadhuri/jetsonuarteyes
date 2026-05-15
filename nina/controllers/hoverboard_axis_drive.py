@@ -26,6 +26,53 @@ def _smoothstep01(t: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _smootherstep01(t: float) -> float:
+    """Quintic Perlin smootherstep; zero 1st and 2nd derivative at 0 and 1."""
+    t = max(0.0, min(1.0, float(t)))
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
+def _cubic_ease_in_out01(t: float) -> float:
+    """Symmetric cubic ease-in-out; slower ends, faster middle than smoothstep."""
+    t = max(0.0, min(1.0, float(t)))
+    if t < 0.5:
+        return 4.0 * t * t * t
+    u = 2.0 * t - 2.0
+    return 1.0 + 0.5 * u * u * u
+
+
+def _trapezoid_blend01(t: float, edge_frac: float) -> float:
+    """Blend parameter 0→1 with trapezoidal *velocity* (ease accel / cruise / decel).
+
+    *edge_frac* is the fraction of total time for symmetric accel+decel (each ``edge_frac``).
+    """
+    t = max(0.0, min(1.0, float(t)))
+    e = max(0.08, min(0.35, float(edge_frac)))
+    if 2.0 * e >= 0.999:
+        return _smootherstep01(t)
+    a = e / (2.0 * (1.0 - e))
+    if t <= e:
+        return a * (t / e) * (t / e)
+    if t >= 1.0 - e:
+        u = (1.0 - t) / e
+        return 1.0 - a * u * u
+    return a + (1.0 - 2.0 * a) * (t - e) / (1.0 - 2.0 * e)
+
+
+def _pulse_ramp_blend_u(t: float, profile: str, trap_edge: float) -> float:
+    """Map uniform time *t*∈[0,1] to position blend *u*∈[0,1] for servo ramps."""
+    p = (profile or "smootherstep").strip().lower()
+    if p == "smoothstep":
+        return _smoothstep01(t)
+    if p == "smootherstep":
+        return _smootherstep01(t)
+    if p in ("cubic_io", "cubic", "cubic-ease"):
+        return _cubic_ease_in_out01(t)
+    if p in ("trapezoid", "trap", "velocity"):
+        return _trapezoid_blend01(t, trap_edge)
+    return _smootherstep01(t)
+
+
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
     """Move *goal* *push* raw ticks away from *brake* (if they differ)."""
     if push <= 0:
@@ -301,11 +348,18 @@ class HoverboardAxisDrive:
             rid: self._dxl._clamp_pos(int(round(br + (fr - br) * k))),
         }
 
-    def _sync_pulse_moving_speed(self) -> None:
-        """Re-apply MX Moving Speed for both lean IDs (pulse only writes goals each tick)."""
+    def _sync_pulse_moving_speed(self, moving_speed_override: Optional[int] = None) -> None:
+        """Re-apply MX Moving Speed for both lean IDs.
+
+        If *moving_speed_override* is set (0–1023), use it for pulse ramps only;
+        otherwise use ``axis.moving_speed``.
+        """
         if not self._is_initialized:
             return
-        ms = max(0, min(1023, int(self._axis.moving_speed)))
+        if moving_speed_override is not None:
+            ms = max(0, min(1023, int(moving_speed_override)))
+        else:
+            ms = max(0, min(1023, int(self._axis.moving_speed)))
         with self._bus_lock:
             self._dxl.sync_write_moving_speed_subset(
                 {self._left_id: ms, self._right_id: ms}
@@ -365,10 +419,15 @@ class HoverboardAxisDrive:
         ramp_sec: float,
         halt: threading.Event,
     ) -> None:
-        """Interpolate MX goals *start_goals* → *end_goals* (smoothstep, monotonic per axis)."""
-        self._sync_pulse_moving_speed()
+        """Interpolate MX goals *start_goals* → *end_goals* (profiled blend + optional pulse MS)."""
+        raw_ms = getattr(self._axis, "pulse_ramp_moving_speed", None)
+        ms_override: Optional[int] = None
+        if raw_ms is not None:
+            ms_override = max(0, min(1023, int(raw_ms)))
+        self._sync_pulse_moving_speed(moving_speed_override=ms_override)
         if ramp_sec <= 0.0:
             self._apply_goals(end_goals)
+            self._sync_pulse_moving_speed()
             return
         lid = self._left_id
         rid = self._right_id
@@ -376,34 +435,45 @@ class HoverboardAxisDrive:
         sr = int(start_goals[rid])
         el = int(end_goals[lid])
         er = int(end_goals[rid])
+        profile = str(
+            getattr(self._axis, "pulse_ramp_profile", "smootherstep") or "smootherstep"
+        )
+        trap_edge = float(
+            getattr(self._axis, "pulse_ramp_trap_edge", 0.18)
+        )
+        trap_edge = max(0.08, min(0.35, trap_edge))
         # Same duration and step index for both motors; slightly denser steps for long ramps.
         n = max(3, min(250, int(round(ramp_sec / 0.017))))
         sleep_each = ramp_sec / float(n)
         prev_l, prev_r = sl, sr
-        for i in range(1, n + 1):
-            if halt.is_set():
-                return
-            u = _smoothstep01(i / float(n))
-            raw_l = int(round(sl + (el - sl) * u))
-            raw_r = int(round(sr + (er - sr) * u))
-            if el >= sl:
-                gl = max(prev_l, min(raw_l, el))
-            else:
-                gl = min(prev_l, max(raw_l, el))
-            if er >= sr:
-                gr = max(prev_r, min(raw_r, er))
-            else:
-                gr = min(prev_r, max(raw_r, er))
-            prev_l, prev_r = gl, gr
-            g = {
-                lid: self._dxl._clamp_pos(gl),
-                rid: self._dxl._clamp_pos(gr),
-            }
-            self._apply_goals(g)
-            if i < n:
-                self._pulse_step_wait(g, sleep_each=sleep_each, halt=halt)
+        try:
+            for i in range(1, n + 1):
                 if halt.is_set():
                     return
+                u = _pulse_ramp_blend_u(i / float(n), profile, trap_edge)
+                raw_l = int(round(sl + (el - sl) * u))
+                raw_r = int(round(sr + (er - sr) * u))
+                if el >= sl:
+                    gl = max(prev_l, min(raw_l, el))
+                else:
+                    gl = min(prev_l, max(raw_l, el))
+                if er >= sr:
+                    gr = max(prev_r, min(raw_r, er))
+                else:
+                    gr = min(prev_r, max(raw_r, er))
+                prev_l, prev_r = gl, gr
+                g = {
+                    lid: self._dxl._clamp_pos(gl),
+                    rid: self._dxl._clamp_pos(gr),
+                }
+                self._apply_goals(g)
+                if i < n:
+                    self._pulse_step_wait(g, sleep_each=sleep_each, halt=halt)
+                    if halt.is_set():
+                        return
+        finally:
+            # Restore default moving speed after pulse-only override.
+            self._sync_pulse_moving_speed()
 
     def stop(self) -> None:
         if not self._is_initialized:

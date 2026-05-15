@@ -60,6 +60,9 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_forward_sync_present=False,
         pulse_forward_present_tol_ticks=4,
         pulse_forward_present_step_timeout_sec=0.25,
+        pulse_ramp_profile="smoothstep",
+        pulse_ramp_trap_edge=0.18,
+        pulse_ramp_moving_speed=None,
     )
 
 
@@ -143,3 +146,14 @@ def test_start_pulse_disabled_falls_back_to_forward_goals() -> None:
     hb.start_pulse_straight_forward(40)
     assert not hb.is_forward_pulse_active()
     assert dxl.goal_writes == [{12: 2100, 13: 2100}]
+
+
+def test_pulse_ramp_blend_profiles_are_monotonic() -> None:
+    from nina.controllers.hoverboard_axis_drive import _pulse_ramp_blend_u
+
+    for profile in ("smoothstep", "smootherstep", "cubic_io", "trapezoid"):
+        us = [_pulse_ramp_blend_u(i / 200.0, profile, 0.18) for i in range(201)]
+        for i in range(200):
+            assert us[i + 1] + 1e-9 >= us[i], (profile, i, us[i], us[i + 1])
+        assert us[0] <= 1e-12
+        assert abs(us[-1] - 1.0) < 1e-9

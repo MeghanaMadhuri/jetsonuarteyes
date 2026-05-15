@@ -37,6 +37,9 @@ def _minimal_axis() -> HoverboardAxisSettings:
         pulse_forward_sync_present=False,
         pulse_forward_present_tol_ticks=4,
         pulse_forward_present_step_timeout_sec=0.25,
+        pulse_ramp_profile="smootherstep",
+        pulse_ramp_trap_edge=0.18,
+        pulse_ramp_moving_speed=None,
     )
 
 
@@ -96,6 +99,9 @@ class TestHoverCalibrationPersist(unittest.TestCase):
             pulse_forward_sync_present=False,
             pulse_forward_present_tol_ticks=4,
             pulse_forward_present_step_timeout_sec=0.25,
+            pulse_ramp_profile="smootherstep",
+            pulse_ramp_trap_edge=0.18,
+            pulse_ramp_moving_speed=None,
         )
         nav.update_axis_config(updated)
         self.assertEqual(nav._axis.forward_pos_left, 3000)
