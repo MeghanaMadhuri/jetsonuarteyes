@@ -540,9 +540,10 @@ class VisionScreen(QWidget):
             "Object detection unavailable",
             "Couldn't start object detection.\n\n"
             f"{reason}\n\n"
-            "On Jetson Nano this is usually one of:\n"
-            "  - 'ultralytics' not installed for this Python\n"
-            "      python3 -m pip install --user ultralytics\n"
+            "On Jetson this is usually one of:\n"
+            "  - ultralytics not installed in .venv-link (kiosk Python)\n"
+            "      ./scripts/install-vision-jetson.sh\n"
+            "      # or: ./.venv-link/bin/pip install ultralytics\n"
             "  - PyTorch CUDA wheel missing for your JetPack\n"
             "  - The first TensorRT FP16 export ran out of RAM "
             "(add 4 GB swap, see README)\n\n"

@@ -84,7 +84,7 @@ esac
 
 # --- 1) apt deps ------------------------------------------------------------
 if [[ "${DO_APT}" == "1" ]]; then
-  step "1/5 apt deps (build tools + network helpers + onboard OSK)"
+  step "1/6 apt deps (build tools + network helpers + onboard OSK)"
   sudo apt-get update -y
   sudo apt-get install -y \
     build-essential python3-dev cmake git \
@@ -97,7 +97,7 @@ fi
 
 # --- 2) Slamtec S2E lidar ---------------------------------------------------
 if [[ "${DO_LIDAR}" == "1" ]]; then
-  step "2/5 Slamtec RPLIDAR S2E (Ethernet/UDP + pyrplidarsdk + UDP buffer tuning)"
+  step "2/6 Slamtec RPLIDAR S2E (Ethernet/UDP + pyrplidarsdk + UDP buffer tuning)"
   bash "${REPO_ROOT}/scripts/install-slamtec-s2e-jetson.sh"
   ok "S2E lidar bring-up complete"
 else
@@ -105,17 +105,21 @@ else
 fi
 
 # --- 3) sirena_ui / android_gateway venv + service --------------------------
-step "3/5 Sirena UI + embedded Android companion gateway (.venv-link)"
+step "3/6 Sirena UI + embedded Android companion gateway (.venv-link)"
 bash "${REPO_ROOT}/scripts/install-sirena-companion-jetson.sh"
 ok "companion gateway installed"
 
+step "4/6 Vision / YOLO (ultralytics into .venv-link for Object detection)"
+bash "${REPO_ROOT}/scripts/install-vision-jetson.sh"
+ok "vision / YOLO deps installed"
+
 # --- 4) passwordless sudo for in-app shutdown/reboot ------------------------
-step "4/5 sudoers rule for in-app Shutdown / Reboot Jetson"
+step "5/6 sudoers rule for in-app Shutdown / Reboot Jetson"
 bash "${REPO_ROOT}/scripts/install-nina-host-power.sh"
 ok "host-power sudoers rule installed"
 
 # --- 5) kiosk autostart -----------------------------------------------------
-step "5/5 nina-ui-kiosk systemd USER unit (autostart fullscreen GUI)"
+step "6/6 nina-ui-kiosk systemd USER unit (autostart fullscreen GUI)"
 bash "${REPO_ROOT}/scripts/install-nina-ui-kiosk.sh"
 ok "kiosk autostart enabled"
 
