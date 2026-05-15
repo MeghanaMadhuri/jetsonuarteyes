@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Dict, Literal
+
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -9,7 +11,6 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -17,26 +18,27 @@ from PyQt5.QtWidgets import (
 from sirena_ui.widgets.common import Breadcrumb, Card, CardTitle, MutedLabel
 from sirena_ui.workers.nina_service import NinaService
 
+_TickKey = Literal["fwd_l", "fwd_r", "back_l", "back_r"]
 
-def _make_slider() -> QSlider:
-    s = QSlider(Qt.Horizontal)
-    s.setMinimum(0)
-    s.setMaximum(4095)
-    s.setSingleStep(1)
-    s.setPageStep(16)
-    s.setMinimumHeight(28)
-    s.setFocusPolicy(Qt.NoFocus)
-    return s
+_POS_MIN = 0
+_POS_MAX = 4095
 
 
 class MotionCalibrationScreen(QWidget):
-    """Sliders around merged FWD/REV calibration; writes ``hover_calibration.json``."""
+    """Adjust motor goal ticks with - / + buttons; persist via ``hover_calibration.json``."""
 
     back_requested = pyqtSignal()
 
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
+        self._ticks: Dict[_TickKey, int] = {
+            "fwd_l": 2048,
+            "fwd_r": 2048,
+            "back_l": 2048,
+            "back_r": 2048,
+        }
+        self._tick_labels: Dict[_TickKey, QLabel] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -57,7 +59,7 @@ class MotionCalibrationScreen(QWidget):
 
         outer.addWidget(
             MutedLabel(
-                "Sliders set absolute Dynamixel goal ticks (0\u20134095). "
+                "Use - and + to change each goal by one tick (range 0\u20134095). "
                 "Brake/neutral is shown for reference. Live preview moves the servos; "
                 "use brake on Drive and avoid autonomy while tuning."
             )
@@ -93,33 +95,82 @@ class MotionCalibrationScreen(QWidget):
         self._neutral_btn.setMinimumHeight(34)
         self._neutral_btn.setToolTip(
             "Command both lean servos to the configured brake / neutral pose "
-            "(does not change forward or backward slider values)."
+            "(does not change forward or backward goal values)."
         )
         self._neutral_btn.clicked.connect(self._on_neutral_clicked)
         neutral_row.addWidget(self._neutral_btn)
         neutral_row.addStretch(1)
         inner.addLayout(neutral_row)
 
-        self._fwd_l = _make_slider()
-        self._fwd_r = _make_slider()
-        self._back_l = _make_slider()
-        self._back_r = _make_slider()
-
         inner.addWidget(self._build_section_forward())
         inner.addWidget(self._build_section_backward())
         inner.addStretch(1)
 
+    def _step_tick(self, key: _TickKey, delta: int, forward: bool) -> None:
+        self._ticks[key] = max(_POS_MIN, min(_POS_MAX, self._ticks[key] + delta))
+        lbl = self._tick_labels.get(key)
+        if lbl is not None:
+            lbl.setText(str(self._ticks[key]))
+        if forward:
+            self._service.preview_hover_lean_positions(
+                self._ticks["fwd_l"], self._ticks["fwd_r"]
+            )
+        else:
+            self._service.preview_hover_lean_positions(
+                self._ticks["back_l"], self._ticks["back_r"]
+            )
+
+    def _make_step_button(self, text: str) -> QPushButton:
+        b = QPushButton(text)
+        b.setObjectName("secondaryButton")
+        b.setCursor(Qt.PointingHandCursor)
+        b.setFocusPolicy(Qt.NoFocus)
+        b.setFixedWidth(44)
+        b.setMinimumHeight(36)
+        return b
+
+    def _motor_row(
+        self,
+        label: str,
+        motor_id: int,
+        tick_key: _TickKey,
+        *,
+        forward: bool,
+    ) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        cap = QLabel(f"{label} {motor_id}")
+        cap.setStyleSheet(
+            "color: #1c1c1e; font-size: 13px; font-weight: 600;"
+            " background-color: transparent; min-width: 88px;"
+        )
+        row.addWidget(cap)
+
+        minus = self._make_step_button("-")
+        minus.clicked.connect(lambda: self._step_tick(tick_key, -1, forward))
+        row.addWidget(minus)
+
+        val = QLabel(str(self._ticks[tick_key]))
+        val.setStyleSheet(
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
+            " background-color: transparent; min-width: 52px;"
+        )
+        val.setAlignment(Qt.AlignCenter)
+        row.addWidget(val)
+        self._tick_labels[tick_key] = val
+
+        plus = self._make_step_button("+")
+        plus.clicked.connect(lambda: self._step_tick(tick_key, 1, forward))
+        row.addWidget(plus)
+
+        row.addStretch(1)
+        return row
+
     def _build_section_forward(self) -> Card:
         card = Card(padding=12, spacing=8)
         card.add(CardTitle("Forward motion"))
-        row1, self._lbl_fwd_l = self._motor_row(
-            "Motor", self._id_left, self._fwd_l, forward=True
-        )
-        row2, self._lbl_fwd_r = self._motor_row(
-            "Motor", self._id_right, self._fwd_r, forward=True
-        )
-        card.add_layout(row1)
-        card.add_layout(row2)
+        card.add_layout(self._motor_row("Motor", self._id_left, "fwd_l", forward=True))
+        card.add_layout(self._motor_row("Motor", self._id_right, "fwd_r", forward=True))
         save = QPushButton("Save forward")
         save.setObjectName("primaryButton")
         save.setCursor(Qt.PointingHandCursor)
@@ -131,14 +182,10 @@ class MotionCalibrationScreen(QWidget):
     def _build_section_backward(self) -> Card:
         card = Card(padding=12, spacing=8)
         card.add(CardTitle("Backward motion"))
-        row1, self._lbl_back_l = self._motor_row(
-            "Motor", self._id_left, self._back_l, forward=False
+        card.add_layout(self._motor_row("Motor", self._id_left, "back_l", forward=False))
+        card.add_layout(
+            self._motor_row("Motor", self._id_right, "back_r", forward=False)
         )
-        row2, self._lbl_back_r = self._motor_row(
-            "Motor", self._id_right, self._back_r, forward=False
-        )
-        card.add_layout(row1)
-        card.add_layout(row2)
         save = QPushButton("Save backward")
         save.setObjectName("primaryButton")
         save.setCursor(Qt.PointingHandCursor)
@@ -147,59 +194,17 @@ class MotionCalibrationScreen(QWidget):
         card.add(save)
         return card
 
-    def _motor_row(
-        self,
-        label: str,
-        motor_id: int,
-        slider: QSlider,
-        *,
-        forward: bool,
-    ) -> tuple[QHBoxLayout, QLabel]:
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        cap = QLabel(f"{label} {motor_id}")
-        cap.setStyleSheet(
-            "color: #1c1c1e; font-size: 13px; font-weight: 600;"
-            " background-color: transparent; min-width: 88px;"
-        )
-        row.addWidget(cap)
-        row.addWidget(slider, stretch=1)
-        val = QLabel("0")
-        val.setStyleSheet(
-            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
-            " background-color: transparent; min-width: 44px;"
-        )
-        val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        row.addWidget(val)
-
-        def on_change(v: int) -> None:
-            val.setText(str(v))
-            if forward:
-                self._service.preview_hover_lean_positions(
-                    self._fwd_l.value(), self._fwd_r.value()
-                )
-            else:
-                self._service.preview_hover_lean_positions(
-                    self._back_l.value(), self._back_r.value()
-                )
-
-        slider.valueChanged.connect(on_change)
-        return row, val
-
     def _on_neutral_clicked(self) -> None:
         self._service.park_hoverboard_brake()
 
-    def _sync_sliders_from_settings(self) -> None:
+    def _sync_values_from_settings(self) -> None:
         ax = self._service.settings.hoverboard_axis
-        for s, v in (
-            (self._fwd_l, int(ax.forward_pos_left)),
-            (self._fwd_r, int(ax.forward_pos_right)),
-            (self._back_l, int(ax.backward_pos_left)),
-            (self._back_r, int(ax.backward_pos_right)),
-        ):
-            s.blockSignals(True)
-            s.setValue(v)
-            s.blockSignals(False)
+        self._ticks["fwd_l"] = int(ax.forward_pos_left)
+        self._ticks["fwd_r"] = int(ax.forward_pos_right)
+        self._ticks["back_l"] = int(ax.backward_pos_left)
+        self._ticks["back_r"] = int(ax.backward_pos_right)
+        for k, lbl in self._tick_labels.items():
+            lbl.setText(str(self._ticks[k]))
 
     def on_enter(self) -> None:
         try:
@@ -209,10 +214,9 @@ class MotionCalibrationScreen(QWidget):
                 self,
                 "Bus",
                 f"Could not open the Dynamixel bus:\n{exc}\n\n"
-                "Sliders will still adjust saved values after Save.",
+                "You can still adjust saved values with Save.",
             )
-        self._sync_sliders_from_settings()
-        self._refresh_value_labels()
+        self._sync_values_from_settings()
         ax = self._service.settings.hoverboard_axis
         self._neutral_lbl.setText(
             f"Brake / neutral reference: motor {self._id_left}={ax.brake_pos_left}, "
@@ -220,39 +224,35 @@ class MotionCalibrationScreen(QWidget):
         )
         self._service.park_hoverboard_brake()
 
-    def _refresh_value_labels(self) -> None:
-        self._lbl_fwd_l.setText(str(self._fwd_l.value()))
-        self._lbl_fwd_r.setText(str(self._fwd_r.value()))
-        self._lbl_back_l.setText(str(self._back_l.value()))
-        self._lbl_back_r.setText(str(self._back_r.value()))
-
     def on_leave(self) -> None:
         self._service.park_hoverboard_brake()
 
     def _save_forward(self) -> None:
+        fl = self._ticks["fwd_l"]
+        fr = self._ticks["fwd_r"]
         self._service.persist_hover_lean_calibration(
-            forward_pos_left=self._fwd_l.value(),
-            forward_pos_right=self._fwd_r.value(),
+            forward_pos_left=fl,
+            forward_pos_right=fr,
         )
         self._service.park_hoverboard_brake()
         QMessageBox.information(
             self,
             "Saved",
-            f"Forward goals: {self._id_left}={self._fwd_l.value()}, "
-            f"{self._id_right}={self._fwd_r.value()}.\n"
+            f"Forward goals: {self._id_left}={fl}, {self._id_right}={fr}.\n"
             "Lean servos returned to brake.",
         )
 
     def _save_backward(self) -> None:
+        bl = self._ticks["back_l"]
+        br = self._ticks["back_r"]
         self._service.persist_hover_lean_calibration(
-            backward_pos_left=self._back_l.value(),
-            backward_pos_right=self._back_r.value(),
+            backward_pos_left=bl,
+            backward_pos_right=br,
         )
         self._service.park_hoverboard_brake()
         QMessageBox.information(
             self,
             "Saved",
-            f"Backward goals: {self._id_left}={self._back_l.value()}, "
-            f"{self._id_right}={self._back_r.value()}.\n"
+            f"Backward goals: {self._id_left}={bl}, {self._id_right}={br}.\n"
             "Lean servos returned to brake.",
         )
