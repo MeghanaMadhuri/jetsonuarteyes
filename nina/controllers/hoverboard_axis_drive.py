@@ -19,8 +19,6 @@ from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
 log = logging.getLogger("nina.hoverboard_axis")
 
 _POS_SPAN_DEG = 300.0
-# Max idle at coast between full pulse cycles (``pulse_forward_brake_sec`` / NINA_HOVER_PULSE_BRAKE_SEC).
-_PULSE_MAX_COAST_DWELL_SEC = 0.5
 
 
 def _smoothstep01(t: float) -> float:
@@ -273,11 +271,10 @@ class HoverboardAxisDrive:
         fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 0.0))
         brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 0.0))
         ramp_sec = float(
-            getattr(self._axis, "pulse_forward_return_ramp_sec", 1.0)
+            getattr(self._axis, "pulse_forward_return_ramp_sec", 0.0)
         )
         fwd_sec = max(0.0, min(10.0, fwd_sec))
         brk_sec = max(0.0, min(10.0, brk_sec))
-        brk_sec = min(brk_sec, _PULSE_MAX_COAST_DWELL_SEC)
         ramp_sec = max(0.0, min(10.0, ramp_sec))
         coast_blend = float(
             getattr(self._axis, "pulse_forward_coast_blend", 0.22)

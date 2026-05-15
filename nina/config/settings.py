@@ -180,11 +180,12 @@ class HoverboardAxisSettings:
     ``cubic_io``, ``trapezoid``; edge ``NINA_HOVER_PULSE_RAMP_TRAP_EDGE`` 0.08–0.35).
     If ramp and holds are all ``0``, a safe minimum ramp is applied in code.
     Optional ``NINA_HOVER_PULSE_RAMP_MOVING_SPEED`` (0–1023): MX Moving Speed **only during**
-    pulse ramps; unset uses ``NINA_HOVER_MOVING_SPEED``. Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
-    ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **0** / **0** s for continuous coast↔FWD;
-    wave is continuous when ``ramp`` > 0). ``NINA_HOVER_PULSE_BRAKE_SEC`` is a **coast dwell after**
-    each full cycle before the next; it is capped at **0.5** s so the next pulse cannot start late
-    by more than that. Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
+    pulse ramps; unset uses ``NINA_HOVER_MOVING_SPEED``.
+    ``NINA_HOVER_PULSE_FWD_SEC`` dwells at full **forward** lean (after the outbound ramp);
+    ``NINA_HOVER_PULSE_BRAKE_SEC`` dwells at **coast** (near-brake blend, after the return ramp).
+    Code defaults **2** / **2** s and ``RETURN_RAMP_SEC`` **0** → **4 s** per cycle (2 s forward +
+    2 s coast; raise ``RETURN_RAMP_SEC`` to soften corners).
+    Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
     step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
     goal (exact equality is not practical), up to ``NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT`` s —
     slows the ramp slightly but avoids outpacing small moves.
@@ -466,14 +467,14 @@ def load_settings(repo_root: Path) -> NinaSettings:
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
         pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
         pulse_forward_on_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 0.0))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.0))
         ),
         pulse_forward_brake_sec=max(
-            0.0, min(0.5, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 0.0))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 2.0))
         ),
         pulse_forward_return_ramp_sec=max(
             0.0,
-            min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 1.0)),
+            min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 0.0)),
         ),
         pulse_forward_coast_blend=max(
             0.0,
