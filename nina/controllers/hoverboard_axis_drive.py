@@ -19,7 +19,7 @@ log = logging.getLogger("nina.hoverboard_axis")
 
 _POS_SPAN_DEG = 300.0
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
-_STRAIGHT_FWD_EXTRA_TICKS = 8
+_STRAIGHT_FWD_EXTRA_TICKS = 17
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
