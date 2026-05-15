@@ -41,10 +41,14 @@ def _minimal_axis() -> HoverboardAxisSettings:
         pulse_ramp_trap_edge=0.18,
         pulse_ramp_moving_speed=None,
         pulse_waveform="cosine",
+        pulse_series_max=5,
+        pulse_series_fwd_sec=2.0,
+        pulse_series_coast_initial_sec=0.30,
+        pulse_series_coast_increment_sec=0.20,
+        pulse_series_min_transition_sec=0.18,
     )
 
 
-@dataclass
 class _FakeSettings:
     hoverboard_axis: HoverboardAxisSettings
 
@@ -104,6 +108,11 @@ class TestHoverCalibrationPersist(unittest.TestCase):
             pulse_ramp_trap_edge=0.18,
             pulse_ramp_moving_speed=None,
             pulse_waveform="cosine",
+            pulse_series_max=5,
+            pulse_series_fwd_sec=2.0,
+            pulse_series_coast_initial_sec=0.30,
+            pulse_series_coast_increment_sec=0.20,
+            pulse_series_min_transition_sec=0.18,
         )
         nav.update_axis_config(updated)
         self.assertEqual(nav._axis.forward_pos_left, 3000)

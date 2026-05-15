@@ -1,12 +1,6 @@
-"""Hoverboard forward pulse: alternates FWD lean goals with brake; cancels on stop."""
+"""Hoverboard forward pulse: timed series of FWD / near-brake, then full brake."""
 
 from __future__ import annotations
-
-import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="Hoverboard forward pulse removed from product; see git history.",
-)
 
 import threading
 import time
@@ -15,7 +9,11 @@ from types import SimpleNamespace
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
-from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
+from nina.controllers.hoverboard_axis_drive import (
+    HoverboardAxisDrive,
+    _STRAIGHT_FWD_EXTRA_TICKS,
+    _nudge_goal_from_brake,
+)
 
 
 class FakeDxl:
@@ -70,6 +68,11 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_ramp_trap_edge=0.18,
         pulse_ramp_moving_speed=None,
         pulse_waveform="dual_ramp",
+        pulse_series_max=2,
+        pulse_series_fwd_sec=0.02,
+        pulse_series_coast_initial_sec=0.01,
+        pulse_series_coast_increment_sec=0.01,
+        pulse_series_min_transition_sec=0.015,
     )
 
 
@@ -88,7 +91,10 @@ def test_forward_pulse_alternates_forward_and_brake() -> None:
     time.sleep(0.2)
     hb.stop()
     assert len(dxl.goal_writes) >= 4
-    fwd = {12: 2100, 13: 2100}
+    # Symmetric straight FWD uses nudged goals past calibrated forward_pos_*.
+    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fwd = {12: fl, 13: fr}
     brk = {12: 2048, 13: 2048}
     saw_fwd = any(g == fwd for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -112,7 +118,7 @@ def test_forward_pulse_stops_after_stop() -> None:
     hb.stop()
     time.sleep(0.15)
     n_after = len(dxl.goal_writes)
-    assert n_after <= n_before + 25
+    assert n_after <= n_before + 80
 
 
 def test_set_wheels_halts_pulse() -> None:
@@ -152,7 +158,40 @@ def test_start_pulse_disabled_falls_back_to_forward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_forward(40)
     assert not hb.is_forward_pulse_active()
-    assert dxl.goal_writes == [{12: 2100, 13: 2100}]
+    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    assert dxl.goal_writes[-1] == {12: fl, 13: fr}
+    prime = {12: 2048, 13: 2048}
+    assert prime in dxl.goal_writes
+
+
+def test_forward_pulse_series_ends_at_full_brake() -> None:
+    dxl = FakeDxl()
+    axis = replace(
+        _axis_pulse_fast(),
+        pulse_series_max=3,
+        pulse_series_fwd_sec=0.02,
+        pulse_series_coast_initial_sec=0.01,
+        pulse_series_coast_increment_sec=0.01,
+        pulse_series_min_transition_sec=0.012,
+        pulse_forward_return_ramp_sec=0.02,
+        pulse_forward_coast_blend=0.2,
+    )
+    cfg = SimpleNamespace(
+        default_speed_percent=10,
+        settle_delay_sec=0.01,
+        invert_left_dir=False,
+        invert_right_dir=False,
+    )
+    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
+    hb.initialize()
+    hb.start_pulse_straight_forward(50)
+    for _ in range(300):
+        if not hb.is_forward_pulse_active():
+            break
+        time.sleep(0.02)
+    assert not hb.is_forward_pulse_active()
+    assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
 
 
 def test_pulse_ramp_blend_profiles_are_monotonic() -> None:

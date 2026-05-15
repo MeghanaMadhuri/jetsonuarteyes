@@ -37,7 +37,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_pulse_ramp_profile() -> str:
-    """Legacy: pulse ramp profile env (HoverboardAxisSettings only; pulse drive removed)."""
+    """Pulse ramp profile for ``HoverboardAxisSettings`` (``NINA_HOVER_PULSE_RAMP_PROFILE``)."""
     raw = (os.environ.get("NINA_HOVER_PULSE_RAMP_PROFILE") or "smootherstep").strip().lower()
     if raw in ("smoothstep", "smootherstep", "cubic_io", "trapezoid"):
         return raw
@@ -55,7 +55,7 @@ def _env_optional_int_clamped(name: str, lo: int, hi: int) -> Optional[int]:
 
 
 def _env_pulse_waveform() -> str:
-    """Legacy: pulse waveform env (HoverboardAxisSettings only; pulse drive removed)."""
+    """Pulse waveform for ``HoverboardAxisSettings`` (``NINA_HOVER_PULSE_WAVEFORM``)."""
     raw = (os.environ.get("NINA_HOVER_PULSE_WAVEFORM") or "cosine").strip().lower()
     if raw in ("cosine", "dual_ramp", "dual", "legacy"):
         if raw in ("dual", "legacy"):
@@ -169,10 +169,13 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
-    **Forward pulse (removed):** ``NINA_HOVER_PULSE_*`` fields remain on this dataclass
-    and in ``load_settings`` for env / JSON compatibility; ``HoverboardAxisDrive`` no
-    longer runs the coast↔forward pulse thread—the UI uses continuous forward lean
-    (``drive_continuous`` / ``set_wheels``) like pre-pulse behaviour.
+    **Forward pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` is set, ``start_pulse_straight_forward``
+    runs ``pulse_series_max`` cycles: each cycle holds full forward for ``pulse_series_fwd_sec``,
+    then near-brake (``pulse_forward_coast_blend``) for ``pulse_series_coast_initial_sec`` plus
+    ``pulse_series_coast_increment_sec`` per completed pulse. Ramps use
+    ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)``. Then servos go to
+    full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are
+    legacy fields kept for JSON compatibility and are not used by the series pulse.
     """
 
     id_left: int
@@ -201,6 +204,11 @@ class HoverboardAxisSettings:
     pulse_ramp_trap_edge: float
     pulse_ramp_moving_speed: Optional[int]
     pulse_waveform: str
+    pulse_series_max: int
+    pulse_series_fwd_sec: float
+    pulse_series_coast_initial_sec: float
+    pulse_series_coast_increment_sec: float
+    pulse_series_min_transition_sec: float
 
 
 @dataclass(frozen=True)
@@ -495,7 +503,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
-        # NINA_HOVER_PULSE_* — still loaded for dataclass / env compatibility; drive ignores.
         pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
         pulse_forward_on_sec=max(
             0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.0))
@@ -530,6 +537,25 @@ def load_settings(repo_root: Path) -> NinaSettings:
             "NINA_HOVER_PULSE_RAMP_MOVING_SPEED", 0, 1023
         ),
         pulse_waveform=_env_pulse_waveform(),
+        pulse_series_max=max(
+            1, min(20, _env_int("NINA_HOVER_PULSE_SERIES_MAX", 5))
+        ),
+        pulse_series_fwd_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_FWD_SEC", 2.0)),
+        ),
+        pulse_series_coast_initial_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_COAST_INITIAL_SEC", 0.30)),
+        ),
+        pulse_series_coast_increment_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_COAST_INCREMENT_SEC", 0.20)),
+        ),
+        pulse_series_min_transition_sec=max(
+            0.0,
+            min(2.0, _env_float("NINA_HOVER_PULSE_SERIES_MIN_RAMP_SEC", 0.18)),
+        ),
     )
 
     from nina.config.hover_calibration import (  # noqa: PLC0415 — after HoverboardAxisSettings
