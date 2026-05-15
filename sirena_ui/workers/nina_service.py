@@ -10,11 +10,15 @@ playback worker and a record worker can never race on the serial port.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import Qt
 
+from nina.config.hover_calibration import (
+    save_hover_calibration_partial,
+)
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
@@ -65,6 +69,65 @@ class NinaService:
     @property
     def expected_motor_count(self) -> int:
         return self._motor_count
+
+    def park_hoverboard_brake(self) -> None:
+        """Return lean servos to the configured brake pose (safe park)."""
+        with self.bus_lock:
+            if not self._bus_ready:
+                return
+            apply_hoverboard_brake_positions(self.dxl, self.settings.hoverboard_axis)
+
+    def preview_hover_lean_positions(self, left: int, right: int) -> None:
+        """Command both lean servos to absolute goal ticks (calibration preview)."""
+        axis = self.settings.hoverboard_axis
+        lid = int(axis.id_left)
+        rid = int(axis.id_right)
+        with self.bus_lock:
+            if not self._bus_ready:
+                return
+            self.dxl._require_initialized()
+            ms = max(0, min(1023, int(axis.moving_speed)))
+            self.dxl.sync_write_moving_speed_subset({lid: ms, rid: ms})
+            self.dxl.sync_write_goal_position(
+                {
+                    lid: self.dxl._clamp_pos(int(left)),
+                    rid: self.dxl._clamp_pos(int(right)),
+                }
+            )
+
+    def persist_hover_lean_calibration(
+        self,
+        *,
+        forward_pos_left: Optional[int] = None,
+        forward_pos_right: Optional[int] = None,
+        backward_pos_left: Optional[int] = None,
+        backward_pos_right: Optional[int] = None,
+    ) -> None:
+        """Append to JSON on disk, refresh in-memory axis, rebuild lazy `drive` + rebind."""
+        updates: Dict[str, int] = {}
+        for key, val in (
+            ("forward_pos_left", forward_pos_left),
+            ("forward_pos_right", forward_pos_right),
+            ("backward_pos_left", backward_pos_left),
+            ("backward_pos_right", backward_pos_right),
+        ):
+            if val is None:
+                continue
+            updates[key] = max(0, min(4095, int(val)))
+        if not updates:
+            return
+        save_hover_calibration_partial(updates)
+        new_axis = replace(self.settings.hoverboard_axis, **updates)
+        self.settings = replace(self.settings, hoverboard_axis=new_axis)
+        self._invalidate_drive_and_rebind()
+
+    def _invalidate_drive_and_rebind(self) -> None:
+        self._drive = None
+        new_drive = self.drive
+        if self._face_follow is not None:
+            self._face_follow.rebind_drive(new_drive)
+        if self._autonomy is not None:
+            self._autonomy.rebind_drive(new_drive)
 
     def ensure_bus(self) -> Dict[str, object]:
         """Initialize the bus once, run a non-fatal health check, enable torque."""

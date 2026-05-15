@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self._titles: Dict[str, str] = {
             "home": "Nina \u00b7 Home",
             "drive": "Nina \u00b7 Drive",
+            "motion_calibration": "Nina \u00b7 Motion calibration",
             "vision": "Nina \u00b7 Vision",
             "perception": "Nina \u00b7 Perception",
             "map": "Nina \u00b7 Map (SLAM)",
@@ -308,7 +309,18 @@ class MainWindow(QMainWindow):
             return screen
         if key == "drive":
             from sirena_ui.screens.drive_screen import DriveScreen
-            return DriveScreen(self._service)
+
+            screen = DriveScreen(self._service)
+            screen.calibration_requested.connect(self._open_motion_calibration)
+            return screen
+        if key == "motion_calibration":
+            from sirena_ui.screens.motion_calibration_screen import (
+                MotionCalibrationScreen,
+            )
+
+            screen = MotionCalibrationScreen(self._service)
+            screen.back_requested.connect(self._return_to_drive_from_calibration)
+            return screen
         if key == "vision":
             from sirena_ui.screens.vision_screen import VisionScreen
             return VisionScreen(self._service)
@@ -330,6 +342,13 @@ class MainWindow(QMainWindow):
             from sirena_ui.screens.health_screen import HealthScreen
             return HealthScreen(self._service)
         raise ValueError(f"Unknown screen key: {key}")
+
+    def _open_motion_calibration(self) -> None:
+        self.navigate("motion_calibration")
+
+    def _return_to_drive_from_calibration(self) -> None:
+        self.navigate("drive")
+        self._sidebar.select("drive")
 
     def _on_nav_request(self, key: str) -> None:
         self.navigate(key)

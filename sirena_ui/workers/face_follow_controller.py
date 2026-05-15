@@ -269,6 +269,10 @@ class FaceFollowController(QObject):
         self._ang_dead = 0.09
         self._no_back_ticks_remaining = 0
 
+    def rebind_drive(self, drive: DriveController) -> None:
+        """Point follow at a fresh `DriveController` after hover calibration rebuild."""
+        self._drive = drive
+
     def set_frame_size(self, w: int, h: int) -> None:
         self._frame_wh = (max(1, int(w)), max(1, int(h)))
 

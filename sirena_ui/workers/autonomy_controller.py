@@ -202,6 +202,10 @@ class AutonomyController(QObject):
         # their reference.
         self._depth_close_pending = False
 
+    def rebind_drive(self, drive: DriveController) -> None:
+        """Use a new drive instance when hardware settings swap underfoot."""
+        self._drive = drive
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
