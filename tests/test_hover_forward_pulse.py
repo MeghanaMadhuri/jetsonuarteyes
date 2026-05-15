@@ -63,6 +63,7 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_ramp_profile="smoothstep",
         pulse_ramp_trap_edge=0.18,
         pulse_ramp_moving_speed=None,
+        pulse_waveform="dual_ramp",
     )
 
 

@@ -53,6 +53,15 @@ def _env_optional_int_clamped(name: str, lo: int, hi: int) -> Optional[int]:
         return None
 
 
+def _env_pulse_waveform() -> str:
+    raw = (os.environ.get("NINA_HOVER_PULSE_WAVEFORM") or "cosine").strip().lower()
+    if raw in ("cosine", "dual_ramp", "dual", "legacy"):
+        if raw in ("dual", "legacy"):
+            return "dual_ramp"
+        return raw
+    return "cosine"
+
+
 # Upper bound for breakaway timing (seconds). Longer holds behave like
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
@@ -162,15 +171,20 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
     to disable) oscillates between **full forward** lean (calibrated ``forward_pos_*``) and a
     **coast** pose near brake (see ``NINA_HOVER_PULSE_COAST_BLEND``) so the lean never fully
-    “dead-stops” at brake—smoother, hoverboard-like reversals. Ramp duration is
-    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **3** s each way; if ``0`` with no holds, a
-    safe minimum ramp is applied). Ramp shape: ``NINA_HOVER_PULSE_RAMP_PROFILE`` =
-    ``smootherstep`` (default quintic), ``smoothstep``, ``cubic_io`` (faster mid), or
-    ``trapezoid`` (accel / cruise / decel; edge ``NINA_HOVER_PULSE_RAMP_TRAP_EDGE`` 0.08–0.35).
+    “dead-stops” at brake—smoother, hoverboard-like reversals.
+    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` is the ramp time per leg for **dual_ramp** mode, or
+    **half** the full coast→forward→coast period for **cosine** mode (default ``NINA_HOVER_PULSE_WAVEFORM``):
+    cosine runs one symmetric S-curve over ``2×`` ramp seconds so outbound and return use the
+    same velocity law (no ease-curve “restart” at coast between legs). ``dual_ramp`` restores
+    two independent ramps with ``NINA_HOVER_PULSE_RAMP_PROFILE`` (``smootherstep``, ``smoothstep``,
+    ``cubic_io``, ``trapezoid``; edge ``NINA_HOVER_PULSE_RAMP_TRAP_EDGE`` 0.08–0.35).
+    If ramp and holds are all ``0``, a safe minimum ramp is applied in code.
     Optional ``NINA_HOVER_PULSE_RAMP_MOVING_SPEED`` (0–1023): MX Moving Speed **only during**
     pulse ramps; unset uses ``NINA_HOVER_MOVING_SPEED``. Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
     ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **0** / **0** s for continuous coast↔FWD;
-    wave is continuous when ``ramp`` > 0). Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
+    wave is continuous when ``ramp`` > 0). ``NINA_HOVER_PULSE_BRAKE_SEC`` is a **coast dwell after**
+    each full cycle before the next; it is capped at **0.5** s so the next pulse cannot start late
+    by more than that. Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
     step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
     goal (exact equality is not practical), up to ``NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT`` s —
     slows the ramp slightly but avoids outpacing small moves.
@@ -201,6 +215,7 @@ class HoverboardAxisSettings:
     pulse_ramp_profile: str
     pulse_ramp_trap_edge: float
     pulse_ramp_moving_speed: Optional[int]
+    pulse_waveform: str
 
 
 @dataclass(frozen=True)
@@ -454,10 +469,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
             0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 0.0))
         ),
         pulse_forward_brake_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 0.0))
+            0.0, min(0.5, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 0.0))
         ),
         pulse_forward_return_ramp_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 3.0))
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 0.75)),
         ),
         pulse_forward_coast_blend=max(
             0.0,
@@ -481,6 +497,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pulse_ramp_moving_speed=_env_optional_int_clamped(
             "NINA_HOVER_PULSE_RAMP_MOVING_SPEED", 0, 1023
         ),
+        pulse_waveform=_env_pulse_waveform(),
     )
 
     from nina.config.hover_calibration import (  # noqa: PLC0415 — after HoverboardAxisSettings

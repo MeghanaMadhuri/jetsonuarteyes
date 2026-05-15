@@ -40,6 +40,7 @@ def _minimal_axis() -> HoverboardAxisSettings:
         pulse_ramp_profile="smootherstep",
         pulse_ramp_trap_edge=0.18,
         pulse_ramp_moving_speed=None,
+        pulse_waveform="cosine",
     )
 
 
@@ -102,6 +103,7 @@ class TestHoverCalibrationPersist(unittest.TestCase):
             pulse_ramp_profile="smootherstep",
             pulse_ramp_trap_edge=0.18,
             pulse_ramp_moving_speed=None,
+            pulse_waveform="cosine",
         )
         nav.update_axis_config(updated)
         self.assertEqual(nav._axis.forward_pos_left, 3000)
