@@ -9,6 +9,8 @@ playback worker and a record worker can never race on the serial port.
 
 from __future__ import annotations
 
+import logging
+import tempfile
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -27,7 +29,9 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     apply_hoverboard_brake_positions,
 )
-from nina.services.audio_generator import AudioGenerator
+from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
+from nina.sensors.obstacle_stop_monitor import ObstacleStopMonitor
+from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
@@ -38,6 +42,8 @@ from sirena_ui.workers.vision_worker import VisionWorker
 
 
 DEFAULT_MOTOR_IDS: List[int] = list(EXPECTED_DYNAMIXEL_IDS)
+
+log = logging.getLogger("sirena_ui.nina_service")
 
 
 class NinaService:
@@ -65,6 +71,8 @@ class NinaService:
         self._face_greeter: Optional[FaceGreeter] = None
         self._slam: Optional[SlamWorker] = None
         self._autonomy: Optional[AutonomyController] = None
+        self._obstacle_monitor: Optional[ObstacleStopMonitor] = None
+        self._battery_monitor: Optional[BatteryAds1115Monitor] = None
 
     @property
     def expected_motor_count(self) -> int:
@@ -144,6 +152,126 @@ class NinaService:
                 "expected": health.expected_motors,
                 "detail": health.detail,
             }
+
+    def start_obstacle_stop_monitor(self) -> None:
+        """Start forward HC-SR04 obstacle handling when enabled in settings."""
+        if not self.settings.obstacle_stop.enabled:
+            return
+        if self._obstacle_monitor is not None:
+            return
+        try:
+            mon = ObstacleStopMonitor(self)
+            mon.start()
+            self._obstacle_monitor = mon
+        except Exception as exc:
+            log.warning("Obstacle stop monitor did not start: %s", exc)
+
+    def run_obstacle_stop_reaction(self) -> None:
+        """JYQD stop, neutral action, lean brake, then US-English gTTS phrase."""
+        try:
+            if self._face_follow is not None:
+                try:
+                    self._face_follow.stop()
+                except Exception:
+                    pass
+            self.drive.stop(drain=True)
+        except Exception:
+            log.exception("Obstacle stop: drive / face-follow stop failed")
+
+        with self.bus_lock:
+            if not self._bus_ready:
+                return
+            try:
+                self.dxl._require_initialized()
+            except Exception:
+                return
+            try:
+                apply_hoverboard_brake_positions(
+                    self.dxl, self.settings.hoverboard_axis
+                )
+                self.action_runner.run_named_action(
+                    self.settings.neutral_action_name
+                )
+                apply_hoverboard_brake_positions(
+                    self.dxl, self.settings.hoverboard_axis
+                )
+            except Exception:
+                log.exception("Obstacle stop: neutral / brake pose failed")
+
+        phrase = (self.settings.obstacle_stop.tts_text or "").strip()
+        if not phrase:
+            phrase = "There is an obstacle in my way"
+        out = Path(tempfile.gettempdir()) / "nina_obstacle_stop_alert.mp3"
+        try:
+            AudioGenerator.generate(
+                phrase, out, lang="en", tld="us", slow=False
+            )
+            AudioPlayer().play(out)
+        except AudioGeneratorError as exc:
+            log.warning("Obstacle stop TTS unavailable: %s", exc)
+        except Exception:
+            log.exception("Obstacle stop TTS / playback failed")
+
+    def start_battery_ads1115_monitor(self) -> None:
+        """Start ADS1115 pack-voltage monitor when enabled in settings."""
+        if not self.settings.battery_ads1115.enabled:
+            return
+        if self._battery_monitor is not None:
+            return
+        try:
+            mon = BatteryAds1115Monitor(self)
+            mon.start()
+            self._battery_monitor = mon
+        except Exception as exc:
+            log.warning("Battery ADS1115 monitor did not start: %s", exc)
+
+    def run_low_battery_reaction(self) -> None:
+        """JYQD stop, neutral action, lean IDs to ``lean_goal`` (default 2048), gTTS."""
+        try:
+            if self._face_follow is not None:
+                try:
+                    self._face_follow.stop()
+                except Exception:
+                    pass
+            self.drive.stop(drain=True)
+        except Exception:
+            log.exception("Low battery: drive / face-follow stop failed")
+
+        axis = self.settings.hoverboard_axis
+        lid = int(axis.id_left)
+        rid = int(axis.id_right)
+        ms = max(0, min(1023, int(axis.moving_speed)))
+        goal = int(self.settings.battery_ads1115.lean_goal)
+
+        with self.bus_lock:
+            if not self._bus_ready:
+                return
+            try:
+                self.dxl._require_initialized()
+            except Exception:
+                return
+            try:
+                self.action_runner.run_named_action(
+                    self.settings.neutral_action_name
+                )
+                self.dxl.sync_write_moving_speed_subset({lid: ms, rid: ms})
+                self.dxl.sync_write_goal_position({lid: goal, rid: goal})
+            except Exception:
+                log.exception("Low battery: neutral / lean goal failed")
+
+        phrase = (self.settings.battery_ads1115.tts_text or "").strip()
+        if not phrase:
+            phrase = "I'm low on battery , please put me on charge"
+        out = Path(tempfile.gettempdir()) / "nina_low_battery_alert.mp3"
+        try:
+            AudioGenerator.generate(
+                phrase, out, lang="en", tld="us", slow=False
+            )
+            AudioPlayer().play(out)
+        except AudioGeneratorError as exc:
+            log.warning("Low battery TTS unavailable: %s", exc)
+        except Exception:
+            log.exception("Low battery TTS / playback failed")
 
     @property
     def drive(self) -> DriveController:
@@ -239,6 +367,18 @@ class NinaService:
         return self._autonomy
 
     def shutdown(self) -> None:
+        if self._battery_monitor is not None:
+            try:
+                self._battery_monitor.stop()
+            except Exception:
+                pass
+            self._battery_monitor = None
+        if self._obstacle_monitor is not None:
+            try:
+                self._obstacle_monitor.stop()
+            except Exception:
+                pass
+            self._obstacle_monitor = None
         with self.bus_lock:
             # Order matters: autonomy depends on slam (lidar) and drive,
             # so it has to come down first - that also parks the wheels.

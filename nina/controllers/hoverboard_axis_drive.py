@@ -3,23 +3,53 @@ Drive Nina locomotion by tilting hoverboard driver modules via Dynamixel MX-28.
 
 Primary Nina locomotion: lean servos on the Dynamixel bus (joint mode). API subset
 matches ``NavigationManager`` as used by ``DriveController``, autonomy, and goto.
+
+**Straight forward / straight backward (D-pad W/S, bench straight, ``forward()`` /
+``backward()``):** before applying FWD/REV lean goals, both lean servos move to
+the straight-line **prime** position (default raw **2048**) and the driver waits
+until present position is within tolerance or **2 s** elapses—then FWD/BACK
+goals are applied. Pivots (A/D) still use ``stop()`` + settle then opposing leans.
+Override with ``NINA_HOVER_STRAIGHT_PRIME_POS``, ``NINA_HOVER_STRAIGHT_PRIME_SEC``,
+``NINA_HOVER_STRAIGHT_PRIME_TOL_TICKS``.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
-from nina.controllers.dynamixel_manager import DynamixelManager
+from nina.controllers.dynamixel_manager import DynamixelManager, REG_PRESENT_POS
 
 log = logging.getLogger("nina.hoverboard_axis")
 
 _POS_SPAN_DEG = 300.0
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
+
+
+def _straight_prime_goal_ticks() -> int:
+    try:
+        return max(0, min(4095, int(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_POS", "2048"))))
+    except ValueError:
+        return 2048
+
+
+def _straight_prime_timeout_sec() -> float:
+    try:
+        return max(0.05, min(5.0, float(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_SEC", "2.0"))))
+    except ValueError:
+        return 2.0
+
+
+def _straight_prime_tol_ticks() -> int:
+    try:
+        return max(1, min(512, int(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_TOL_TICKS", "32"))))
+    except ValueError:
+        return 32
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
@@ -77,6 +107,8 @@ class HoverboardAxisDrive:
         self._brake_left = 2048
         self._brake_right = 2048
         self._is_initialized = False
+        # Straight FWD/BACK: prime lean to center (2048) once per new straight run.
+        self._last_straight_key: Optional[str] = None
 
     # ------------------------------------------------------------------
     def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
@@ -109,6 +141,7 @@ class HoverboardAxisDrive:
             self.emergency_stop(routine_shutdown=True)
         finally:
             self._is_initialized = False
+            self._last_straight_key = None
 
     def set_status(self, mode: str) -> None:
         return
@@ -196,6 +229,7 @@ class HoverboardAxisDrive:
             {self._left_id: self._brake_left, self._right_id: self._brake_right}
         )
         time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
+        self._last_straight_key = None
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
         _ = routine_shutdown  # Same keyword shape as NavigationManager; no extra GPIO.
@@ -206,6 +240,44 @@ class HoverboardAxisDrive:
             return
         with self._bus_lock:
             self._dxl.sync_write_goal_position(goals)
+
+    @staticmethod
+    def _symmetric_straight_key(
+        left_dir: str,
+        left_speed: int,
+        right_dir: str,
+        right_speed: int,
+    ) -> Optional[str]:
+        """``\"fwd\"`` / ``\"back\"`` for symmetric straight line, else ``None``."""
+        if left_speed <= 0 or right_speed <= 0 or left_dir != right_dir:
+            return None
+        if left_dir == HoverboardAxisDrive.DIR_FORWARD:
+            return "fwd"
+        if left_dir == HoverboardAxisDrive.DIR_BACKWARD:
+            return "back"
+        return None
+
+    def _prime_straight_neutral(self) -> None:
+        """Command both lean servos to center, then wait until close or timeout."""
+        if not self._is_initialized:
+            return
+        goal = self._dxl._clamp_pos(_straight_prime_goal_ticks())
+        ms = max(0, min(1023, int(self._axis.moving_speed)))
+        lid, rid = self._left_id, self._right_id
+        deadline = time.monotonic() + _straight_prime_timeout_sec()
+        tol = _straight_prime_tol_ticks()
+        with self._bus_lock:
+            self._dxl._require_initialized()
+            self._dxl.sync_write_moving_speed_subset({lid: ms, rid: ms})
+            self._dxl.sync_write_goal_position({lid: goal, rid: goal})
+        while time.monotonic() < deadline:
+            with self._bus_lock:
+                pl = self._dxl.read_reg(lid, *REG_PRESENT_POS)
+                pr = self._dxl.read_reg(rid, *REG_PRESENT_POS)
+            if pl is not None and pr is not None:
+                if abs(int(pl) - goal) <= tol and abs(int(pr) - goal) <= tol:
+                    break
+            time.sleep(0.03)
 
     def _goals_for_wheels(
         self,
@@ -322,6 +394,15 @@ class HoverboardAxisDrive:
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
         self._halt_forward_pulse(wait=True)
+        sk = self._symmetric_straight_key(
+            left_dir, left_speed, right_dir, right_speed
+        )
+        if sk is not None:
+            if sk != self._last_straight_key:
+                self._prime_straight_neutral()
+            self._last_straight_key = sk
+        else:
+            self._last_straight_key = None
         goals = self._goals_for_wheels(
             left_dir=left_dir,
             left_speed=left_speed,
@@ -347,8 +428,12 @@ class HoverboardAxisDrive:
             right_speed = left_speed
         else:
             right_speed = self._resolve_speed(right_speed_percent)
-        self.stop()
-        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
+        sk = self._symmetric_straight_key(
+            left_dir, left_speed, right_dir, right_speed
+        )
+        if sk is None:
+            self.stop()
+            time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self.set_wheels(
             left_dir=left_dir,
             left_speed=left_speed,

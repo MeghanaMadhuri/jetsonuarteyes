@@ -204,6 +204,50 @@ class HoverboardAxisSettings:
 
 
 @dataclass(frozen=True)
+class BatteryAds1115Settings:
+    """Pack voltage via ADS1115 I²C ADC (scaled input); low-V speech + neutral + lean goal.
+
+    Enable with ``NINA_BATTERY_ADS1115_ENABLE=1``. Tune ``NINA_BATTERY_DIVIDER_RATIO``
+    so ``V_pack ≈ V_ain * ratio`` matches a DMM on the pack. ``clear_voltage_v`` must
+    stay **above** ``low_voltage_v`` to avoid alert chatter while the pack recovers.
+    """
+
+    enabled: bool
+    i2c_bus: int
+    i2c_address: int
+    channel: int
+    divider_ratio: float
+    low_voltage_v: float
+    clear_voltage_v: float
+    debounce_reads: int
+    cooldown_sec: float
+    poll_interval_sec: float
+    tts_text: str
+    lean_goal: int
+
+
+@dataclass(frozen=True)
+class ObstacleStopSettings:
+    """Single forward HC-SR04: stop JYQD drive, park lean brake, run neutral pose, TTS.
+
+    Enable with ``NINA_OBSTACLE_STOP_ENABLE=1``. Default Trig/Echo BCM **4 / 9**
+    map to physical header pins **7 / 21** on the reference Orin NX / Orin Nano
+    40-pin layout (``Jetson.GPIO`` / ``JETSON_ORIN_NANO_BOARD_BY_BCM``). Trig uses
+    **BCM 4** instead of **19** so physical **35** (often audio / I2S on carriers)
+    stays free. BCM **4** overlaps the HC-SR04 ring's default **rear_left Echo**
+    slot—remap one side if you run both the ring and this monitor.
+    """
+
+    enabled: bool
+    threshold_mm: int
+    hcsr04_trig_bcm: int
+    hcsr04_echo_bcm: int
+    debounce_reads: int
+    cooldown_sec: float
+    tts_text: str
+
+
+@dataclass(frozen=True)
 class AutonomySettings:
     """Shared knobs for the autonomous pilot.
 
@@ -321,6 +365,8 @@ class NinaSettings:
     lidar: LidarSettings
     goto: GotoSettings
     hoverboard_axis: HoverboardAxisSettings
+    obstacle_stop: ObstacleStopSettings
+    battery_ads1115: BatteryAds1115Settings
 
 
 def serial_collision_warnings(settings: NinaSettings) -> list[str]:
@@ -648,6 +694,44 @@ def load_settings(repo_root: Path) -> NinaSettings:
         emergency_stop_mm=int(os.environ.get("NINA_GOTO_ESTOP_MM", "580")),
     )
 
+    obstacle_stop = ObstacleStopSettings(
+        enabled=_env_bool("NINA_OBSTACLE_STOP_ENABLE", False),
+        threshold_mm=max(
+            50, min(5000, _env_int("NINA_OBSTACLE_STOP_MM", 1000))
+        ),
+        hcsr04_trig_bcm=_env_int("NINA_OBSTACLE_HCSR04_TRIG", 4),
+        hcsr04_echo_bcm=_env_int("NINA_OBSTACLE_HCSR04_ECHO", 9),
+        debounce_reads=max(1, min(20, _env_int("NINA_OBSTACLE_DEBOUNCE", 2))),
+        cooldown_sec=max(0.0, _env_float("NINA_OBSTACLE_COOLDOWN_SEC", 15.0)),
+        tts_text=(
+            (os.environ.get("NINA_OBSTACLE_TTS") or "").strip()
+            or "There is an obstacle in my way"
+        ),
+    )
+
+    low_v = _env_float("NINA_BATTERY_LOW_VOLTAGE_V", 23.0)
+    clear_v = _env_float("NINA_BATTERY_CLEAR_VOLTAGE_V", 23.6)
+    if clear_v <= low_v:
+        clear_v = low_v + 0.5
+
+    battery_ads1115 = BatteryAds1115Settings(
+        enabled=_env_bool("NINA_BATTERY_ADS1115_ENABLE", False),
+        i2c_bus=_env_int("NINA_BATTERY_I2C_BUS", 1),
+        i2c_address=_env_int("NINA_BATTERY_I2C_ADDR", 0x48),
+        channel=max(0, min(3, _env_int("NINA_BATTERY_ADS1115_CHANNEL", 0))),
+        divider_ratio=max(1.0, _env_float("NINA_BATTERY_DIVIDER_RATIO", 11.0)),
+        low_voltage_v=low_v,
+        clear_voltage_v=clear_v,
+        debounce_reads=max(1, min(30, _env_int("NINA_BATTERY_DEBOUNCE", 3))),
+        cooldown_sec=max(0.0, _env_float("NINA_BATTERY_COOLDOWN_SEC", 300.0)),
+        poll_interval_sec=max(0.25, _env_float("NINA_BATTERY_POLL_SEC", 2.0)),
+        tts_text=(
+            (os.environ.get("NINA_BATTERY_TTS") or "").strip()
+            or "I'm low on battery , please put me on charge"
+        ),
+        lean_goal=max(0, min(4095, _env_int("NINA_BATTERY_LEAN_GOAL", 2048))),
+    )
+
     return NinaSettings(
         serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB0"),
         baudrate=int(os.environ.get("NINA_DXL_BAUD", "222222")),
@@ -662,4 +746,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         lidar=lidar,
         goto=goto,
         hoverboard_axis=hoverboard_axis,
+        obstacle_stop=obstacle_stop,
+        battery_ads1115=battery_ads1115,
     )

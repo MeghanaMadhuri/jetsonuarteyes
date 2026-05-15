@@ -59,7 +59,9 @@ TRIGGER_PULSE_S = 1e-5        # 10 us trigger pulse
 
 
 @dataclass(frozen=True)
-class _Channel:
+class HCSR04Channel:
+    """One HC-SR04: logical ``position`` label plus BCM **trig** / **echo** pins."""
+
     position: str
     trig: int
     echo: int
@@ -73,8 +75,8 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-_DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
-    _Channel(
+_DEFAULT_CHANNELS: Tuple[HCSR04Channel, ...] = (
+    HCSR04Channel(
         position="front_left",
         # BCM 19 (physical pin 35) for trig and BCM 9 (physical pin 21)
         # for echo - both free GPIOs clear of the JYQD navigation pins
@@ -82,18 +84,18 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
         trig=_env_int("NINA_HCSR04_FL_TRIG", 19),
         echo=_env_int("NINA_HCSR04_FL_ECHO", 9),
     ),
-    _Channel(
+    HCSR04Channel(
         position="front_right",
         trig=_env_int("NINA_HCSR04_FR_TRIG", 7),
         echo=_env_int("NINA_HCSR04_FR_ECHO", 8),
     ),
-    _Channel(
+    HCSR04Channel(
         position="rear_left",
         # BCM 11 (physical pin 23) - free GPIO clear of the navigation pins.
         trig=_env_int("NINA_HCSR04_RL_TRIG", 11),
         echo=_env_int("NINA_HCSR04_RL_ECHO", 4),
     ),
-    _Channel(
+    HCSR04Channel(
         position="rear_right",
         trig=_env_int("NINA_HCSR04_RR_TRIG", 27),
         echo=_env_int("NINA_HCSR04_RR_ECHO", 26),
@@ -113,6 +115,20 @@ def is_available() -> Tuple[bool, str]:
     return True, ""
 
 
+def is_jetson_gpio_available() -> Tuple[bool, str]:
+    """True if ``Jetson.GPIO`` can import.
+
+    Unlike ``is_available()``, this ignores ``NINA_HCSR04_DISABLE`` so a
+    standalone forward obstacle sensor can run while the four-sensor
+    ring driver is disabled in env.
+    """
+    try:
+        import Jetson.GPIO  # noqa: F401  type: ignore
+    except Exception as exc:  # pragma: no cover
+        return False, f"Jetson.GPIO not available ({exc})"
+    return True, ""
+
+
 class HCSR04Array:
     """Polling driver for an array of HC-SR04 sensors.
 
@@ -121,7 +137,7 @@ class HCSR04Array:
     for reactive obstacle avoidance.
     """
 
-    def __init__(self, channels: Optional[List[_Channel]] = None) -> None:
+    def __init__(self, channels: Optional[List[HCSR04Channel]] = None) -> None:
         self._channels = list(channels) if channels else list(_DEFAULT_CHANNELS)
         self._gpio = None
         self._thread: Optional[threading.Thread] = None
@@ -234,7 +250,7 @@ class HCSR04Array:
                 # hear each other's echoes.
                 time.sleep(0.04)
 
-    def _ping(self, ch: _Channel) -> Optional[int]:
+    def _ping(self, ch: HCSR04Channel) -> Optional[int]:
         gpio = self._gpio
         if gpio is None:
             return None
