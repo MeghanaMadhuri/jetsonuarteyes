@@ -220,8 +220,8 @@ class HoverboardAxisDrive:
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
         halt = self._pulse_halt
-        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 2.5))
-        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 1.0))
+        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 0.0))
+        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 0.0))
         ramp_sec = float(
             getattr(self._axis, "pulse_forward_return_ramp_sec", 1.5)
         )
