@@ -123,8 +123,9 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED`` (0–1023; **0** = fastest
     joint move on Protocol 1, higher = slower — default 0),
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
-    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2028 / 2068 — **±20** ticks from 2048);
-    straight backward uses ``NINA_HOVER_REV_POS_*`` (defaults 2068 / 2028). In-place pivots pair
+    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2023 / 2073 — forward: ID **12** −5 and ID **13** +5
+    from the ±20 pair 2028/2068); straight backward uses ``NINA_HOVER_REV_POS_*``
+    (defaults 2068 / 2028). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI ``Turn left`` / ``Turn right`` and
     D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
@@ -382,8 +383,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
             else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 2048)
         ),
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2028),
-        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2068),
+        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2023),
+        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2073),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2068),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2028),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
