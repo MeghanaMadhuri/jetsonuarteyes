@@ -210,6 +210,75 @@ def test_forward_pulse_series_ends_at_full_brake() -> None:
     assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
 
 
+def test_backward_pulse_alternates_reverse_and_brake() -> None:
+    dxl = FakeDxl()
+    axis = _axis_pulse_fast()
+    cfg = SimpleNamespace(
+        default_speed_percent=10,
+        settle_delay_sec=0.01,
+        invert_left_dir=False,
+        invert_right_dir=False,
+    )
+    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
+    hb.initialize()
+    hb.start_pulse_straight_backward(50)
+    time.sleep(0.2)
+    hb.stop()
+    assert len(dxl.goal_writes) >= 4
+    rev = {12: 2000, 13: 2000}
+    brk = {12: 2048, 13: 2048}
+    saw_rev = any(g == rev for g in dxl.goal_writes)
+    saw_brk = any(g == brk for g in dxl.goal_writes)
+    assert saw_rev and saw_brk
+
+
+def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
+    dxl = FakeDxl()
+    axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
+    cfg = SimpleNamespace(
+        default_speed_percent=10,
+        settle_delay_sec=0.01,
+        invert_left_dir=False,
+        invert_right_dir=False,
+    )
+    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
+    hb.initialize()
+    dxl.goal_writes.clear()
+    hb.start_pulse_straight_backward(40)
+    assert not hb.is_forward_pulse_active()
+    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
+    prime = {12: 2048, 13: 2048}
+    assert prime in dxl.goal_writes
+
+
+def test_backward_pulse_series_ends_at_full_brake() -> None:
+    dxl = FakeDxl()
+    axis = replace(
+        _axis_pulse_fast(),
+        pulse_series_max=3,
+        pulse_series_fwd_sec=0.02,
+        pulse_series_coast_initial_sec=0.01,
+        pulse_series_min_transition_sec=0.012,
+        pulse_forward_return_ramp_sec=0.02,
+        pulse_forward_coast_blend=0.2,
+    )
+    cfg = SimpleNamespace(
+        default_speed_percent=10,
+        settle_delay_sec=0.01,
+        invert_left_dir=False,
+        invert_right_dir=False,
+    )
+    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
+    hb.initialize()
+    hb.start_pulse_straight_backward(50)
+    for _ in range(300):
+        if not hb.is_forward_pulse_active():
+            break
+        time.sleep(0.02)
+    assert not hb.is_forward_pulse_active()
+    assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
+
+
 def test_pulse_ramp_blend_profiles_are_monotonic() -> None:
     from nina.controllers.hoverboard_axis_drive import _pulse_ramp_blend_u
 

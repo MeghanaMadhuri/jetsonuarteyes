@@ -418,12 +418,18 @@ class DriveController(QObject):
             nav.update_axis_config(axis_cfg)
 
     def supports_forward_pulse(self) -> bool:
-        """True when nav backend offers hoverboard forward pulse and it is enabled in settings."""
+        """True when nav offers straight pulse series and ``pulse_forward_enabled`` is on.
+
+        When true, symmetric D-pad forward uses ``start_pulse_straight_forward`` and symmetric
+        backward uses ``start_pulse_straight_backward`` from rest (bench Straight / Straight back too).
+        """
         with self._lock:
             nav = self._nav
         if nav is None:
             return False
         if not callable(getattr(nav, "start_pulse_straight_forward", None)):
+            return False
+        if not callable(getattr(nav, "start_pulse_straight_backward", None)):
             return False
         en = getattr(nav, "is_forward_pulse_enabled", None)
         return callable(en) and bool(en())
@@ -433,10 +439,22 @@ class DriveController(QObject):
         sp = max(0, min(100, int(speed_pct)))
         self._enqueue(lambda: self._do_start_forward_pulse_bench(sp))
 
+    def start_backward_pulse_bench(self, speed_pct: int) -> None:
+        """Start hoverboard backward pulse (Straight back bench); no-op if unavailable."""
+        sp = max(0, min(100, int(speed_pct)))
+        self._enqueue(lambda: self._do_start_backward_pulse_bench(sp))
+
     def _do_start_forward_pulse_bench(self, speed_pct: int) -> None:
         if self._nav is None or not self.supports_forward_pulse():
             return
         self._nav.start_pulse_straight_forward(int(speed_pct))
+        with self._lock:
+            self._active_drive = None
+
+    def _do_start_backward_pulse_bench(self, speed_pct: int) -> None:
+        if self._nav is None or not self.supports_forward_pulse():
+            return
+        self._nav.start_pulse_straight_backward(int(speed_pct))
         with self._lock:
             self._active_drive = None
 
@@ -910,6 +928,14 @@ class DriveController(QObject):
                         "drive from stop: hover forward pulse speed=%s%%",
                         speed_pct,
                     )
+                elif direction == _DIR_BACK and self.supports_forward_pulse():
+                    self._nav.start_pulse_straight_backward(int(speed_pct))
+                    with self._lock:
+                        self._active_drive = None
+                    log.info(
+                        "drive from stop: hover backward pulse speed=%s%%",
+                        speed_pct,
+                    )
                 else:
                     kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
                     cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
@@ -976,7 +1002,7 @@ class DriveController(QObject):
         if self._nav is None:
             return
         if (
-            direction == _DIR_FORWARD
+            direction in (_DIR_FORWARD, _DIR_BACK)
             and getattr(self._nav, "is_forward_pulse_active", lambda: False)()
         ):
             return

@@ -129,7 +129,9 @@ def _straight_sequence_spec(
     return [("fwd", ms)]
 
 
-def _straight_back_sequence_spec() -> List[Tuple[str, int]]:
+def _straight_back_sequence_spec(
+    axis: HoverboardAxisSettings, *, use_backward_pulse_bench: bool
+) -> List[Tuple[str, int]]:
     """Single backward segment duration (direction is set on the screen)."""
     raw = (os.environ.get("NINA_STRAIGHT_BACK_TEST_MS") or "").strip()
     if raw:
@@ -137,6 +139,9 @@ def _straight_back_sequence_spec() -> List[Tuple[str, int]]:
             ms = int(raw)
         except ValueError:
             ms = 20_000
+    elif use_backward_pulse_bench:
+        est_sec = estimate_forward_pulse_series_duration_sec(axis)
+        ms = min(120_000, max(100, int(math.ceil(est_sec * 1000.0)) + 200))
     else:
         ms = 20_000
     ms = max(100, min(120_000, ms))
@@ -428,13 +433,13 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.setSpacing(6)
-        self._straight_test_btn = QPushButton("Straight")
+        self._straight_test_btn = QPushButton("Straight front")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drives straight for NINA_STRAIGHT_TEST_MS (legacy: NINA_STRAIGHT_SEQ_FWD1_MS), or if those "
+            "Straight front: runs for NINA_STRAIGHT_TEST_MS (legacy: NINA_STRAIGHT_SEQ_FWD1_MS), or if those "
             "are unset and hover forward pulse is on, for roughly one full pulse series plus margin. "
             "Otherwise default 20 s. Speed: NINA_STRAIGHT_TEST_SPEED_PCT. Respects Reverse. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
@@ -524,7 +529,7 @@ class DriveScreen(QWidget):
         self._brake_btn.setMaximumHeight(34)
         self._brake_btn.setToolTip(
             "When ON, the D-pad is disabled and WASD does not drive. "
-            "Tap to OFF when you are ready to move (Straight/Turn show a reminder if still ON)."
+            "Tap to OFF when you are ready to move (Straight front/Turn show a reminder if still ON)."
         )
         self._brake_btn.clicked.connect(self._on_brake_toggle)
         bottom_row.addWidget(self._brake_btn)
@@ -610,7 +615,7 @@ class DriveScreen(QWidget):
             QMessageBox.information(
                 self,
                 "Brake engaged",
-                "Release the brake (Brake: OFF) before running Straight or Straight back.",
+                "Release the brake (Brake: OFF) before running Straight front or Straight back.",
             )
             return
         self._drive.ensure_hardware()
@@ -647,7 +652,7 @@ class DriveScreen(QWidget):
                     "Drive hardware did not initialize in time. On the robot, "
                     "confirm the Dynamixel bus (USB cable, NINA_DXL_PORT / baud, "
                     "IDs 12 and 13), and wait for the status pill to show the "
-                    "hoverboard driver connected. Then try Straight or Straight back again.",
+                    "hoverboard driver connected. Then try Straight front or Straight back again.",
                 )
                 self._restore_after_straight_test()
                 return
@@ -656,7 +661,10 @@ class DriveScreen(QWidget):
         self._straight_pending = False
         if self._straight_run_backward:
             self._straight_seq_fwd_dir = "back"
-            self._straight_sequence_spec = _straight_back_sequence_spec()
+            self._straight_sequence_spec = _straight_back_sequence_spec(
+                self._service.settings.hoverboard_axis,
+                use_backward_pulse_bench=self._drive.supports_forward_pulse(),
+            )
         else:
             self._straight_seq_fwd_dir = (
                 "back" if self._drive.state().get("reverse") else "forward"
@@ -689,6 +697,8 @@ class DriveScreen(QWidget):
         self._straight_test_timer.start(ms)
         if d == "forward" and self._drive.supports_forward_pulse():
             self._drive.start_forward_pulse_bench(pct_fwd)
+        elif d == "back" and self._drive.supports_forward_pulse():
+            self._drive.start_backward_pulse_bench(pct_fwd)
         else:
             self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
 
@@ -1033,7 +1043,7 @@ class DriveScreen(QWidget):
             if self._straight_pending:
                 self._manual_hint.setText(
                     "Connecting to motor drivers — keep this screen open "
-                    "(Straight / Straight back will start when ready or show an error)."
+                    "(Straight front / Straight back will start when ready or show an error)."
                 )
             elif dm:
                 self._manual_hint.setText(
@@ -1050,7 +1060,7 @@ class DriveScreen(QWidget):
         elif state["brake"]:
             self._manual_hint.setText(
                 "Brake is ON — tap Brake: OFF to use the D-pad. "
-                "Straight / Straight back / Turn will pop a reminder if you try while braked."
+                "Straight front / Straight back / Turn will pop a reminder if you try while braked."
             )
             self._manual_hint.show()
         else:
@@ -1059,7 +1069,7 @@ class DriveScreen(QWidget):
         # Autonomy lock takes priority over the brake-lock for D-pad
         # enablement: while autonomy is on, the D-pad stays disabled
         # regardless of the manual brake state. Brake ON also disables
-        # the D-pad (release brake first); Straight / Straight back / Turn stay enabled
+        # the D-pad (release brake first); Straight front / Straight back / Turn stay enabled
         # so their handlers can show an explicit dialog instead of dead clicks.
         if not self._autonomy_is_enabled():
             if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
@@ -1084,7 +1094,7 @@ class DriveScreen(QWidget):
                 self._conn_pill.setToolTip(
                     "Software ready: navigation backend initialised (Jetson GPIO/PWM or bridge).\n"
                     "This does not prove the hubs spin — still need motor supply, EL/DIR/VR wiring, "
-                    "and Brake OFF before D-pad / Straight sends torque.\n\n"
+                    "and Brake OFF before D-pad / Straight front sends torque.\n\n"
                     "Same stack as the GUI, from the repo root:\n"
                     "  PYTHONPATH=. python3 -m nina.app.main nav-bridge-ping\n"
                     "  PYTHONPATH=. python3 -m nina.app.main nav-forward --speed 20 --hold 2\n"

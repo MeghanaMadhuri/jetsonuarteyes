@@ -8,10 +8,11 @@ matches ``NavigationManager`` as used by ``DriveController``, autonomy, and goto
 both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up to
 ``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). Pivots skip this path.
 
-**Forward pulse:** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
-D-pad / bench forward from rest runs ``start_pulse_straight_forward``: a **series** of
-``pulse_series_max`` cycles with a **constant** near-brake lean (``pulse_forward_coast_blend``,
-default **0.2**). Then full brake.
+**Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
+symmetric D-pad / bench **forward** from rest runs ``start_pulse_straight_forward``, and symmetric
+**backward** runs ``start_pulse_straight_backward``: each is ``pulse_series_max`` cycles with a
+**constant** near-brake lean (``pulse_forward_coast_blend`` of brake→that direction’s full lean,
+default **0.2**). ``pulse_series_fwd_sec`` names the main hold for both directions. Then full brake.
 Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
 """
 
@@ -136,12 +137,12 @@ def _straight_prime_tol_ticks() -> int:
 
 
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
-    """Upper-bound seconds for ``start_pulse_straight_forward`` until the pulse thread exits.
+    """Upper-bound seconds for ``start_pulse_straight_forward`` / ``start_pulse_straight_backward``.
 
     Includes worst-case straight-line prime (``NINA_HOVER_STRAIGHT_PRIME_SEC`` cap) plus the
-    series loop timing in ``_forward_pulse_loop`` (ramp legs use ``eff_ramp``, then forward hold
-    and coast dwell per pulse). Matches the scheduling model used for the Straight bench default
-    when ``NINA_STRAIGHT_TEST_MS`` is unset.
+    series loop timing (ramp legs use ``eff_ramp``, then ``pulse_series_fwd_sec`` hold and
+    ``pulse_series_coast_initial_sec`` dwell per pulse). Forward and backward series use the same
+    timing model. Matches the Straight / Straight-back bench defaults when test-ms env is unset.
     """
     ramp_sec = max(
         0.0,
@@ -195,7 +196,7 @@ class HoverboardAxisDrive:
         self._brake_left = 2048
         self._brake_right = 2048
         self._is_initialized = False
-        self._forward_pulse_thread: Optional[threading.Thread] = None
+        self._pulse_series_thread: Optional[threading.Thread] = None
         self._pulse_halt = threading.Event()
         self._last_straight_key: Optional[str] = None
 
@@ -286,23 +287,27 @@ class HoverboardAxisDrive:
     def release_brake(self) -> None:
         """Logical brake off; hoverboard lean axes need no extra action here."""
 
-    def _halt_forward_pulse(self, *, wait: bool = True) -> None:
-        """Signal the forward pulse worker to exit and optionally join it."""
+    def _halt_pulse_series(self, *, wait: bool = True) -> None:
+        """Signal the straight pulse-series worker to exit and optionally join it."""
         self._pulse_halt.set()
-        t = self._forward_pulse_thread
+        t = self._pulse_series_thread
         if t is not None and wait and threading.current_thread() is not t:
             t.join(timeout=3.0)
             if t.is_alive():
-                log.warning("Hoverboard forward pulse thread did not exit in time")
-        self._forward_pulse_thread = None
+                log.warning("Hoverboard straight pulse-series thread did not exit in time")
+        self._pulse_series_thread = None
         self._pulse_halt.clear()
 
     def is_forward_pulse_enabled(self) -> bool:
         return bool(getattr(self._axis, "pulse_forward_enabled", False))
 
-    def is_forward_pulse_active(self) -> bool:
-        t = self._forward_pulse_thread
+    def is_straight_pulse_series_active(self) -> bool:
+        t = self._pulse_series_thread
         return t is not None and t.is_alive()
+
+    def is_forward_pulse_active(self) -> bool:
+        """True while a forward or backward straight pulse series thread is running."""
+        return self.is_straight_pulse_series_active()
 
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
         """Forward pulse series for manual D-pad / Straight bench forward (when enabled).
@@ -322,7 +327,7 @@ class HoverboardAxisDrive:
             self.forward(speed_percent)
             return
         sp = max(0, min(100, int(speed_percent)))
-        self._halt_forward_pulse(wait=True)
+        self._halt_pulse_series(wait=True)
         self._prime_straight_neutral()
         self._last_straight_key = "fwd"
         thr = threading.Thread(
@@ -331,10 +336,41 @@ class HoverboardAxisDrive:
             name="nina_hover_fwd_pulse",
             daemon=True,
         )
-        self._forward_pulse_thread = thr
+        self._pulse_series_thread = thr
+        thr.start()
+
+    def start_pulse_straight_backward(self, speed_percent: int) -> None:
+        """Backward pulse series for manual D-pad / Straight bench back (when enabled).
+
+        Same structure as ``start_pulse_straight_forward`` but full lean uses symmetric reverse
+        goals; near-brake pose blends brake toward those goals by ``pulse_forward_coast_blend``.
+        If ``pulse_forward_enabled`` is False, falls back to ``backward()``.
+        """
+        if not self._is_initialized:
+            return
+        if not self.is_forward_pulse_enabled():
+            self.backward(speed_percent)
+            return
+        sp = max(0, min(100, int(speed_percent)))
+        self._halt_pulse_series(wait=True)
+        self._prime_straight_neutral()
+        self._last_straight_key = "back"
+        thr = threading.Thread(
+            target=self._backward_pulse_loop,
+            args=(sp,),
+            name="nina_hover_back_pulse",
+            daemon=True,
+        )
+        self._pulse_series_thread = thr
         thr.start()
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
+        self._symmetric_straight_pulse_loop(speed_pct, forward=True)
+
+    def _backward_pulse_loop(self, speed_pct: int) -> None:
+        self._symmetric_straight_pulse_loop(speed_pct, forward=False)
+
+    def _symmetric_straight_pulse_loop(self, speed_pct: int, *, forward: bool) -> None:
         halt = self._pulse_halt
         brake_goals = {
             self._left_id: self._brake_left,
@@ -377,17 +413,20 @@ class HoverboardAxisDrive:
             ),
         )
 
+        wheel_dir = self.DIR_FORWARD if forward else self.DIR_BACKWARD
         goals = self._goals_for_wheels(
-            left_dir=self.DIR_FORWARD,
+            left_dir=wheel_dir,
             left_speed=speed_pct,
-            right_dir=self.DIR_FORWARD,
+            right_dir=wheel_dir,
             right_speed=speed_pct,
         )
         coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
+        way = "forward" if forward else "backward"
 
         log.info(
-            "hover forward pulse series: n=%s fwd_hold=%.2fs coast_dwell=%.2fs "
-            "transition=%.2fs coast_blend=%.2f | FWD L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
+            "hover straight pulse series (%s): n=%s main_hold=%.2fs coast_dwell=%.2fs "
+            "transition=%.2fs coast_blend=%.2f | lean L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
+            way,
             series_max,
             series_fwd,
             coast_init,
@@ -435,17 +474,17 @@ class HoverboardAxisDrive:
     def _pulse_coast_goals(
         self,
         brake_goals: Dict[int, int],
-        forward_goals: Dict[int, int],
+        drive_goals: Dict[int, int],
         coast_blend: float,
     ) -> Dict[int, int]:
-        """Interpolate brake->forward by *coast_blend*: 0 = full brake, 1 = full forward."""
+        """Interpolate brake→*drive_goals* by *coast_blend* (0 = brake, 1 = full drive lean)."""
         k = max(0.0, min(1.0, float(coast_blend)))
         lid = self._left_id
         rid = self._right_id
         bl = int(brake_goals[lid])
         br = int(brake_goals[rid])
-        fl = int(forward_goals[lid])
-        fr = int(forward_goals[rid])
+        fl = int(drive_goals[lid])
+        fr = int(drive_goals[rid])
         return {
             lid: self._dxl._clamp_pos(int(round(bl + (fl - bl) * k))),
             rid: self._dxl._clamp_pos(int(round(br + (fr - br) * k))),
@@ -708,7 +747,7 @@ class HoverboardAxisDrive:
     def stop(self) -> None:
         if not self._is_initialized:
             return
-        self._halt_forward_pulse(wait=True)
+        self._halt_pulse_series(wait=True)
         self._apply_goals(
             {self._left_id: self._brake_left, self._right_id: self._brake_right}
         )
@@ -877,7 +916,7 @@ class HoverboardAxisDrive:
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
-        self._halt_forward_pulse(wait=True)
+        self._halt_pulse_series(wait=True)
         sk = self._symmetric_straight_key(
             left_dir, left_speed, right_dir, right_speed
         )

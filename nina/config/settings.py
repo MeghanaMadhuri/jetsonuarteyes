@@ -169,12 +169,13 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
-    **Forward pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` is set, ``start_pulse_straight_forward``
-    runs ``pulse_series_max`` cycles: each cycle holds full forward for ``pulse_series_fwd_sec``,
-    then near-brake for ``pulse_series_coast_initial_sec`` (same dwell every pulse). Near-brake **lean**
-    is ``pulse_forward_coast_blend`` (0–1) from brake toward forward, default **0.2** via
-    ``NINA_HOVER_PULSE_COAST_BLEND``. Ramps use
-    ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)`` (each defaults to **0**).
+    **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
+    ``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` each run ``pulse_series_max``
+    cycles toward full forward / full reverse lean respectively, holding the main segment for
+    ``pulse_series_fwd_sec`` (same knob for both directions), then near-brake for
+    ``pulse_series_coast_initial_sec``. Near-brake **lean** is ``pulse_forward_coast_blend`` (0–1)
+    from brake toward that direction’s full lean, default **0.2** via ``NINA_HOVER_PULSE_COAST_BLEND``.
+    Ramps use ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)`` (each defaults to **0**).
     Then servos go to full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
     """
 
