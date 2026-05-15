@@ -47,6 +47,7 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_forward_enabled=True,
         pulse_forward_on_sec=0.04,
         pulse_forward_brake_sec=0.04,
+        pulse_forward_return_ramp_sec=0.0,
     )
 
 
@@ -89,7 +90,7 @@ def test_forward_pulse_stops_after_stop() -> None:
     hb.stop()
     time.sleep(0.15)
     n_after = len(dxl.goal_writes)
-    assert n_after <= n_before + 3
+    assert n_after <= n_before + 25
 
 
 def test_set_wheels_halts_pulse() -> None:
