@@ -172,7 +172,7 @@ class HoverboardAxisSettings:
     **Forward pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` is set, ``start_pulse_straight_forward``
     runs ``pulse_series_max`` cycles: each cycle holds full forward for ``pulse_series_fwd_sec``,
     then near-brake for ``pulse_series_coast_initial_sec`` (same dwell every pulse). Near-brake **lean**
-    is ``pulse_forward_coast_blend`` (0–1) from brake toward forward, default **0.3** via
+    is ``pulse_forward_coast_blend`` (0–1) from brake toward forward, default **0.2** via
     ``NINA_HOVER_PULSE_COAST_BLEND``. Ramps use
     ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)`` (each defaults to **0**).
     Then servos go to full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
@@ -515,7 +515,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_forward_coast_blend=max(
             0.0,
-            min(1.0, _env_float("NINA_HOVER_PULSE_COAST_BLEND", 0.3)),
+            min(1.0, _env_float("NINA_HOVER_PULSE_COAST_BLEND", 0.2)),
         ),
         pulse_forward_sync_present=_env_bool(
             "NINA_HOVER_PULSE_SYNC_PRESENT", False
@@ -537,7 +537,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_waveform=_env_pulse_waveform(),
         pulse_series_max=max(
-            1, min(20, _env_int("NINA_HOVER_PULSE_SERIES_MAX", 8))
+            1, min(20, _env_int("NINA_HOVER_PULSE_SERIES_MAX", 12))
         ),
         pulse_series_fwd_sec=max(
             0.0,

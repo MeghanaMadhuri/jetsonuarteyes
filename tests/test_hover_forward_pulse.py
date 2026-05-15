@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
@@ -13,6 +15,7 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
+    estimate_forward_pulse_series_duration_sec,
 )
 
 
@@ -60,7 +63,7 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_forward_on_sec=0.04,
         pulse_forward_brake_sec=0.04,
         pulse_forward_return_ramp_sec=0.0,
-        pulse_forward_coast_blend=0.3,
+        pulse_forward_coast_blend=0.2,
         pulse_forward_sync_present=False,
         pulse_forward_present_tol_ticks=4,
         pulse_forward_present_step_timeout_sec=0.25,
@@ -73,6 +76,21 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_series_coast_initial_sec=0.01,
         pulse_series_min_transition_sec=0.015,
     )
+
+
+def test_estimate_forward_pulse_series_duration_sec_formula() -> None:
+    axis = replace(
+        _axis_pulse_fast(),
+        pulse_series_max=12,
+        pulse_forward_return_ramp_sec=0.0,
+        pulse_series_min_transition_sec=0.0,
+        pulse_series_fwd_sec=0.9,
+        pulse_series_coast_initial_sec=0.3,
+    )
+    with patch.dict(os.environ, {"NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05"}, clear=False):
+        got = estimate_forward_pulse_series_duration_sec(axis)
+    # prime 0.05 + (1 + 2*12) * eff_ramp(0) + 12 * (0.9 + 0.3) = 0.05 + 14.4
+    assert abs(got - 14.45) < 1e-9
 
 
 def test_forward_pulse_alternates_forward_and_brake() -> None:

@@ -11,7 +11,7 @@ both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up
 **Forward pulse:** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
 D-pad / bench forward from rest runs ``start_pulse_straight_forward``: a **series** of
 ``pulse_series_max`` cycles with a **constant** near-brake lean (``pulse_forward_coast_blend``,
-default **0.3**). Then full brake.
+default **0.2**). Then full brake.
 Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
 """
 
@@ -133,6 +133,37 @@ def _straight_prime_tol_ticks() -> int:
         return max(1, min(512, int(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_TOL_TICKS", "32"))))
     except ValueError:
         return 32
+
+
+def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
+    """Upper-bound seconds for ``start_pulse_straight_forward`` until the pulse thread exits.
+
+    Includes worst-case straight-line prime (``NINA_HOVER_STRAIGHT_PRIME_SEC`` cap) plus the
+    series loop timing in ``_forward_pulse_loop`` (ramp legs use ``eff_ramp``, then forward hold
+    and coast dwell per pulse). Matches the scheduling model used for the Straight bench default
+    when ``NINA_STRAIGHT_TEST_MS`` is unset.
+    """
+    ramp_sec = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_forward_return_ramp_sec", 0.0))),
+    )
+    min_trans = max(
+        0.0,
+        min(2.0, float(getattr(axis, "pulse_series_min_transition_sec", 0.0))),
+    )
+    eff_ramp = min(5.0, max(ramp_sec, min_trans))
+    n = max(1, min(20, int(getattr(axis, "pulse_series_max", 12))))
+    series_fwd = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_series_fwd_sec", 0.9))),
+    )
+    coast_init = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_series_coast_initial_sec", 0.30))),
+    )
+    prime = _straight_prime_timeout_sec()
+    pulse_body = (1.0 + 2.0 * float(n)) * eff_ramp + float(n) * (series_fwd + coast_init)
+    return prime + pulse_body
 
 
 class HoverboardAxisDrive:
@@ -278,7 +309,7 @@ class HoverboardAxisDrive:
 
         Runs ``pulse_series_max`` cycles: each cycle ramps from the prior near-brake pose to
         full forward, holds forward for ``pulse_series_fwd_sec``, ramps back to a **fixed**
-        near-brake pose (``pulse_forward_coast_blend`` of the brake→forward span, default **0.3**).
+        near-brake pose (``pulse_forward_coast_blend`` of the brake→forward span, default **0.2**).
         Dwell at that near-brake for ``pulse_series_coast_initial_sec`` each cycle (constant).
         Transition times use ``max(pulse_forward_return_ramp_sec,
         pulse_series_min_transition_sec)``. After the last cycle, servos command **full brake**.
@@ -325,7 +356,7 @@ class HoverboardAxisDrive:
         )
         eff_ramp = min(5.0, max(ramp_sec, min_trans))
 
-        series_max = int(getattr(self._axis, "pulse_series_max", 8))
+        series_max = int(getattr(self._axis, "pulse_series_max", 12))
         series_max = max(1, min(20, series_max))
         series_fwd = max(
             0.0,
@@ -342,7 +373,7 @@ class HoverboardAxisDrive:
             0.0,
             min(
                 1.0,
-                float(getattr(self._axis, "pulse_forward_coast_blend", 0.3)),
+                float(getattr(self._axis, "pulse_forward_coast_blend", 0.2)),
             ),
         )
 

@@ -28,9 +28,15 @@ Two input modes are supported:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from typing import TYPE_CHECKING, List, Optional, Tuple
+
+from nina.config.settings import HoverboardAxisSettings
+from nina.controllers.hoverboard_axis_drive import (
+    estimate_forward_pulse_series_duration_sec,
+)
 
 if TYPE_CHECKING:
     from sirena_ui.workers.autonomy_controller import AutonomyController
@@ -73,7 +79,9 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
-# Bench / field check: drive straight for NINA_STRAIGHT_TEST_MS (default 20 s), then stop.
+# Bench / field check: drive straight for NINA_STRAIGHT_TEST_MS, then stop. When unset and
+# forward pulse is active, duration matches ``estimate_forward_pulse_series_duration_sec`` (+ slack);
+# otherwise default 20 s.
 # PWM: NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_READY_POLL_MS = 50
 STRAIGHT_READY_MAX_POLLS = 100
@@ -100,7 +108,9 @@ def _straight_test_speed_pct() -> int:
     return straight_bench_speed_pct()
 
 
-def _straight_sequence_spec() -> List[Tuple[str, int]]:
+def _straight_sequence_spec(
+    axis: HoverboardAxisSettings, *, use_forward_pulse_bench: bool
+) -> List[Tuple[str, int]]:
     """Single forward segment: (\"fwd\", duration_ms)."""
     raw = (os.environ.get("NINA_STRAIGHT_TEST_MS") or "").strip()
     if not raw:
@@ -110,6 +120,9 @@ def _straight_sequence_spec() -> List[Tuple[str, int]]:
             ms = int(raw)
         except ValueError:
             ms = 20_000
+    elif use_forward_pulse_bench:
+        est_sec = estimate_forward_pulse_series_duration_sec(axis)
+        ms = min(120_000, max(100, int(math.ceil(est_sec * 1000.0)) + 200))
     else:
         ms = 20_000
     ms = max(100, min(120_000, ms))
@@ -415,14 +428,15 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.setSpacing(6)
-        self._straight_test_btn = QPushButton("Straight 20s")
+        self._straight_test_btn = QPushButton("Straight")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drives straight for NINA_STRAIGHT_TEST_MS (default 20 s; legacy: NINA_STRAIGHT_SEQ_FWD1_MS) "
-            "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Respects Reverse. "
+            "Drives straight for NINA_STRAIGHT_TEST_MS (legacy: NINA_STRAIGHT_SEQ_FWD1_MS), or if those "
+            "are unset and hover forward pulse is on, for roughly one full pulse series plus margin. "
+            "Otherwise default 20 s. Speed: NINA_STRAIGHT_TEST_SPEED_PCT. Respects Reverse. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
             "Turn off autonomous mode and release the brake first."
         )
@@ -647,7 +661,14 @@ class DriveScreen(QWidget):
             self._straight_seq_fwd_dir = (
                 "back" if self._drive.state().get("reverse") else "forward"
             )
-            self._straight_sequence_spec = _straight_sequence_spec()
+            bench_pulse = (
+                self._straight_seq_fwd_dir == "forward"
+                and self._drive.supports_forward_pulse()
+            )
+            self._straight_sequence_spec = _straight_sequence_spec(
+                self._service.settings.hoverboard_axis,
+                use_forward_pulse_bench=bench_pulse,
+            )
         self._straight_seq_index = -1
         self._apply_straight_sequence_segment(0)
         self.setFocus()
