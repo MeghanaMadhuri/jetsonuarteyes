@@ -64,7 +64,9 @@ if [[ "${FULL}" -eq 1 ]]; then
 else
     say "pip install OpenCV + ultralytics (YOLO object detection only)"
     "${PIP}" install -U pip setuptools wheel
-    "${PIP}" install 'opencv-python-headless>=4.5.4' 'numpy>=1.20'
+    say "remove opencv-python wheels that bundle Qt (breaks PyQt5 kiosk)"
+    "${PIP}" uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
+    "${PIP}" install --force-reinstall 'opencv-python-headless>=4.5.4' 'numpy>=1.20'
     if ! "${PIP}" install 'ultralytics>=8.0.0'; then
         bad "ultralytics install failed (often wrong/missing PyTorch on Jetson)."
         echo ""
@@ -82,6 +84,12 @@ if ! "${PY}" -c "from ultralytics import YOLO; print('ultralytics', YOLO)"; then
     exit 1
 fi
 ok "ultralytics imports in ${PY}"
+
+_cv2_qt="$("${PY}" -c "import os, cv2; print(os.path.join(os.path.dirname(cv2.__file__), 'qt'))" 2>/dev/null || true)"
+if [[ -n "${_cv2_qt}" && -d "${_cv2_qt}" ]]; then
+    warn "cv2 still has a qt/ tree (can crash the GUI) — removing ${_cv2_qt}"
+    rm -rf "${_cv2_qt}"
+fi
 
 echo ""
 ok "Vision/YOLO deps ready. Restart the kiosk:"
