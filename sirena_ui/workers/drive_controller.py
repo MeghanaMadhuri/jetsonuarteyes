@@ -1142,4 +1142,8 @@ class DriveController(QObject):
     def _emit_state(self) -> None:
         with self._lock:
             snapshot = dict(self._state)
+        last = getattr(self, "_last_emitted_state", None)
+        if last == snapshot:
+            return
+        self._last_emitted_state = snapshot
         self.state_changed.emit(snapshot)

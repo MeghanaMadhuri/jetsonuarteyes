@@ -30,7 +30,10 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from sirena_ui.workers.autonomy_controller import AutonomyController
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
@@ -75,6 +78,23 @@ _KEY_TO_DIRECTION = {
 STRAIGHT_READY_POLL_MS = 50
 STRAIGHT_READY_MAX_POLLS = 100
 
+# Drive-only tuning (Jetson kiosk). Face inference is expensive — off unless enabled.
+_DRIVE_CAMERA_LIVE = os.environ.get("NINA_DRIVE_CAMERA_LIVE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+_DRIVE_FACE_GREET = os.environ.get("NINA_DRIVE_FACE_GREET", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+_DRIVE_CAM_MAX_W = max(160, int(os.environ.get("NINA_DRIVE_CAM_MAX_W", "480")))
+_DRIVE_DEFER_HEAVY_MS = max(0, int(os.environ.get("NINA_DRIVE_DEFER_HEAVY_MS", "50")))
+_STATE_RENDER_COALESCE_MS = max(16, int(os.environ.get("NINA_DRIVE_STATE_COALESCE_MS", "50")))
+
 
 def _straight_test_speed_pct() -> int:
     return straight_bench_speed_pct()
@@ -117,9 +137,17 @@ class DriveScreen(QWidget):
         super().__init__(parent)
         self._service = service
         self._drive = service.drive
-        self._autonomy = service.autonomy
-        self._drive.state_changed.connect(self._render_state)
-        self._autonomy.enabled_changed.connect(self._on_autonomy_enabled)
+        self._autonomy: Optional["AutonomyController"] = None
+        self._drive_face_was_enabled = False
+        self._pending_state: Optional[dict] = None
+        self._state_coalesce_timer = QTimer(self)
+        self._state_coalesce_timer.setSingleShot(True)
+        self._state_coalesce_timer.setInterval(_STATE_RENDER_COALESCE_MS)
+        self._state_coalesce_timer.timeout.connect(self._apply_pending_state)
+        self._defer_heavy_timer = QTimer(self)
+        self._defer_heavy_timer.setSingleShot(True)
+        self._defer_heavy_timer.timeout.connect(self._deferred_on_enter_heavy)
+        self._drive.state_changed.connect(self._queue_render_state)
 
         # Accept keyboard focus so WASD/Space/Esc reach keyPressEvent
         # even when the user hasn't clicked into a child widget.
@@ -127,8 +155,10 @@ class DriveScreen(QWidget):
         self._kb_active_key: Optional[int] = None
         self._cam_preview_last_ms: float = 0.0
         self._cam_preview_min_interval_ms = float(
-            os.environ.get("NINA_DRIVE_CAM_PREVIEW_MS", "66")
+            os.environ.get("NINA_DRIVE_CAM_PREVIEW_MS", "100")
         )
+        self._cam_scaled_cache: Optional[QPixmap] = None
+        self._cam_scaled_key: Optional[tuple[int, int, int]] = None
 
         self._straight_test_timer = QTimer(self)
         self._straight_test_timer.setSingleShot(True)
@@ -196,7 +226,22 @@ class DriveScreen(QWidget):
         body.addWidget(_ctrl_scroll, stretch=45)
 
         # Push initial state into the HUD / pills.
-        self._render_state(self._drive.state())
+        self._queue_render_state(self._drive.state())
+
+    def _autonomy_ctrl(self) -> "AutonomyController":
+        """Lazy — do not construct AutonomyController/Slam until Drive needs it."""
+        if self._autonomy is None:
+            self._autonomy = self._service.autonomy
+            self._autonomy.enabled_changed.connect(
+                self._on_autonomy_enabled, type=Qt.UniqueConnection
+            )
+        return self._autonomy
+
+    def _autonomy_is_enabled(self) -> bool:
+        """Check autonomy without constructing AutonomyController on every state tick."""
+        if self._autonomy is not None:
+            return self._autonomy.is_enabled()
+        return self._autonomy_btn.isChecked()
 
     def _connect_vision_frame_preview(self) -> None:
         try:
@@ -540,7 +585,7 @@ class DriveScreen(QWidget):
     def _begin_straight_bench_run(self, *, backward: bool) -> None:
         if self._straight_test_timer.isActive() or self._straight_pending:
             return
-        if self._autonomy.is_enabled():
+        if self._autonomy_ctrl().is_enabled():
             QMessageBox.warning(
                 self,
                 "Autonomous mode",
@@ -645,7 +690,7 @@ class DriveScreen(QWidget):
         self._straight_seq_index = -1
         self._straight_pending = False
         self._straight_run_backward = False
-        if not self._autonomy.is_enabled():
+        if not self._autonomy_ctrl().is_enabled():
             self._straight_test_btn.setEnabled(True)
             self._straight_back_test_btn.setEnabled(True)
             st = self._drive.state()
@@ -671,7 +716,7 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def _on_turn_90_clicked(self, which: str) -> None:
-        if self._autonomy.is_enabled():
+        if self._autonomy_ctrl().is_enabled():
             QMessageBox.warning(
                 self,
                 "Autonomous mode",
@@ -691,7 +736,7 @@ class DriveScreen(QWidget):
 
     def _on_autonomy_toggle(self, on: bool) -> None:
         try:
-            self._autonomy.set_enabled(on)
+            self._autonomy_ctrl().set_enabled(on)
         except Exception as exc:
             QMessageBox.critical(
                 self,
@@ -745,52 +790,54 @@ class DriveScreen(QWidget):
         # update here. The title-row pill conveys the same state.
 
     def on_enter(self) -> None:
-        """Lazily initialise the BLDC drivers the first time the user
-        opens the Drive screen. Re-entry is cheap; the controller
-        dedupes inside its worker."""
-        # Motion calibration save updates NinaService settings in place; keep
-        # the same DriveController the screen was constructed with.
+        """Refresh drive handle and defer BLDC/camera work so the screen paints first."""
         self._drive = self._service.drive
-        # Bus init runs async from MainWindow; only block here if still pending.
-        if not self._service.bus_ready:
-            try:
-                self._service.ensure_bus()
-            except Exception as exc:
-                log.warning("ensure_bus before drive init failed: %s", exc)
+        self._queue_render_state(self._drive.state())
+        self.setFocus()
+        if self._defer_heavy_timer.isActive():
+            self._defer_heavy_timer.stop()
+        self._defer_heavy_timer.start(_DRIVE_DEFER_HEAVY_MS)
+
+    def _deferred_on_enter_heavy(self) -> None:
+        if not self.isVisible():
+            return
         self._drive.ensure_hardware()
-        # Reflect the current autonomy state in case the user toggled
-        # it from the Map screen.
-        self._on_autonomy_enabled(self._autonomy.is_enabled())
-        # Bring the live RGB feed up. We acquire ONCE for the lifetime
-        # of the screen - the operator picked "always live" so the
-        # cleanest contract is: as soon as Drive has been opened, the
-        # camera is on; it goes off only on app shutdown
-        # (NinaService.shutdown -> VisionWorker.shutdown). The
-        # refcount means a Vision-tab on_leave doesn't tear down our
-        # feed.
+        self._on_autonomy_enabled(self._autonomy_ctrl().is_enabled())
+        if not _DRIVE_CAMERA_LIVE:
+            return
         if not self._vision_acquired:
             try:
                 self._service.vision.acquire()
                 self._vision_acquired = True
             except Exception:
                 pass
-        # Recognise enrolled faces on the front camera (greeting is wired
-        # in NinaService). Vision on_leave disables detectors; turn face
-        # back on here so Drive still says "Hello <name>".
-        try:
-            self._service.vision.set_face_enabled(True)
-        except Exception:
-            pass
-        # Same policy as Vision: fresh face-recognition greetings when
-        # this screen takes the live feed (Drive shares VisionWorker).
-        self._service.reset_face_greet_cooldown()
+        vision = self._service.vision
+        if _DRIVE_FACE_GREET:
+            try:
+                vision.set_face_enabled(True)
+                self._drive_face_was_enabled = True
+            except Exception:
+                pass
+            self._service.reset_face_greet_cooldown()
+        else:
+            try:
+                vision.set_face_enabled(False)
+            except Exception:
+                pass
         self._connect_vision_frame_preview()
-        # Grab focus so WASD/Space/Esc reach our key handlers without
-        # the user having to click into the screen body first.
-        self.setFocus()
 
     def on_leave(self) -> None:
+        if self._defer_heavy_timer.isActive():
+            self._defer_heavy_timer.stop()
+        self._state_coalesce_timer.stop()
+        self._pending_state = None
         self._disconnect_vision_frame_preview()
+        if self._drive_face_was_enabled:
+            try:
+                self._service.vision.set_face_enabled(False)
+            except Exception:
+                pass
+            self._drive_face_was_enabled = False
         if self._straight_test_timer.isActive():
             self._finish_straight_test()
         elif self._straight_pending:
@@ -810,15 +857,28 @@ class DriveScreen(QWidget):
         if self._cam_placeholder is not None and self._cam_placeholder.isVisible():
             self._cam_placeholder.hide()
             feed.show()
+        if image.width() > _DRIVE_CAM_MAX_W:
+            image = image.scaledToWidth(_DRIVE_CAM_MAX_W, Qt.FastTransformation)
         target = feed.size()
-        if target.width() <= 0 or target.height() <= 0:
+        tw, th = target.width(), target.height()
+        if tw <= 0 or th <= 0:
             feed.setPixmap(QPixmap.fromImage(image))
+            return
+        cache_key = (tw, th, image.width(), image.height(), image.cacheKey())
+        if (
+            self._cam_scaled_cache is not None
+            and not self._cam_scaled_cache.isNull()
+            and cache_key == self._cam_scaled_key
+        ):
+            feed.setPixmap(self._cam_scaled_cache)
             return
         pix = QPixmap.fromImage(image).scaled(
             target,
             Qt.KeepAspectRatio,
             Qt.FastTransformation,
         )
+        self._cam_scaled_key = cache_key
+        self._cam_scaled_cache = pix
         feed.setPixmap(pix)
 
     def _on_camera_status(self, status: dict) -> None:
@@ -852,7 +912,7 @@ class DriveScreen(QWidget):
         # worker queue with duplicate drive commands.
         if event.isAutoRepeat():
             return
-        if self._autonomy.is_enabled():
+        if self._autonomy_is_enabled():
             super().keyPressEvent(event)
             return
 
@@ -920,6 +980,16 @@ class DriveScreen(QWidget):
             return
         super().keyReleaseEvent(event)
 
+    def _queue_render_state(self, state: dict) -> None:
+        self._pending_state = state
+        if not self._state_coalesce_timer.isActive():
+            self._state_coalesce_timer.start()
+
+    def _apply_pending_state(self) -> None:
+        state = self._pending_state
+        if state is not None:
+            self._render_state(state)
+
     def _render_state(self, state: dict) -> None:
         # Keep the brake pill aligned with DriveController (autonomy may toggle brake in software).
         br = bool(state.get("brake", True))
@@ -933,7 +1003,7 @@ class DriveScreen(QWidget):
         self._hud_distance._value_label.setText(f"{state['distance_m']:.1f} m")
 
         dm = str(state.get("driver_message") or "").strip()
-        if self._autonomy.is_enabled():
+        if self._autonomy_is_enabled():
             self._manual_hint.hide()
         elif not state["connected"]:
             if self._straight_pending:
@@ -967,7 +1037,7 @@ class DriveScreen(QWidget):
         # regardless of the manual brake state. Brake ON also disables
         # the D-pad (release brake first); Straight / Straight back / Turn stay enabled
         # so their handlers can show an explicit dialog instead of dead clicks.
-        if not self._autonomy.is_enabled():
+        if not self._autonomy_is_enabled():
             if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
                 self._dpad.set_enabled(False)
                 self._turn_90_left_btn.setEnabled(False)
@@ -983,26 +1053,32 @@ class DriveScreen(QWidget):
         if len(display_msg) > 96:
             display_msg = display_msg[:93] + "..."
 
+        conn_key = (bool(state["connected"]), message_raw)
+        if conn_key != getattr(self, "_conn_pill_key", None):
+            self._conn_pill_key = conn_key
+            if state["connected"]:
+                self._conn_pill.setToolTip(
+                    "Software ready: navigation backend initialised (Jetson GPIO/PWM or bridge).\n"
+                    "This does not prove the hubs spin — still need motor supply, EL/DIR/VR wiring, "
+                    "and Brake OFF before D-pad / Straight sends torque.\n\n"
+                    "Same stack as the GUI, from the repo root:\n"
+                    "  PYTHONPATH=. python3 -m nina.app.main nav-bridge-ping\n"
+                    "  PYTHONPATH=. python3 -m nina.app.main nav-forward --speed 20 --hold 2\n"
+                    "Local wiring twitch (multimeter / scope on PWM VR):\n"
+                    "  PYTHONPATH=. python3 -m nina.app.main nav-test-pin --pin 12 --mode pwm "
+                    "--duty 15 --hold 3"
+                    "\n(use your configured left-PWM BCM from NINA_NAV_* if not 12)"
+                )
+            elif message_raw:
+                self._conn_pill.setToolTip(message_raw)
+            else:
+                self._conn_pill.setToolTip("")
         if state["connected"]:
             self._conn_pill.setText(message_raw or "BLDC connected")
-            self._conn_pill.setToolTip(
-                "Software ready: navigation backend initialised (Jetson GPIO/PWM or bridge).\n"
-                "This does not prove the hubs spin — still need motor supply, EL/DIR/VR wiring, "
-                "and Brake OFF before D-pad / Straight sends torque.\n\n"
-                "Same stack as the GUI, from the repo root:\n"
-                "  PYTHONPATH=. python3 -m nina.app.main nav-bridge-ping\n"
-                "  PYTHONPATH=. python3 -m nina.app.main nav-forward --speed 20 --hold 2\n"
-                "Local wiring twitch (multimeter / scope on PWM VR):\n"
-                "  PYTHONPATH=. python3 -m nina.app.main nav-test-pin --pin 12 --mode pwm "
-                "--duty 15 --hold 3"
-                "\n(use your configured left-PWM BCM from NINA_NAV_* if not 12)"
-            )
             self._conn_pill.set_kind(Pill.KIND_OK)
         elif message_raw:
             self._conn_pill.setText(display_msg or "BLDC error")
-            self._conn_pill.setToolTip(message_raw)
             self._conn_pill.set_kind(Pill.KIND_WARN)
         else:
             self._conn_pill.setText("BLDC not connected")
-            self._conn_pill.setToolTip("")
             self._conn_pill.set_kind(Pill.KIND_NEUTRAL)
