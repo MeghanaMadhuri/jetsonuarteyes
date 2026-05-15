@@ -98,6 +98,28 @@ class FakeNav:
         self.calls.append(("set_wheels", kwargs))
 
 
+class FakeNavForwardPulse(FakeNav):
+    """Minimal nav with hoverboard forward-pulse API (tests pulse wiring)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pulse_active = False
+
+    def is_forward_pulse_enabled(self) -> bool:
+        return True
+
+    def is_forward_pulse_active(self) -> bool:
+        return self._pulse_active
+
+    def start_pulse_straight_forward(self, speed_percent: int) -> None:
+        self.calls.append(("start_pulse_straight_forward", int(speed_percent)))
+        self._pulse_active = True
+
+    def stop(self) -> None:
+        self._pulse_active = False
+        super().stop()
+
+
 def _make_controller(nav: FakeNav, default_speed: int = 15):
     """Spawn a DriveController with the FakeNav injected. Importing
     inside the helper keeps the (slow) PyQt5 import out of the test
@@ -440,6 +462,34 @@ def test_drive_from_stop_kicks_then_cruises_low(
             last2["right_speed"]
             == dc.FIXED_MANUAL_DRIVE_SPEED_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
         )
+    finally:
+        ctrl.shutdown()
+
+
+def test_forward_drive_uses_pulse_and_skips_heartbeat_drive_state(
+    isolate_polarity_dir: Path,
+) -> None:
+    """D-pad forward from stop uses start_pulse_straight_forward; _active_drive
+    stays None so heartbeat does not replay set_wheels over the pulse thread."""
+    nav = FakeNavForwardPulse()
+    ctrl = _make_controller(nav, default_speed=12)
+    try:
+        ctrl.ensure_hardware()
+        assert _wait_for(lambda: nav.brake_engaged)
+        ctrl.set_brake(False)
+        assert _wait_for(lambda: not nav.brake_engaged)
+        ctrl.drive("forward")
+        assert _wait_for(
+            lambda: any(c[0] == "start_pulse_straight_forward" for c in nav.calls)
+        )
+        assert getattr(ctrl, "_active_drive") is None
+        dc_calls = [c for c in nav.calls if c[0] == "drive_continuous"]
+        assert dc_calls == []
+        pulse_calls = [
+            c for c in nav.calls if c[0] == "start_pulse_straight_forward"
+        ]
+        assert len(pulse_calls) == 1
+        assert pulse_calls[0][1] == 11  # FIXED_MANUAL_DRIVE_SPEED_PCT for default_speed 12->clamp
     finally:
         ctrl.shutdown()
 

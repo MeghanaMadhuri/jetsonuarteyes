@@ -75,6 +75,8 @@ class HoverboardAxisDrive:
         self._brake_left = 2048
         self._brake_right = 2048
         self._is_initialized = False
+        self._forward_pulse_thread: Optional[threading.Thread] = None
+        self._pulse_halt = threading.Event()
 
     # ------------------------------------------------------------------
     def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
@@ -162,9 +164,75 @@ class HoverboardAxisDrive:
     def release_brake(self) -> None:
         """Logical brake off; hoverboard lean axes need no extra action here."""
 
+    def _halt_forward_pulse(self, *, wait: bool = True) -> None:
+        """Signal the forward pulse worker to exit and optionally join it."""
+        self._pulse_halt.set()
+        t = self._forward_pulse_thread
+        if t is not None and wait and threading.current_thread() is not t:
+            t.join(timeout=3.0)
+            if t.is_alive():
+                log.warning("Hoverboard forward pulse thread did not exit in time")
+        self._forward_pulse_thread = None
+        self._pulse_halt.clear()
+
+    def is_forward_pulse_enabled(self) -> bool:
+        return bool(getattr(self._axis, "pulse_forward_enabled", False))
+
+    def is_forward_pulse_active(self) -> bool:
+        t = self._forward_pulse_thread
+        return t is not None and t.is_alive()
+
+    def start_pulse_straight_forward(self, speed_percent: int) -> None:
+        """Alternate symmetric forward lean (calibrated FWD) with brake goals.
+
+        Intended for manual D-pad / Straight 10s forward only. Cancelled by
+        ``stop()`` / ``emergency_stop()`` / any ``set_wheels`` / ``drive_continuous``.
+        If ``pulse_forward_enabled`` is False, falls back to ``forward()``.
+        """
+        if not self._is_initialized:
+            return
+        if not self.is_forward_pulse_enabled():
+            self.forward(speed_percent)
+            return
+        sp = max(0, min(100, int(speed_percent)))
+        self._halt_forward_pulse(wait=True)
+        thr = threading.Thread(
+            target=self._forward_pulse_loop,
+            args=(sp,),
+            name="nina_hover_fwd_pulse",
+            daemon=True,
+        )
+        self._forward_pulse_thread = thr
+        thr.start()
+
+    def _forward_pulse_loop(self, speed_pct: int) -> None:
+        halt = self._pulse_halt
+        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 1.0))
+        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 1.0))
+        fwd_sec = max(0.05, min(10.0, fwd_sec))
+        brk_sec = max(0.05, min(10.0, brk_sec))
+        brake_goals = {
+            self._left_id: self._brake_left,
+            self._right_id: self._brake_right,
+        }
+        while not halt.is_set():
+            goals = self._goals_for_wheels(
+                left_dir=self.DIR_FORWARD,
+                left_speed=speed_pct,
+                right_dir=self.DIR_FORWARD,
+                right_speed=speed_pct,
+            )
+            self._apply_goals(goals)
+            if halt.wait(timeout=fwd_sec):
+                break
+            self._apply_goals(brake_goals)
+            if halt.wait(timeout=brk_sec):
+                break
+
     def stop(self) -> None:
         if not self._is_initialized:
             return
+        self._halt_forward_pulse(wait=True)
         self._apply_goals(
             {self._left_id: self._brake_left, self._right_id: self._brake_right}
         )
@@ -282,6 +350,7 @@ class HoverboardAxisDrive:
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
+        self._halt_forward_pulse(wait=True)
         goals = self._goals_for_wheels(
             left_dir=left_dir,
             left_speed=left_speed,

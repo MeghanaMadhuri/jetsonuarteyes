@@ -26,6 +26,16 @@ def _env_sign(name: str, default: int) -> int:
     return -1 if _env_int(name, default) < 0 else 1
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(str(raw).strip())
+    except ValueError:
+        return default
+
+
 # Upper bound for breakaway timing (seconds). Longer holds behave like
 # sustained drive at kick duty, not a start pulse. Env/clamped values
 # cannot exceed this.
@@ -127,10 +137,16 @@ class HoverboardAxisSettings:
     ID **13** +15 from 2068); straight backward uses ``NINA_HOVER_REV_POS_*``
     (defaults 2068 / 2028). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
-    ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI ``Turn left`` / ``Turn right`` and
-    D-pad pivots match this Nina hoverboard mount; set ``NINA_HOVER_SWAP_TURN_LR=0``
-    if yaw sense is reversed. ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
+    ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI pivots match this mount;
+    set ``NINA_HOVER_SWAP_TURN_LR=0`` if yaw sense is reversed.
+    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
+
+    Optional **forward pulse** (manual D-pad forward + Straight 10s forward only):
+    ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
+    to disable) enables alternating calibrated **forward**
+    lean with **brake** goals at ``NINA_HOVER_PULSE_FWD_SEC`` /
+    ``NINA_HOVER_PULSE_BRAKE_SEC`` (default 1.0 s each, clamped 0.05–10).
     """
 
     id_left: int
@@ -147,6 +163,9 @@ class HoverboardAxisSettings:
     moving_speed: int
     sign_left: int
     sign_right: int
+    pulse_forward_enabled: bool
+    pulse_forward_on_sec: float
+    pulse_forward_brake_sec: float
 
 
 @dataclass(frozen=True)
@@ -395,6 +414,13 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
+        pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
+        pulse_forward_on_sec=max(
+            0.05, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 1.0))
+        ),
+        pulse_forward_brake_sec=max(
+            0.05, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 1.0))
+        ),
     )
 
     from nina.config.hover_calibration import (  # noqa: PLC0415 — after HoverboardAxisSettings

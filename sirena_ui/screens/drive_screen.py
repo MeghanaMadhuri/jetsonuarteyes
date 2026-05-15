@@ -664,9 +664,12 @@ class DriveScreen(QWidget):
         _, ms = spec[index]
         pct_fwd = _straight_test_speed_pct()
         d = self._straight_seq_fwd_dir
-        self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
         self._straight_seq_index = index
         self._straight_test_timer.start(ms)
+        if d == "forward" and self._drive.supports_forward_pulse():
+            self._drive.start_forward_pulse_bench(pct_fwd)
+        else:
+            self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
 
     def _on_straight_sequence_timer(self) -> None:
         self._straight_test_timer.stop()
