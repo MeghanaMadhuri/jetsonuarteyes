@@ -473,7 +473,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_forward_return_ramp_sec=max(
             0.0,
-            min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 0.75)),
+            min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 1.0)),
         ),
         pulse_forward_coast_blend=max(
             0.0,

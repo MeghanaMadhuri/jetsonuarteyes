@@ -273,7 +273,7 @@ class HoverboardAxisDrive:
         fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 0.0))
         brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 0.0))
         ramp_sec = float(
-            getattr(self._axis, "pulse_forward_return_ramp_sec", 0.75)
+            getattr(self._axis, "pulse_forward_return_ramp_sec", 1.0)
         )
         fwd_sec = max(0.0, min(10.0, fwd_sec))
         brk_sec = max(0.0, min(10.0, brk_sec))
