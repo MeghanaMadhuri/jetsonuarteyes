@@ -18,6 +18,8 @@ from nina.controllers.dynamixel_manager import DynamixelManager
 log = logging.getLogger("nina.hoverboard_axis")
 
 _POS_SPAN_DEG = 300.0
+# Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
+_STRAIGHT_FWD_EXTRA_TICKS = 5
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
@@ -229,8 +231,20 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            fl = self._dxl._clamp_pos(int(self._axis.forward_pos_left))
-            fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
+            fl = self._dxl._clamp_pos(
+                _nudge_goal_from_brake(
+                    int(self._axis.forward_pos_left),
+                    nl,
+                    _STRAIGHT_FWD_EXTRA_TICKS,
+                )
+            )
+            fr = self._dxl._clamp_pos(
+                _nudge_goal_from_brake(
+                    int(self._axis.forward_pos_right),
+                    nr,
+                    _STRAIGHT_FWD_EXTRA_TICKS,
+                )
+            )
             return {self._left_id: fl, self._right_id: fr}
 
         lb = left_dir == self.DIR_BACKWARD
