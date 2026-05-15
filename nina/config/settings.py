@@ -144,11 +144,11 @@ class HoverboardAxisSettings:
 
     Optional **forward pulse** (manual D-pad forward + Straight 10s forward only):
     ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
-    to disable) cycles eased transitions brake↔forward over
-    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **1.5** s each way; ``0`` = snap),
-    hold at forward ``NINA_HOVER_PULSE_FWD_SEC`` (default **2.5** s), dwell at brake
-    ``NINA_HOVER_PULSE_BRAKE_SEC`` (default **1.0** s). Ramp uses smoothstep easing when
-    duration > 0 (clamped 0–10 s).
+    to disable) alternates **linear** brake↔forward ramps over
+    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **1.5** s each way; ``0`` = snap; 0–10 s).
+    Optional hold at forward ``NINA_HOVER_PULSE_FWD_SEC`` (default **2.5** s; ``0`` = continuous)
+    and at brake ``NINA_HOVER_PULSE_BRAKE_SEC`` (default **1.0** s; ``0`` = none). Both servos use
+    the same ramp timing and integer lerp so shorter-travel axes (e.g. ID 12) still step every cycle.
     """
 
     id_left: int
@@ -419,10 +419,10 @@ def load_settings(repo_root: Path) -> NinaSettings:
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
         pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
         pulse_forward_on_sec=max(
-            0.05, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.5))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.5))
         ),
         pulse_forward_brake_sec=max(
-            0.05, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 1.0))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 1.0))
         ),
         pulse_forward_return_ramp_sec=max(
             0.0, min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 1.5))

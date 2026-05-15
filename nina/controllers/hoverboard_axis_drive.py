@@ -20,10 +20,11 @@ log = logging.getLogger("nina.hoverboard_axis")
 _POS_SPAN_DEG = 300.0
 
 
-def _smoothstep01(t: float) -> float:
-    """Hermite smoothstep on [0, 1] for eased servo ramps (gentle start/stop)."""
-    t = max(0.0, min(1.0, float(t)))
-    return t * t * (3.0 - 2.0 * t)
+def _lerp_int_pos(a: int, b: int, step: int, n: int) -> int:
+    """Linearly blend *a*→*b* over *n* steps; *step* in ``1..n`` (integer math, monotonic)."""
+    if n <= 0:
+        return b
+    return int(a + (b - a) * step // n)
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
@@ -191,10 +192,11 @@ class HoverboardAxisDrive:
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
         """Alternate symmetric forward lean (calibrated FWD) with brake goals.
 
-        Each cycle: eased ramp brake→forward, hold ``pulse_forward_on_sec`` at
-        forward, eased ramp forward→brake, dwell ``pulse_forward_brake_sec`` at
-        brake. Transition time both ways is ``pulse_forward_return_ramp_sec``
-        (``0`` = snap; uses smoothstep easing when > 0).
+        Each cycle: **linear** ramp brake→forward (``ramp_sec``), optional hold
+        ``pulse_forward_on_sec`` at forward (``0`` = none), same-duration ramp
+        forward→brake, optional dwell ``pulse_forward_brake_sec`` at brake (``0`` = none).
+        Both axes use the same step count and timing so ID12/13 stay phase-locked; goals
+        come from ``forward_pos_*`` / brake (calibration defaults 2023/2083 forward).
 
         Intended for manual D-pad / Straight 10s forward only. Cancelled by
         ``stop()`` / ``emergency_stop()`` / any ``set_wheels`` / ``drive_continuous``.
@@ -223,13 +225,19 @@ class HoverboardAxisDrive:
         ramp_sec = float(
             getattr(self._axis, "pulse_forward_return_ramp_sec", 1.5)
         )
-        fwd_sec = max(0.05, min(10.0, fwd_sec))
-        brk_sec = max(0.05, min(10.0, brk_sec))
+        fwd_sec = max(0.0, min(10.0, fwd_sec))
+        brk_sec = max(0.0, min(10.0, brk_sec))
         ramp_sec = max(0.0, min(10.0, ramp_sec))
+        if ramp_sec <= 0.0 and fwd_sec <= 0.0 and brk_sec <= 0.0:
+            log.warning(
+                "hover pulse: ramp and holds all zero; using 50ms brake dwell to avoid busy-loop"
+            )
+            brk_sec = 0.05
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
+        logged_targets = False
         while not halt.is_set():
             goals = self._goals_for_wheels(
                 left_dir=self.DIR_FORWARD,
@@ -237,18 +245,43 @@ class HoverboardAxisDrive:
                 right_dir=self.DIR_FORWARD,
                 right_speed=speed_pct,
             )
+            if not logged_targets:
+                log.info(
+                    "hover forward pulse: FWD L(id%s)=%s R(id%s)=%s | "
+                    "brake L=%s R=%s | ramp=%.2fs hold_fwd=%.2fs hold_brake=%.2fs",
+                    self._left_id,
+                    goals[self._left_id],
+                    self._right_id,
+                    goals[self._right_id],
+                    brake_goals[self._left_id],
+                    brake_goals[self._right_id],
+                    ramp_sec,
+                    fwd_sec,
+                    brk_sec,
+                )
+                logged_targets = True
             self._pulse_ramp_goals_between(
                 brake_goals, goals, ramp_sec, halt
             )
             if halt.is_set():
                 break
-            if halt.wait(timeout=fwd_sec):
+            if fwd_sec > 0 and halt.wait(timeout=fwd_sec):
                 break
             self._pulse_ramp_goals_between(goals, brake_goals, ramp_sec, halt)
             if halt.is_set():
                 break
-            if halt.wait(timeout=brk_sec):
+            if brk_sec > 0 and halt.wait(timeout=brk_sec):
                 break
+
+    def _sync_pulse_moving_speed(self) -> None:
+        """Re-apply MX Moving Speed for both lean IDs (pulse only writes goals each tick)."""
+        if not self._is_initialized:
+            return
+        ms = max(0, min(1023, int(self._axis.moving_speed)))
+        with self._bus_lock:
+            self._dxl.sync_write_moving_speed_subset(
+                {self._left_id: ms, self._right_id: ms}
+            )
 
     def _pulse_ramp_goals_between(
         self,
@@ -257,30 +290,29 @@ class HoverboardAxisDrive:
         ramp_sec: float,
         halt: threading.Event,
     ) -> None:
-        """Interpolate MX goals *start_goals* → *end_goals* with smoothstep easing."""
+        """Interpolate MX goals *start_goals* → *end_goals* with linear integer lerp."""
+        self._sync_pulse_moving_speed()
         if ramp_sec <= 0.0:
             self._apply_goals(end_goals)
             return
         lid = self._left_id
         rid = self._right_id
-        sl = float(start_goals[lid])
-        sr = float(start_goals[rid])
-        el = float(end_goals[lid])
-        er = float(end_goals[rid])
-        # ~33 Hz updates: small per-step delta, less “jerky” than coarse steps.
-        steps = max(3, min(120, int(round(ramp_sec / 0.03))))
-        sleep_each = ramp_sec / float(steps)
-        for s in range(1, steps + 1):
+        sl = int(start_goals[lid])
+        sr = int(start_goals[rid])
+        el = int(end_goals[lid])
+        er = int(end_goals[rid])
+        # Fixed ~50 Hz schedule: same duration and step index for both motors.
+        n = max(3, min(200, int(round(ramp_sec / 0.02))))
+        sleep_each = ramp_sec / float(n)
+        for i in range(1, n + 1):
             if halt.is_set():
                 return
-            t_lin = s / float(steps)
-            t = _smoothstep01(t_lin)
             g = {
-                lid: self._dxl._clamp_pos(int(round(sl + (el - sl) * t))),
-                rid: self._dxl._clamp_pos(int(round(sr + (er - sr) * t))),
+                lid: self._dxl._clamp_pos(_lerp_int_pos(sl, el, i, n)),
+                rid: self._dxl._clamp_pos(_lerp_int_pos(sr, er, i, n)),
             }
             self._apply_goals(g)
-            if s < steps and halt.wait(timeout=sleep_each):
+            if i < n and halt.wait(timeout=sleep_each):
                 return
 
     def stop(self) -> None:
