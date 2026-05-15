@@ -48,6 +48,7 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_forward_on_sec=0.04,
         pulse_forward_brake_sec=0.04,
         pulse_forward_return_ramp_sec=0.0,
+        pulse_forward_coast_blend=0.0,
     )
 
 

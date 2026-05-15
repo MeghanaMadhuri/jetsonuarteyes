@@ -20,11 +20,10 @@ log = logging.getLogger("nina.hoverboard_axis")
 _POS_SPAN_DEG = 300.0
 
 
-def _lerp_int_pos(a: int, b: int, step: int, n: int) -> int:
-    """Linearly blend *a*→*b* over *n* steps; *step* in ``1..n`` (integer math, monotonic)."""
-    if n <= 0:
-        return b
-    return int(a + (b - a) * step // n)
+def _smoothstep01(t: float) -> float:
+    """Hermite smoothstep; zero derivative at 0 and 1 (soft turnarounds)."""
+    t = max(0.0, min(1.0, float(t)))
+    return t * t * (3.0 - 2.0 * t)
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
@@ -190,16 +189,14 @@ class HoverboardAxisDrive:
         return t is not None and t.is_alive()
 
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
-        """Alternate symmetric forward lean (calibrated FWD) with brake goals.
+        """Smooth forward pulse for manual D-pad / Straight 10s.
 
-        Each cycle: **linear** ramp brake→forward (``ramp_sec``), optional hold
-        ``pulse_forward_on_sec`` at forward (``0`` = none), same-duration ramp
-        forward→brake, optional dwell ``pulse_forward_brake_sec`` at brake (``0`` = none).
-        Both axes use the same step count and timing so ID12/13 stay phase-locked; goals
-        come from ``forward_pos_*`` / brake (calibration defaults 2023/2083 forward).
+        Oscillates between full calibrated **forward** and a **coast** pose (near brake,
+        never full brake by default) with smoothstep ramps—avoids stop‑start jerk. Holds
+        ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` are optional (``0`` = no dwell);
+        with ``ramp_sec`` > 0 the wave still moves every cycle.
 
-        Intended for manual D-pad / Straight 10s forward only. Cancelled by
-        ``stop()`` / ``emergency_stop()`` / any ``set_wheels`` / ``drive_continuous``.
+        Cancelled by ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
         If ``pulse_forward_enabled`` is False, falls back to ``forward()``.
         """
         if not self._is_initialized:
@@ -220,19 +217,24 @@ class HoverboardAxisDrive:
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
         halt = self._pulse_halt
-        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 0.0))
-        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 0.0))
+        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 2.5))
+        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 1.0))
         ramp_sec = float(
             getattr(self._axis, "pulse_forward_return_ramp_sec", 1.5)
         )
         fwd_sec = max(0.0, min(10.0, fwd_sec))
         brk_sec = max(0.0, min(10.0, brk_sec))
         ramp_sec = max(0.0, min(10.0, ramp_sec))
+        coast_blend = float(
+            getattr(self._axis, "pulse_forward_coast_blend", 0.22)
+        )
+        coast_blend = max(0.0, min(1.0, coast_blend))
         if ramp_sec <= 0.0 and fwd_sec <= 0.0 and brk_sec <= 0.0:
+            ramp_sec = 0.35
             log.warning(
-                "hover pulse: ramp and holds all zero; using 50ms brake dwell to avoid busy-loop"
+                "hover pulse: ramp and holds were all 0; using %.2fs ramp so the loop can move",
+                ramp_sec,
             )
-            brk_sec = 0.05
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
@@ -245,33 +247,59 @@ class HoverboardAxisDrive:
                 right_dir=self.DIR_FORWARD,
                 right_speed=speed_pct,
             )
+            coast_goals = self._pulse_coast_goals(
+                brake_goals, goals, coast_blend
+            )
             if not logged_targets:
                 log.info(
                     "hover forward pulse: FWD L(id%s)=%s R(id%s)=%s | "
-                    "brake L=%s R=%s | ramp=%.2fs hold_fwd=%.2fs hold_brake=%.2fs",
+                    "brake L=%s R=%s | coast_blend=%.2f coast L=%s R=%s | "
+                    "ramp=%.2fs hold_fwd=%.2fs hold_brake=%.2fs",
                     self._left_id,
                     goals[self._left_id],
                     self._right_id,
                     goals[self._right_id],
                     brake_goals[self._left_id],
                     brake_goals[self._right_id],
+                    coast_blend,
+                    coast_goals[self._left_id],
+                    coast_goals[self._right_id],
                     ramp_sec,
                     fwd_sec,
                     brk_sec,
                 )
                 logged_targets = True
             self._pulse_ramp_goals_between(
-                brake_goals, goals, ramp_sec, halt
+                coast_goals, goals, ramp_sec, halt
             )
             if halt.is_set():
                 break
             if fwd_sec > 0 and halt.wait(timeout=fwd_sec):
                 break
-            self._pulse_ramp_goals_between(goals, brake_goals, ramp_sec, halt)
+            self._pulse_ramp_goals_between(goals, coast_goals, ramp_sec, halt)
             if halt.is_set():
                 break
             if brk_sec > 0 and halt.wait(timeout=brk_sec):
                 break
+
+    def _pulse_coast_goals(
+        self,
+        brake_goals: Dict[int, int],
+        forward_goals: Dict[int, int],
+        coast_blend: float,
+    ) -> Dict[int, int]:
+        """Interpolate brake→forward by *coast_blend*: 0 = full brake, 1 = full forward."""
+        k = max(0.0, min(1.0, float(coast_blend)))
+        lid = self._left_id
+        rid = self._right_id
+        bl = int(brake_goals[lid])
+        br = int(brake_goals[rid])
+        fl = int(forward_goals[lid])
+        fr = int(forward_goals[rid])
+        return {
+            lid: self._dxl._clamp_pos(int(round(bl + (fl - bl) * k))),
+            rid: self._dxl._clamp_pos(int(round(br + (fr - br) * k))),
+        }
 
     def _sync_pulse_moving_speed(self) -> None:
         """Re-apply MX Moving Speed for both lean IDs (pulse only writes goals each tick)."""
@@ -290,7 +318,7 @@ class HoverboardAxisDrive:
         ramp_sec: float,
         halt: threading.Event,
     ) -> None:
-        """Interpolate MX goals *start_goals* → *end_goals* with linear integer lerp."""
+        """Interpolate MX goals *start_goals* → *end_goals* (smoothstep, monotonic per axis)."""
         self._sync_pulse_moving_speed()
         if ramp_sec <= 0.0:
             self._apply_goals(end_goals)
@@ -304,12 +332,25 @@ class HoverboardAxisDrive:
         # Fixed ~50 Hz schedule: same duration and step index for both motors.
         n = max(3, min(200, int(round(ramp_sec / 0.02))))
         sleep_each = ramp_sec / float(n)
+        prev_l, prev_r = sl, sr
         for i in range(1, n + 1):
             if halt.is_set():
                 return
+            u = _smoothstep01(i / float(n))
+            raw_l = int(round(sl + (el - sl) * u))
+            raw_r = int(round(sr + (er - sr) * u))
+            if el >= sl:
+                gl = max(prev_l, min(raw_l, el))
+            else:
+                gl = min(prev_l, max(raw_l, el))
+            if er >= sr:
+                gr = max(prev_r, min(raw_r, er))
+            else:
+                gr = min(prev_r, max(raw_r, er))
+            prev_l, prev_r = gl, gr
             g = {
-                lid: self._dxl._clamp_pos(_lerp_int_pos(sl, el, i, n)),
-                rid: self._dxl._clamp_pos(_lerp_int_pos(sr, er, i, n)),
+                lid: self._dxl._clamp_pos(gl),
+                rid: self._dxl._clamp_pos(gr),
             }
             self._apply_goals(g)
             if i < n and halt.wait(timeout=sleep_each):
