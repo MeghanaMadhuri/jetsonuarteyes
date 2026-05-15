@@ -542,7 +542,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_series_fwd_sec=max(
             0.0,
-            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_FWD_SEC", 2.0)),
+            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_FWD_SEC", 1.3)),
         ),
         pulse_series_coast_initial_sec=max(
             0.0,

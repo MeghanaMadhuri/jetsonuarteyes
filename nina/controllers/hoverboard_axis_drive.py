@@ -330,7 +330,7 @@ class HoverboardAxisDrive:
         series_max = max(1, min(20, series_max))
         series_fwd = max(
             0.0,
-            min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 2.0))),
+            min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 1.3))),
         )
         coast_init = max(
             0.0,
