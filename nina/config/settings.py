@@ -541,11 +541,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_waveform=_env_pulse_waveform(),
         pulse_series_max=max(
-            1, min(20, _env_int("NINA_HOVER_PULSE_SERIES_MAX", 5))
+            1, min(20, _env_int("NINA_HOVER_PULSE_SERIES_MAX", 8))
         ),
         pulse_series_fwd_sec=max(
             0.0,
-            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_FWD_SEC", 0.6)),
+            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_FWD_SEC", 0.9)),
         ),
         pulse_series_coast_initial_sec=max(
             0.0,

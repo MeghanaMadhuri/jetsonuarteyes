@@ -327,11 +327,11 @@ class HoverboardAxisDrive:
         )
         eff_ramp = min(5.0, max(ramp_sec, min_trans))
 
-        series_max = int(getattr(self._axis, "pulse_series_max", 5))
+        series_max = int(getattr(self._axis, "pulse_series_max", 8))
         series_max = max(1, min(20, series_max))
         series_fwd = max(
             0.0,
-            min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 0.6))),
+            min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 0.9))),
         )
         coast_init = max(
             0.0,
