@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from nina.config.motor_ids import HOVERBOARD_LEAN_IDS
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.controllers.hoverboard_axis_drive import apply_hoverboard_brake_positions
@@ -35,6 +36,7 @@ class StartupService:
                 "(continuing; missing motors will simply not move)"
             )
 
+        self.dxl.ensure_joint_mode_for_ids(HOVERBOARD_LEAN_IDS)
         self.dxl.set_torque_all(True)
         self.action_runner.run_named_action(self.neutral_action_name)
         try:

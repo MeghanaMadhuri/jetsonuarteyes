@@ -1,9 +1,13 @@
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from nina.models.types import HealthReport
+
+
+log = logging.getLogger("nina.dynamixel")
 
 
 HEADER = 0xFF
@@ -14,6 +18,10 @@ SYNC_WRITE = 0x83
 BROADCAST_ID = 0xFE
 
 REG_TORQUE_ENABLE = (24, 1)
+# Protocol 1.0: joint limits (L, H). Both zero => wheel/endless-turn mode — Goal
+# Position drives speed, not angle; position-style hover commands appear dead.
+REG_CW_ANGLE_LIMIT = (6, 2)
+REG_CCW_ANGLE_LIMIT = (8, 2)
 REG_GOAL_POSITION = (30, 2)
 REG_MOVING_SPEED = (32, 2)
 REG_PRESENT_POS = (36, 2)
@@ -58,6 +66,40 @@ class DynamixelManager:
         if self._serial and getattr(self._serial, "is_open", False):
             self._serial.close()
         self._is_initialized = False
+
+    def ensure_joint_mode_for_ids(self, motor_ids: List[int]) -> None:
+        """If any listed servo is in wheel mode (CW/CCW limits both 0), set joint limits.
+
+        MX / AX servos on Protocol 1 share this layout. Torque is toggled off only
+        for motors that need a limit rewrite, then the caller should run
+        ``set_torque_all(True)`` again.
+        """
+        self._require_initialized()
+        for sid in motor_ids:
+            if sid not in self.expected_motor_ids:
+                continue
+            cw = self.read_reg(sid, *REG_CW_ANGLE_LIMIT)
+            ccw = self.read_reg(sid, *REG_CCW_ANGLE_LIMIT)
+            if cw is None or ccw is None:
+                log.warning(
+                    "Dynamixel id=%s: cannot read angle limits (id/baud/wiring or "
+                    "non-Protocol 1.0 device)",
+                    sid,
+                )
+                continue
+            if cw != 0 or ccw != 0:
+                continue
+            log.warning(
+                "Dynamixel id=%s: wheel/endless mode (angle limits 0/0); "
+                "enabling joint mode 0..%s for position control",
+                sid,
+                POS_MAX,
+            )
+            self.write_reg(sid, *REG_TORQUE_ENABLE, 0)
+            time.sleep(0.02)
+            self.write_reg(sid, *REG_CW_ANGLE_LIMIT, 0)
+            self.write_reg(sid, *REG_CCW_ANGLE_LIMIT, POS_MAX)
+            time.sleep(0.02)
 
     def run_health_check(self) -> HealthReport:
         self._require_initialized()

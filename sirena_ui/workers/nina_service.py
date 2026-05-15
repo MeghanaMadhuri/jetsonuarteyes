@@ -18,7 +18,7 @@ from PyQt5.QtCore import Qt
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS
+from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     apply_hoverboard_brake_positions,
@@ -74,6 +74,7 @@ class NinaService:
                 self.dxl.initialize_bus()
                 self._bus_ready = True
             health = self.dxl.run_health_check()
+            self.dxl.ensure_joint_mode_for_ids(HOVERBOARD_LEAN_IDS)
             self.dxl.set_torque_all(True)
             if first_bus_init:
                 apply_hoverboard_brake_positions(self.dxl, self.settings.hoverboard_axis)
