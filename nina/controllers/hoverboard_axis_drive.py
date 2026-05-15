@@ -10,9 +10,8 @@ both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up
 
 **Forward pulse:** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
 D-pad / bench forward from rest runs ``start_pulse_straight_forward``: a **series** of
-``pulse_series_max`` cycles; each near-brake pose moves from ``NINA_HOVER_PULSE_COAST`` percent
-toward forward on the first pulse, plus ``NINA_HOVER_PULSE_COAST_STEP`` percent each later pulse
-(capped at 100%), with timed dwells from ``pulse_series_coast_*_sec``. Then full brake.
+``pulse_series_max`` cycles with a **constant** near-brake lean (``pulse_forward_coast_blend``,
+default **0**). Then full brake.
 Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
 """
 
@@ -278,10 +277,9 @@ class HoverboardAxisDrive:
         """Forward pulse series for manual D-pad / Straight bench forward (when enabled).
 
         Runs ``pulse_series_max`` cycles: each cycle ramps from the prior near-brake pose to
-        full forward, holds forward for ``pulse_series_fwd_sec``, ramps back to a near-brake
-        pose interpolated by percent from brake toward forward: ``pulse_series_coast_initial_pct``
-        on the first pulse, plus ``pulse_series_coast_step_pct`` each subsequent pulse (capped at
-        100%). Dwell at that near-brake for ``pulse_series_coast_initial_sec + pulse_index *
+        full forward, holds forward for ``pulse_series_fwd_sec``, ramps back to a **fixed**
+        near-brake pose (``pulse_forward_coast_blend`` of the brake→forward span, default **0**).
+        Dwell at that near-brake for ``pulse_series_coast_initial_sec + pulse_index *
         pulse_series_coast_increment_sec``. Transition times use ``max(pulse_forward_return_ramp_sec,
         pulse_series_min_transition_sec)``. After the last cycle, servos command **full brake**.
         Cancelled by ``stop()`` / ``emergency_stop()`` / ``set_wheels`` /
@@ -322,7 +320,7 @@ class HoverboardAxisDrive:
             0.0,
             min(
                 2.0,
-                float(getattr(self._axis, "pulse_series_min_transition_sec", 0.18)),
+                float(getattr(self._axis, "pulse_series_min_transition_sec", 0.0)),
             ),
         )
         eff_ramp = min(5.0, max(ramp_sec, min_trans))
@@ -347,18 +345,11 @@ class HoverboardAxisDrive:
                 float(getattr(self._axis, "pulse_series_coast_increment_sec", 0.20)),
             ),
         )
-        coast_init_pct = max(
+        coast_blend = max(
             0.0,
             min(
-                100.0,
-                float(getattr(self._axis, "pulse_series_coast_initial_pct", 10.0)),
-            ),
-        )
-        coast_step_pct = max(
-            0.0,
-            min(
-                100.0,
-                float(getattr(self._axis, "pulse_series_coast_step_pct", 10.0)),
+                1.0,
+                float(getattr(self._axis, "pulse_forward_coast_blend", 0.0)),
             ),
         )
 
@@ -368,44 +359,31 @@ class HoverboardAxisDrive:
             right_dir=self.DIR_FORWARD,
             right_speed=speed_pct,
         )
-
-        def coast_pct_for(pulse_idx: int) -> float:
-            return max(
-                0.0,
-                min(100.0, coast_init_pct + float(pulse_idx) * coast_step_pct),
-            )
-
-        def coast_goals_for_pulse(pulse_idx: int) -> Dict[int, int]:
-            u = coast_pct_for(pulse_idx) / 100.0
-            return self._pulse_coast_goals(brake_goals, goals, u)
-
-        cg0 = coast_goals_for_pulse(0)
+        coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
 
         log.info(
             "hover forward pulse series: n=%s fwd_hold=%.2fs coast_time_0=%.2fs coast_time_step=%.2fs "
-            "transition=%.2fs coast_pct_0=%.1f coast_pct_step=%.1f | FWD L(id%s)=%s R(id%s)=%s | "
-            "coast0 L=%s R=%s",
+            "transition=%.2fs coast_blend=%.2f | FWD L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
             series_max,
             series_fwd,
             coast_init,
             coast_inc,
             eff_ramp,
-            coast_init_pct,
-            coast_step_pct,
+            coast_blend,
             self._left_id,
             goals[self._left_id],
             self._right_id,
             goals[self._right_id],
-            cg0[self._left_id],
-            cg0[self._right_id],
+            coast_goals[self._left_id],
+            coast_goals[self._right_id],
         )
 
         try:
             if not halt.is_set():
                 self._pulse_ramp_goals_between(
-                    brake_goals, cg0, eff_ramp, halt
+                    brake_goals, coast_goals, eff_ramp, halt
                 )
-            prev_coast: Dict[int, int] = dict(cg0)
+            prev_coast: Dict[int, int] = dict(coast_goals)
             for pulse_idx in range(series_max):
                 if halt.is_set():
                     break
@@ -413,7 +391,6 @@ class HoverboardAxisDrive:
                     0.0,
                     min(10.0, coast_init + float(pulse_idx) * coast_inc),
                 )
-                cg_this = coast_goals_for_pulse(pulse_idx)
                 self._pulse_ramp_goals_between(
                     prev_coast, goals, eff_ramp, halt
                 )
@@ -422,13 +399,13 @@ class HoverboardAxisDrive:
                 if series_fwd > 0.0 and halt.wait(timeout=series_fwd):
                     break
                 self._pulse_ramp_goals_between(
-                    goals, cg_this, eff_ramp, halt
+                    goals, coast_goals, eff_ramp, halt
                 )
                 if halt.is_set():
                     break
                 if coast_dwell > 0.0 and halt.wait(timeout=coast_dwell):
                     break
-                prev_coast = dict(cg_this)
+                prev_coast = dict(coast_goals)
 
             if not halt.is_set():
                 self._apply_goals(brake_goals)

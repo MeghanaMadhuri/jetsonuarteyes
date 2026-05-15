@@ -172,11 +172,10 @@ class HoverboardAxisSettings:
     **Forward pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` is set, ``start_pulse_straight_forward``
     runs ``pulse_series_max`` cycles: each cycle holds full forward for ``pulse_series_fwd_sec``,
     then near-brake for ``pulse_series_coast_initial_sec`` plus ``pulse_series_coast_increment_sec``
-    per pulse index. Near-brake **lean** is ``NINA_HOVER_PULSE_COAST`` percent from brake toward
-    forward on the first pulse, plus ``NINA_HOVER_PULSE_COAST_STEP`` percent each subsequent pulse
-    (capped at 100%). Ramps use ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)``.
-    Then servos go to full brake. ``pulse_forward_coast_blend`` is legacy (e.g. other tooling);
-    ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
+    per pulse index. Near-brake **lean** is ``pulse_forward_coast_blend`` (0–1) from brake toward
+    forward, default **0** via ``NINA_HOVER_PULSE_COAST_BLEND``. Ramps use
+    ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)`` (each defaults to **0**).
+    Then servos go to full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
     """
 
     id_left: int
@@ -210,8 +209,6 @@ class HoverboardAxisSettings:
     pulse_series_coast_initial_sec: float
     pulse_series_coast_increment_sec: float
     pulse_series_min_transition_sec: float
-    pulse_series_coast_initial_pct: float
-    pulse_series_coast_step_pct: float
 
 
 @dataclass(frozen=True)
@@ -519,7 +516,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_forward_coast_blend=max(
             0.0,
-            min(1.0, _env_float("NINA_HOVER_PULSE_COAST_BLEND", 0.22)),
+            min(1.0, _env_float("NINA_HOVER_PULSE_COAST_BLEND", 0.0)),
         ),
         pulse_forward_sync_present=_env_bool(
             "NINA_HOVER_PULSE_SYNC_PRESENT", False
@@ -557,15 +554,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         pulse_series_min_transition_sec=max(
             0.0,
-            min(2.0, _env_float("NINA_HOVER_PULSE_SERIES_MIN_RAMP_SEC", 0.18)),
-        ),
-        pulse_series_coast_initial_pct=max(
-            0.0,
-            min(100.0, _env_float("NINA_HOVER_PULSE_COAST", 10.0)),
-        ),
-        pulse_series_coast_step_pct=max(
-            0.0,
-            min(100.0, _env_float("NINA_HOVER_PULSE_COAST_STEP", 10.0)),
+            min(2.0, _env_float("NINA_HOVER_PULSE_SERIES_MIN_RAMP_SEC", 0.0)),
         ),
     )
 
