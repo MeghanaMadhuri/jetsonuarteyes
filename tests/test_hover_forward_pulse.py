@@ -8,12 +8,14 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from nina.config.settings import HoverboardAxisSettings
+from nina.controllers.dynamixel_manager import REG_PRESENT_POS
 from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
 
 
 class FakeDxl:
     def __init__(self) -> None:
         self.goal_writes: list[dict[int, int]] = []
+        self._present: dict[int, int] = {12: 2048, 13: 2048}
 
     def _require_initialized(self) -> None:
         return None
@@ -26,6 +28,12 @@ class FakeDxl:
 
     def sync_write_goal_position(self, positions: dict[int, int]) -> None:
         self.goal_writes.append(dict(positions))
+        self._present.update({int(k): int(v) for k, v in positions.items()})
+
+    def read_reg(self, sid: int, addr: int, size: int):
+        if addr == REG_PRESENT_POS[0] and size == REG_PRESENT_POS[1]:
+            return self._present.get(int(sid), 2048)
+        return None
 
 
 def _axis_pulse_fast() -> HoverboardAxisSettings:
@@ -49,6 +57,9 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_forward_brake_sec=0.04,
         pulse_forward_return_ramp_sec=0.0,
         pulse_forward_coast_blend=0.0,
+        pulse_forward_sync_present=False,
+        pulse_forward_present_tol_ticks=4,
+        pulse_forward_present_step_timeout_sec=0.25,
     )
 
 

@@ -150,7 +150,10 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **1.5** s each way; if ``0`` with no holds, a
     safe minimum ramp is applied). Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
     ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **2.5** / **1.0** s; ``0`` = no dwell,
-    wave is continuous when ``ramp`` > 0).
+    wave is continuous when ``ramp`` > 0). Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
+    step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
+    goal (exact equality is not practical), up to ``NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT`` s —
+    slows the ramp slightly but avoids outpacing small moves.
     """
 
     id_left: int
@@ -172,6 +175,9 @@ class HoverboardAxisSettings:
     pulse_forward_brake_sec: float
     pulse_forward_return_ramp_sec: float
     pulse_forward_coast_blend: float
+    pulse_forward_sync_present: bool
+    pulse_forward_present_tol_ticks: int
+    pulse_forward_present_step_timeout_sec: float
 
 
 @dataclass(frozen=True)
@@ -433,6 +439,16 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pulse_forward_coast_blend=max(
             0.0,
             min(1.0, _env_float("NINA_HOVER_PULSE_COAST_BLEND", 0.22)),
+        ),
+        pulse_forward_sync_present=_env_bool(
+            "NINA_HOVER_PULSE_SYNC_PRESENT", False
+        ),
+        pulse_forward_present_tol_ticks=max(
+            0, min(50, _env_int("NINA_HOVER_PULSE_PRESENT_TOL", 4))
+        ),
+        pulse_forward_present_step_timeout_sec=max(
+            0.02,
+            min(1.0, _env_float("NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT", 0.25)),
         ),
     )
 

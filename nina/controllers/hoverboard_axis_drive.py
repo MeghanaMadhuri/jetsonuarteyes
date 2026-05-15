@@ -13,7 +13,7 @@ import time
 from typing import Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
-from nina.controllers.dynamixel_manager import DynamixelManager
+from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
 
 log = logging.getLogger("nina.hoverboard_axis")
 
@@ -311,6 +311,53 @@ class HoverboardAxisDrive:
                 {self._left_id: ms, self._right_id: ms}
             )
 
+    def _pulse_step_wait(
+        self,
+        goals: Dict[int, int],
+        *,
+        sleep_each: float,
+        halt: threading.Event,
+    ) -> None:
+        """After writing *goals*, either sleep a fixed slice or wait for present≈goal (optional)."""
+        sync = bool(
+            getattr(self._axis, "pulse_forward_sync_present", False)
+        )
+        tol = int(getattr(self._axis, "pulse_forward_present_tol_ticks", 4))
+        max_w = float(
+            getattr(
+                self._axis,
+                "pulse_forward_present_step_timeout_sec",
+                0.25,
+            )
+        )
+        max_w = max(0.02, min(1.0, max_w))
+        tol = max(0, min(50, tol))
+        lid = self._left_id
+        rid = self._right_id
+        gl = int(goals[lid])
+        gr = int(goals[rid])
+
+        if not sync or tol <= 0:
+            if halt.wait(timeout=max(0.0, sleep_each)):
+                return
+            return
+
+        t0 = time.monotonic()
+        deadline = t0 + max(max_w, sleep_each * 0.75)
+        poll = 0.008
+        while not halt.is_set():
+            with self._bus_lock:
+                pl = self._dxl.read_reg(lid, *REG_PRESENT_POS)
+                pr = self._dxl.read_reg(rid, *REG_PRESENT_POS)
+            if pl is not None and pr is not None:
+                pv_l = self._dxl._clamp_pos(int(pl))
+                pv_r = self._dxl._clamp_pos(int(pr))
+                if abs(pv_l - gl) <= tol and abs(pv_r - gr) <= tol:
+                    break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(poll)
+
     def _pulse_ramp_goals_between(
         self,
         start_goals: Dict[int, int],
@@ -353,8 +400,10 @@ class HoverboardAxisDrive:
                 rid: self._dxl._clamp_pos(gr),
             }
             self._apply_goals(g)
-            if i < n and halt.wait(timeout=sleep_each):
-                return
+            if i < n:
+                self._pulse_step_wait(g, sleep_each=sleep_each, halt=halt)
+                if halt.is_set():
+                    return
 
     def stop(self) -> None:
         if not self._is_initialized:
