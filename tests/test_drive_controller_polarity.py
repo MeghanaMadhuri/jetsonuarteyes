@@ -91,8 +91,25 @@ class FakeNav:
     def emergency_stop(self) -> None:
         self.calls.append(("emergency_stop",))
 
-    def drive_continuous(self, **kwargs) -> None:
-        self.calls.append(("drive_continuous", kwargs))
+    def drive_continuous(
+        self,
+        left_dir=None,
+        right_dir=None,
+        speed_percent=None,
+        *,
+        right_speed_percent=None,
+        **kwargs,
+    ) -> None:
+        """Match ``NavigationManager.drive_continuous`` (positional or keyword)."""
+        rec: dict = {
+            "left_dir": left_dir,
+            "right_dir": right_dir,
+            "speed_percent": speed_percent,
+            **kwargs,
+        }
+        if right_speed_percent is not None:
+            rec["right_speed_percent"] = right_speed_percent
+        self.calls.append(("drive_continuous", rec))
 
     def set_wheels(self, **kwargs) -> None:
         self.calls.append(("set_wheels", kwargs))
