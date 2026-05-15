@@ -417,28 +417,18 @@ class DriveController(QObject):
         if nav is not None and hasattr(nav, "update_axis_config"):
             nav.update_axis_config(axis_cfg)
 
-    def supports_forward_pulse(self) -> bool:
-        """True when nav backend offers hoverboard forward pulse and it is enabled in settings."""
-        with self._lock:
-            nav = self._nav
-        if nav is None:
-            return False
-        if not callable(getattr(nav, "start_pulse_straight_forward", None)):
-            return False
-        en = getattr(nav, "is_forward_pulse_enabled", None)
-        return callable(en) and bool(en())
-
-    def start_forward_pulse_bench(self, speed_pct: int) -> None:
-        """Start hoverboard forward pulse (Straight bench forward); no-op if unavailable."""
-        sp = max(0, min(100, int(speed_pct)))
-        self._enqueue(lambda: self._do_start_forward_pulse_bench(sp))
-
-    def _do_start_forward_pulse_bench(self, speed_pct: int) -> None:
-        if self._nav is None or not self.supports_forward_pulse():
-            return
-        self._nav.start_pulse_straight_forward(int(speed_pct))
-        with self._lock:
-            self._active_drive = None
+    # --- Forward pulse (disabled): Straight bench + D-pad forward use kick/cruise
+    #     ``drive_continuous`` / ``set_wheels`` like pre-pulse behaviour. Pulse helpers
+    #     were removed from ``HoverboardAxisDrive``; keep stubs below commented for grep.
+    #
+    # def supports_forward_pulse(self) -> bool:
+    #     ...
+    #
+    # def start_forward_pulse_bench(self, speed_pct: int) -> None:
+    #     ...
+    #
+    # def _do_start_forward_pulse_bench(self, speed_pct: int) -> None:
+    #     ...
 
     def ensure_hardware(self) -> None:
         """Kick off lazy initialisation of the BLDC drivers.
@@ -902,15 +892,8 @@ class DriveController(QObject):
                         kick,
                         cruise,
                     )
-                elif direction == _DIR_FORWARD and self.supports_forward_pulse():
-                    self._nav.start_pulse_straight_forward(int(speed_pct))
-                    with self._lock:
-                        self._active_drive = None
-                    log.info(
-                        "drive from stop: hover forward pulse speed=%s%%",
-                        speed_pct,
-                    )
-                else:
+                elif direction == _DIR_FORWARD:
+                    # Forward pulse disabled: same kick/cruise path as back / pre-pulse.
                     kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
                     cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
                     self._nav.drive_continuous(ldir, rdir, kick)
@@ -975,11 +958,12 @@ class DriveController(QObject):
         D-pad button is held."""
         if self._nav is None:
             return
-        if (
-            direction == _DIR_FORWARD
-            and getattr(self._nav, "is_forward_pulse_active", lambda: False)()
-        ):
-            return
+        # Forward pulse disabled: always allow live speed updates on forward.
+        # if (
+        #     direction == _DIR_FORWARD
+        #     and getattr(self._nav, "is_forward_pulse_active", lambda: False)()
+        # ):
+        #     return
         ldir, rdir = self._wheel_dirs_for(direction)
         if ldir is None or rdir is None:
             return

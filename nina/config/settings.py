@@ -37,6 +37,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_pulse_ramp_profile() -> str:
+    """Legacy: pulse ramp profile env (HoverboardAxisSettings only; pulse drive removed)."""
     raw = (os.environ.get("NINA_HOVER_PULSE_RAMP_PROFILE") or "smootherstep").strip().lower()
     if raw in ("smoothstep", "smootherstep", "cubic_io", "trapezoid"):
         return raw
@@ -54,6 +55,7 @@ def _env_optional_int_clamped(name: str, lo: int, hi: int) -> Optional[int]:
 
 
 def _env_pulse_waveform() -> str:
+    """Legacy: pulse waveform env (HoverboardAxisSettings only; pulse drive removed)."""
     raw = (os.environ.get("NINA_HOVER_PULSE_WAVEFORM") or "cosine").strip().lower()
     if raw in ("cosine", "dual_ramp", "dual", "legacy"):
         if raw in ("dual", "legacy"):
@@ -167,28 +169,10 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
-    Optional **forward pulse** (manual D-pad forward + Straight bench forward only):
-    ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
-    to disable) oscillates between **full forward** lean (calibrated ``forward_pos_*``) and a
-    **coast** pose near brake (see ``NINA_HOVER_PULSE_COAST_BLEND``) so the lean never fully
-    “dead-stops” at brake—smoother, hoverboard-like reversals.
-    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` is the ramp time per leg for **dual_ramp** mode, or
-    **half** the full coast→forward→coast period for **cosine** mode (default ``NINA_HOVER_PULSE_WAVEFORM``):
-    cosine runs one symmetric S-curve over ``2×`` ramp seconds so outbound and return use the
-    same velocity law (no ease-curve “restart” at coast between legs). ``dual_ramp`` restores
-    two independent ramps with ``NINA_HOVER_PULSE_RAMP_PROFILE`` (``smootherstep``, ``smoothstep``,
-    ``cubic_io``, ``trapezoid``; edge ``NINA_HOVER_PULSE_RAMP_TRAP_EDGE`` 0.08–0.35).
-    If ramp and holds are all ``0``, a safe minimum ramp is applied in code.
-    Optional ``NINA_HOVER_PULSE_RAMP_MOVING_SPEED`` (0–1023): MX Moving Speed **only during**
-    pulse ramps; unset uses ``NINA_HOVER_MOVING_SPEED``.
-    ``NINA_HOVER_PULSE_FWD_SEC`` dwells at full **forward** lean (after the outbound ramp);
-    ``NINA_HOVER_PULSE_BRAKE_SEC`` dwells at **coast** (near-brake blend, after the return ramp).
-    Code defaults **2** / **2** s and ``RETURN_RAMP_SEC`` **0** → **4 s** per cycle (2 s forward +
-    2 s coast; raise ``RETURN_RAMP_SEC`` to soften corners).
-    Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
-    step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
-    goal (exact equality is not practical), up to ``NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT`` s —
-    slows the ramp slightly but avoids outpacing small moves.
+    **Forward pulse (removed):** ``NINA_HOVER_PULSE_*`` fields remain on this dataclass
+    and in ``load_settings`` for env / JSON compatibility; ``HoverboardAxisDrive`` no
+    longer runs the coast↔forward pulse thread—the UI uses continuous forward lean
+    (``drive_continuous`` / ``set_wheels``) like pre-pulse behaviour.
     """
 
     id_left: int
@@ -465,6 +449,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),
         sign_left=_env_sign("NINA_HOVER_SIGN_LEFT", 1),
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
+        # NINA_HOVER_PULSE_* — still loaded for dataclass / env compatibility; drive ignores.
         pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
         pulse_forward_on_sec=max(
             0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.0))

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="Hoverboard forward pulse removed from product; see git history.",
+)
+
 import threading
 import time
 from dataclasses import replace
