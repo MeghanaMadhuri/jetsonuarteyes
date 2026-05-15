@@ -133,8 +133,7 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED`` (0–1023; **0** = fastest
     joint move on Protocol 1, higher = slower — default 0),
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
-    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2023 / 2083 — forward: ID **12** −5 from 2028,
-    ID **13** +15 from 2068); straight backward uses ``NINA_HOVER_REV_POS_*``
+    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2020 / 2083); straight backward uses ``NINA_HOVER_REV_POS_*``
     (defaults 2068 / 2028). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI pivots match this mount;
@@ -142,14 +141,14 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
-    Optional **forward pulse** (manual D-pad forward + Straight 10s forward only):
+    Optional **forward pulse** (manual D-pad forward + Straight bench forward only):
     ``NINA_HOVER_PULSE_FORWARD`` (default **on** in code; set ``NINA_HOVER_PULSE_FORWARD=0``
     to disable) oscillates between **full forward** lean (calibrated ``forward_pos_*``) and a
     **coast** pose near brake (see ``NINA_HOVER_PULSE_COAST_BLEND``) so the lean never fully
     “dead-stops” at brake—smoother, hoverboard-like reversals. Ramps use smoothstep over
-    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **1.5** s each way; if ``0`` with no holds, a
+    ``NINA_HOVER_PULSE_RETURN_RAMP_SEC`` (default **3** s each way; if ``0`` with no holds, a
     safe minimum ramp is applied). Optional hold ``NINA_HOVER_PULSE_FWD_SEC`` /
-    ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **2.5** / **1.0** s; ``0`` = no dwell,
+    ``NINA_HOVER_PULSE_BRAKE_SEC`` at endpoints (default **0** / **0** s for continuous coast↔FWD;
     wave is continuous when ``ramp`` > 0). Set ``NINA_HOVER_PULSE_SYNC_PRESENT`` to wait each ramp
     step until both servos' **Present Position** is within ``NINA_HOVER_PULSE_PRESENT_TOL`` ticks of
     goal (exact equality is not practical), up to ``NINA_HOVER_PULSE_PRESENT_STEP_TIMEOUT`` s —
@@ -414,7 +413,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
             else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 2048)
         ),
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2023),
+        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2020),
         forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2083),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2068),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2028),
@@ -428,13 +427,13 @@ def load_settings(repo_root: Path) -> NinaSettings:
         sign_right=_env_sign("NINA_HOVER_SIGN_RIGHT", 1),
         pulse_forward_enabled=_env_bool("NINA_HOVER_PULSE_FORWARD", True),
         pulse_forward_on_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 2.5))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_FWD_SEC", 0.0))
         ),
         pulse_forward_brake_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 1.0))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_BRAKE_SEC", 0.0))
         ),
         pulse_forward_return_ramp_sec=max(
-            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 1.5))
+            0.0, min(10.0, _env_float("NINA_HOVER_PULSE_RETURN_RAMP_SEC", 3.0))
         ),
         pulse_forward_coast_blend=max(
             0.0,

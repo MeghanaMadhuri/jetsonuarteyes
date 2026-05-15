@@ -429,7 +429,7 @@ class DriveController(QObject):
         return callable(en) and bool(en())
 
     def start_forward_pulse_bench(self, speed_pct: int) -> None:
-        """Start hoverboard forward pulse (Straight 10s forward); no-op if unavailable."""
+        """Start hoverboard forward pulse (Straight 15s forward bench); no-op if unavailable."""
         sp = max(0, min(100, int(speed_pct)))
         self._enqueue(lambda: self._do_start_forward_pulse_bench(sp))
 

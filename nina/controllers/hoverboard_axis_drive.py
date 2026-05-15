@@ -189,12 +189,12 @@ class HoverboardAxisDrive:
         return t is not None and t.is_alive()
 
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
-        """Smooth forward pulse for manual D-pad / Straight 10s.
+        """Smooth forward pulse for manual D-pad / Straight 15s bench (when pulse is used).
 
         Oscillates between full calibrated **forward** and a **coast** pose (near brake,
-        never full brake by default) with smoothstep ramps—avoids stop‑start jerk. Holds
-        ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` are optional (``0`` = no dwell);
-        with ``ramp_sec`` > 0 the wave still moves every cycle.
+        never full brake by default) with smoothstep ramps—slow, steady transitions when
+        ``pulse_forward_return_ramp_sec`` is large (e.g. 3 s each way). Holds
+        ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` are optional (``0`` = no dwell).
 
         Cancelled by ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
         If ``pulse_forward_enabled`` is False, falls back to ``forward()``.
@@ -217,10 +217,10 @@ class HoverboardAxisDrive:
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
         halt = self._pulse_halt
-        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 2.5))
-        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 1.0))
+        fwd_sec = float(getattr(self._axis, "pulse_forward_on_sec", 0.0))
+        brk_sec = float(getattr(self._axis, "pulse_forward_brake_sec", 0.0))
         ramp_sec = float(
-            getattr(self._axis, "pulse_forward_return_ramp_sec", 1.5)
+            getattr(self._axis, "pulse_forward_return_ramp_sec", 3.0)
         )
         fwd_sec = max(0.0, min(10.0, fwd_sec))
         brk_sec = max(0.0, min(10.0, brk_sec))
@@ -376,8 +376,8 @@ class HoverboardAxisDrive:
         sr = int(start_goals[rid])
         el = int(end_goals[lid])
         er = int(end_goals[rid])
-        # Fixed ~50 Hz schedule: same duration and step index for both motors.
-        n = max(3, min(200, int(round(ramp_sec / 0.02))))
+        # Same duration and step index for both motors; slightly denser steps for long ramps.
+        n = max(3, min(250, int(round(ramp_sec / 0.017))))
         sleep_each = ramp_sec / float(n)
         prev_l, prev_r = sl, sr
         for i in range(1, n + 1):

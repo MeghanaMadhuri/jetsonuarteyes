@@ -73,7 +73,7 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
-# Bench / field check: drive straight for NINA_STRAIGHT_TEST_MS (default 10 s), then stop.
+# Bench / field check: drive straight for NINA_STRAIGHT_TEST_MS (default 15 s), then stop.
 # PWM: NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_READY_POLL_MS = 50
 STRAIGHT_READY_MAX_POLLS = 100
@@ -109,9 +109,9 @@ def _straight_sequence_spec() -> List[Tuple[str, int]]:
         try:
             ms = int(raw)
         except ValueError:
-            ms = 10_000
+            ms = 15_000
     else:
-        ms = 10_000
+        ms = 15_000
     ms = max(100, min(120_000, ms))
     return [("fwd", ms)]
 
@@ -123,9 +123,9 @@ def _straight_back_sequence_spec() -> List[Tuple[str, int]]:
         try:
             ms = int(raw)
         except ValueError:
-            ms = 10_000
+            ms = 15_000
     else:
-        ms = 10_000
+        ms = 15_000
     ms = max(100, min(120_000, ms))
     return [("back", ms)]
 
@@ -415,13 +415,13 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.setSpacing(6)
-        self._straight_test_btn = QPushButton("Straight 10s")
+        self._straight_test_btn = QPushButton("Straight 15s")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drives straight for NINA_STRAIGHT_TEST_MS (default 10 s; legacy: NINA_STRAIGHT_SEQ_FWD1_MS) "
+            "Drives straight for NINA_STRAIGHT_TEST_MS (default 15 s; legacy: NINA_STRAIGHT_SEQ_FWD1_MS) "
             "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Respects Reverse. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
             "Turn off autonomous mode and release the brake first."
@@ -434,7 +434,7 @@ class DriveScreen(QWidget):
         self._straight_back_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_back_test_btn.setMinimumHeight(32)
         self._straight_back_test_btn.setToolTip(
-            "Drives straight backward for NINA_STRAIGHT_BACK_TEST_MS (default 10 s) "
+            "Drives straight backward for NINA_STRAIGHT_BACK_TEST_MS (default 15 s) "
             "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Ignores the Reverse toggle. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
             "Turn off autonomous mode and release the brake first."

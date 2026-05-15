@@ -594,11 +594,11 @@ sirena_ui/                       nina/
 # Navigation: Jetson GPIO (see Drive section above)
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
-# Drive "Straight test" bench run: straight only for NINA_STRAIGHT_TEST_MS (default 10 s), then stop.
+# Drive "Straight test" bench run: straight only for NINA_STRAIGHT_TEST_MS (default 15 s), then stop.
 # Legacy duration alias: NINA_STRAIGHT_SEQ_FWD1_MS. PWM: NINA_STRAIGHT_TEST_SPEED_PCT (default MAX_SPEED_PCT).
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
-# export NINA_STRAIGHT_TEST_MS=10000
-# export NINA_STRAIGHT_SEQ_FWD1_MS=10000   # legacy alias for duration only
+# export NINA_STRAIGHT_TEST_MS=15000
+# export NINA_STRAIGHT_SEQ_FWD1_MS=15000   # legacy alias for duration only
 
 # Drive / BLDC: espeak-ng alerts on init failure or drive ignored (backend not ready).
 # NINA_BLDC_ALERT_SPEECH=0           # disable spoken BLDC errors
