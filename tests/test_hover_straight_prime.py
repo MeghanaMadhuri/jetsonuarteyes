@@ -64,7 +64,6 @@ def _axis() -> HoverboardAxisSettings:
         pulse_series_max=8,
         pulse_series_fwd_sec=0.9,
         pulse_series_coast_initial_sec=0.30,
-        pulse_series_coast_increment_sec=0.20,
         pulse_series_min_transition_sec=0.0,
     )
 
