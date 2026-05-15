@@ -42,6 +42,25 @@ from sirena_ui.workers.nina_service import NinaService
 APP_VERSION = "0.4"
 
 
+class _BusInitThread(QThread):
+    """Run ``NinaService.ensure_bus()`` off the Qt GUI thread (serial + torque)."""
+
+    finished_ok = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, service: NinaService) -> None:
+        super().__init__()
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            health = self._service.ensure_bus()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(health)
+
+
 def _env_truthy(name: str) -> bool:
     """Permissive bool parse so the operator can use 1/true/yes/on."""
     raw = os.environ.get(name, "").strip().lower()
