@@ -24,7 +24,7 @@ import os
 import socket
 from typing import Dict, Optional
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -120,6 +120,8 @@ class MainWindow(QMainWindow):
 
         self._status_bar = StatusBar()
         outer.addWidget(self._status_bar)
+
+        self._bus_init_thread: Optional[_BusInitThread] = None
 
         # Initial state
         self.navigate("home")
@@ -360,21 +362,44 @@ class MainWindow(QMainWindow):
     # ---------- bus / footer ----------
 
     def _initialize_bus(self) -> None:
-        try:
-            health = self._service.ensure_bus()
-        except Exception:
-            self._status_bar.set_dot("bus", ok=False)
-            self._status_bar.set_right_text("Bus offline \u2014 check serial cable")
+        if self._service.bus_ready:
+            self._apply_bus_footer_from_health({})
             return
+        if self._bus_init_thread is not None and self._bus_init_thread.isRunning():
+            return
+        thread = _BusInitThread(self._service)
+        self._bus_init_thread = thread
+        thread.finished_ok.connect(self._on_bus_init_ok)
+        thread.failed.connect(self._on_bus_init_failed)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_bus_init_ok(self, health: object) -> None:
+        self._bus_init_thread = None
+        if isinstance(health, dict):
+            self._apply_bus_footer_from_health(health)
+        else:
+            self._apply_bus_footer_from_health({})
+
+    def _on_bus_init_failed(self, message: str) -> None:
+        self._bus_init_thread = None
+        self._status_bar.set_dot("bus", ok=False)
+        detail = (message or "").strip() or "check serial cable"
+        self._status_bar.set_right_text(f"Bus offline \u2014 {detail}")
+
+    def _apply_bus_footer_from_health(self, health: dict) -> None:
         self._status_bar.set_dot("bus", ok=True)
         self._status_bar.set_dot("wifi", ok=True)
         self._status_bar.set_dot("battery", ok=True)
         self._status_bar.set_dot("voice", ok=False, warn=True)  # ESP voice not yet wired
-        detected = health.get("detected", 0)
-        expected = health.get("expected", 0)
-        self._status_bar.set_right_text(
-            f"Motors {detected}/{expected} \u00b7 Bus ready"
-        )
+        detected = int(health.get("detected", 0) or 0)
+        expected = int(health.get("expected", 0) or 0)
+        if expected > 0:
+            self._status_bar.set_right_text(
+                f"Motors {detected}/{expected} \u00b7 Bus ready"
+            )
+        else:
+            self._status_bar.set_right_text("Bus ready")
 
     @staticmethod
     def _host_label() -> str:

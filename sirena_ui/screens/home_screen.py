@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from typing import Dict, List, Optional, Tuple
 
-from PyQt5.QtCore import QProcess, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QProcess, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -45,6 +45,22 @@ QUICK_ACTIONS: List[Tuple[str, str, str, str]] = [
     ("health", "Health", "\u2665", "System checks"),
     ("settings", "Settings", "\u2699", "Configure"),
 ]
+
+
+class _HealthCollectThread(QThread):
+    """Run ``collect()`` off the GUI thread (Dynamixel health check is slow)."""
+
+    finished_ok = pyqtSignal(list)
+
+    def __init__(self, service: NinaService) -> None:
+        super().__init__()
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            self.finished_ok.emit(collect(self._service))
+        except Exception:
+            self.finished_ok.emit([])
 
 
 class _QuickTile(QPushButton):
@@ -159,10 +175,9 @@ class HomeScreen(QWidget):
 
         self._hero_pill_timer = QTimer(self)
         self._hero_pill_timer.setInterval(5000)
-        self._hero_pill_timer.timeout.connect(self._refresh_hero_pills)
+        self._hero_pill_timer.timeout.connect(self._refresh_hero_pills_async)
+        self._health_collect_thread: Optional[_HealthCollectThread] = None
         self._wire_drive_hero_pills()
-        self._hero_pill_timer.start()
-        self._refresh_hero_pills()
 
     def _wire_drive_hero_pills(self) -> None:
         """Start BLDC init and subscribe so the torque chip updates without opening Drive."""
@@ -294,15 +309,34 @@ class HomeScreen(QWidget):
 
         return card
 
-    def _refresh_hero_pills(self) -> None:
+    def on_enter(self) -> None:
+        self._refresh_hero_pills_async()
+        if not self._hero_pill_timer.isActive():
+            self._hero_pill_timer.start()
+
+    def on_leave(self) -> None:
+        self._hero_pill_timer.stop()
+
+    def _refresh_hero_pills_async(self) -> None:
+        if self._health_collect_thread is not None and self._health_collect_thread.isRunning():
+            return
+        thread = _HealthCollectThread(self._service)
+        self._health_collect_thread = thread
+        thread.finished_ok.connect(self._apply_hero_pills_from_rows)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _apply_hero_pills_from_rows(self, rows: object) -> None:
+        self._health_collect_thread = None
+        if not isinstance(rows, list):
+            rows = []
+        self._refresh_hero_pills(rows)
+
+    def _refresh_hero_pills(self, rows: list) -> None:
         """Match Android companion hero chips: bus + BLDC torque + voice from live service."""
         pb, pt, pv = self._pill_bus, self._pill_torque, self._pill_voice
         if pb is None or pt is None or pv is None:
             return
-        try:
-            rows = collect(self._service)
-        except Exception:
-            rows = []
 
         bus_row = _health_row_by_key(rows, "bus")
         voice_row = _health_row_by_key(rows, "voice")

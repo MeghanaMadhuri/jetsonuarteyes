@@ -70,6 +70,10 @@ class NinaService:
     def expected_motor_count(self) -> int:
         return self._motor_count
 
+    @property
+    def bus_ready(self) -> bool:
+        return self._bus_ready
+
     def park_hoverboard_brake(self) -> None:
         """Return lean servos to the configured brake pose (safe park)."""
         with self.bus_lock:

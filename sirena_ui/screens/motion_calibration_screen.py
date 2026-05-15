@@ -207,15 +207,16 @@ class MotionCalibrationScreen(QWidget):
             lbl.setText(str(self._ticks[k]))
 
     def on_enter(self) -> None:
-        try:
-            self._service.ensure_bus()
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Bus",
-                f"Could not open the Dynamixel bus:\n{exc}\n\n"
-                "You can still adjust saved values with Save.",
-            )
+        if not self._service.bus_ready:
+            try:
+                self._service.ensure_bus()
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Bus",
+                    f"Could not open the Dynamixel bus:\n{exc}\n\n"
+                    "You can still adjust saved values with Save.",
+                )
         self._sync_values_from_settings()
         ax = self._service.settings.hoverboard_axis
         self._neutral_lbl.setText(

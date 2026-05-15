@@ -73,7 +73,7 @@ _TARGET_FPS = float(os.environ.get("NINA_VISION_TARGET_FPS", "30"))
 # Preview path: downscale + coalesce emits so the GUI is not handed a
 # QueuedConnection backlog of full-size QImages (major latency source).
 _PREVIEW_MAX_W = int(os.environ.get("NINA_VISION_PREVIEW_MAX_W", "640"))
-_PREVIEW_TIMER_MS = max(8, int(os.environ.get("NINA_VISION_PREVIEW_MS", "12")))
+_PREVIEW_TIMER_MS = max(16, int(os.environ.get("NINA_VISION_PREVIEW_MS", "33")))
 
 
 class VisionWorker(QObject):

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
@@ -124,6 +125,10 @@ class DriveScreen(QWidget):
         # even when the user hasn't clicked into a child widget.
         self.setFocusPolicy(Qt.StrongFocus)
         self._kb_active_key: Optional[int] = None
+        self._cam_preview_last_ms: float = 0.0
+        self._cam_preview_min_interval_ms = float(
+            os.environ.get("NINA_DRIVE_CAM_PREVIEW_MS", "66")
+        )
 
         self._straight_test_timer = QTimer(self)
         self._straight_test_timer.setSingleShot(True)
@@ -746,13 +751,12 @@ class DriveScreen(QWidget):
         # Motion calibration save updates NinaService settings in place; keep
         # the same DriveController the screen was constructed with.
         self._drive = self._service.drive
-        # HoverboardAxisDrive.initialize() talks to the Dynamixel bus; open
-        # the bus and enable torque *before* the drive worker runs so a fast
-        # navigation to Drive cannot race MainWindow's deferred ensure_bus.
-        try:
-            self._service.ensure_bus()
-        except Exception as exc:
-            log.warning("ensure_bus before drive init failed: %s", exc)
+        # Bus init runs async from MainWindow; only block here if still pending.
+        if not self._service.bus_ready:
+            try:
+                self._service.ensure_bus()
+            except Exception as exc:
+                log.warning("ensure_bus before drive init failed: %s", exc)
         self._drive.ensure_hardware()
         # Reflect the current autonomy state in case the user toggled
         # it from the Map screen.
@@ -794,6 +798,10 @@ class DriveScreen(QWidget):
 
     def _on_camera_frame(self, image: QImage) -> None:
         """Render an incoming RGB frame into the Front-camera card."""
+        now_ms = time.monotonic() * 1000.0
+        if now_ms - self._cam_preview_last_ms < self._cam_preview_min_interval_ms:
+            return
+        self._cam_preview_last_ms = now_ms
         if not self.isVisible():
             return
         feed = self._cam_feed_label

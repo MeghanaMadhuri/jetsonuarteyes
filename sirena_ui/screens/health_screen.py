@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -34,11 +34,26 @@ from sirena_ui.workers.health_collector import (
 from sirena_ui.workers.nina_service import NinaService
 
 
+class _HealthCollectThread(QThread):
+    finished_ok = pyqtSignal(list)
+
+    def __init__(self, service: NinaService) -> None:
+        super().__init__()
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            self.finished_ok.emit(collect(self._service))
+        except Exception:
+            self.finished_ok.emit([])
+
+
 class HealthScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
         self._last_run: datetime | None = None
+        self._collect_thread: _HealthCollectThread | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -111,7 +126,18 @@ class HealthScreen(QWidget):
             self.refresh()
 
     def refresh(self) -> None:
-        rows = collect(self._service)
+        if self._collect_thread is not None and self._collect_thread.isRunning():
+            return
+        thread = _HealthCollectThread(self._service)
+        self._collect_thread = thread
+        thread.finished_ok.connect(self._apply_collect_results)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _apply_collect_results(self, rows: object) -> None:
+        self._collect_thread = None
+        if not isinstance(rows, list):
+            rows = []
         ok = sum(1 for r in rows if r.is_ok)
         warn = sum(1 for r in rows if r.is_warn)
         err = sum(1 for r in rows if r.is_error)

@@ -95,10 +95,10 @@ def momentary_drive(
 
 
 def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
+    """Read-only drive snapshot for HTTP polling (must not block the Qt thread)."""
     err = peek_last_drive_error()
     dc = service.drive
     try:
-        dc.ensure_hardware()
         nav = dc._nav  # noqa: SLF001
         st = dc.state()
         brake = bool(st.get("brake", True))

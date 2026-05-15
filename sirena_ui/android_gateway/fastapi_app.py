@@ -41,6 +41,7 @@ from sirena_ui.android_gateway import depth_stream
 from sirena_ui.android_gateway.vision_mjpeg import VisionMjpegHub
 from sirena_ui.android_gateway import vision_tablet
 from sirena_ui.workers import slam_worker as slam_mod
+from sirena_ui.workers.background_tasks import run_blocking as _run_bg
 from sirena_ui.workers.nina_service import NinaService
 
 log = logging.getLogger("sirena_ui.android_gateway.fastapi_app")
@@ -616,7 +617,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
 
     @app.get("/v1/robot/health")
     def robot_health_http() -> Dict[str, Any]:
-        return gw.plane.submit(
+        return _run_bg(
             lambda: build_robot_health(gw.service, cfg, coordinator),
             timeout=60.0,
         )
@@ -692,7 +693,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "invert_right": False,
                 "brake": True,
             }
-        st = gw.plane.submit(lambda: navigation_hw_status(gw.service), timeout=30.0)
+        st = _run_bg(lambda: navigation_hw_status(gw.service), timeout=30.0)
         st["bridge_enabled"] = True
         return st
 
@@ -987,7 +988,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "fps": round(fps_val, 2),
             }
 
-        return gw.plane.submit(_st, timeout=30.0)
+        return _run_bg(_st, timeout=30.0)
 
     @app.post("/v1/vision/options")
     def vision_options_http(
