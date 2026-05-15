@@ -21,10 +21,16 @@ the pills clearly say 'simulation'.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
-from PyQt5.QtCore import Qt
+if TYPE_CHECKING:
+    from sirena_ui.workers.autonomy_controller import AutonomyController
+    from sirena_ui.workers.slam_worker import SlamWorker
+
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -49,13 +55,16 @@ from sirena_ui.workers.nina_service import NinaService
 
 log = logging.getLogger("sirena_ui.map_screen")
 
+_MAP_DEFER_MS = max(0, int(os.environ.get("NINA_MAP_DEFER_MS", "16")))
+
 
 class MapScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
-        self._slam = service.slam
-        self._autonomy = service.autonomy
+        self._slam_ref: Optional["SlamWorker"] = None
+        self._autonomy_ref: Optional["AutonomyController"] = None
+        self._signals_wired = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -78,6 +87,31 @@ class MapScreen(QWidget):
         body.addWidget(self._build_map_card(), stretch=60)
         body.addWidget(self._build_side_card(), stretch=40)
 
+        self._defer_enter_timer = QTimer(self)
+        self._defer_enter_timer.setSingleShot(True)
+        self._defer_enter_timer.timeout.connect(self._deferred_on_enter)
+
+    @property
+    def _slam(self) -> "SlamWorker":
+        if self._slam_ref is None:
+            self._slam_ref = self._service.slam
+        return self._slam_ref
+
+    @property
+    def _autonomy(self) -> "AutonomyController":
+        if self._autonomy_ref is None:
+            self._autonomy_ref = self._service.autonomy
+        return self._autonomy_ref
+
+    def _autonomy_is_enabled(self) -> bool:
+        if self._autonomy_ref is not None:
+            return self._autonomy_ref.is_enabled()
+        return self._autonomy_btn.isChecked()
+
+    def _ensure_signals_wired(self) -> None:
+        if self._signals_wired:
+            return
+        self._signals_wired = True
         self._wire_signals()
 
     # ------------------------------------------------------------------
@@ -259,17 +293,25 @@ class MapScreen(QWidget):
     # ------------------------------------------------------------------
 
     def on_enter(self) -> None:
-        # Start SLAM passively so the user sees a live map even if they
-        # never turn on autonomy. If the lidar is missing the worker
-        # surfaces that through status_changed and we render a clean
-        # placeholder.
-        self._slam.start()
+        self._map_pill.setText("starting SLAM…")
+        self._map_pill.set_kind(Pill.KIND_NEUTRAL)
+        if self._defer_enter_timer.isActive():
+            self._defer_enter_timer.stop()
+        self._defer_enter_timer.start(_MAP_DEFER_MS)
+
+    def _deferred_on_enter(self) -> None:
+        if not self.isVisible():
+            return
+        self._ensure_signals_wired()
+        try:
+            self._slam.start()
+        except Exception as exc:
+            log.warning("slam.start failed: %s", exc)
         self._refresh_map_btn_state()
 
     def on_leave(self) -> None:
-        # We don't close SLAM on leave - the autonomy controller may
-        # still need it. The service-wide shutdown handles teardown.
-        pass
+        if self._defer_enter_timer.isActive():
+            self._defer_enter_timer.stop()
 
     # ------------------------------------------------------------------
     # Slots: SLAM signals
@@ -441,7 +483,7 @@ class MapScreen(QWidget):
                 self._map_btn.setText("Stop mapping")
             else:
                 # Don't yank the lidar out from under autonomy.
-                if self._autonomy.is_enabled():
+                if self._autonomy_is_enabled():
                     self._map_btn.blockSignals(True)
                     self._map_btn.setChecked(True)
                     self._map_btn.blockSignals(False)
@@ -471,7 +513,7 @@ class MapScreen(QWidget):
 
     def _on_clear_map(self) -> None:
         # Reset the engine: stop -> start re-initialises the bytemap.
-        was_auto = self._autonomy.is_enabled()
+        was_auto = self._autonomy_is_enabled()
         try:
             if was_auto:
                 self._autonomy.set_enabled(False)

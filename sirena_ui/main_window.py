@@ -288,12 +288,10 @@ class MainWindow(QMainWindow):
 
         self._stack.setCurrentWidget(widget)
         self._header.set_title(self._titles.get(screen_key, "Nina"))
+        # Defer on_enter so the stack paints before sensor/SLAM work runs.
         on_enter = getattr(widget, "on_enter", None)
         if callable(on_enter):
-            try:
-                on_enter()
-            except Exception:
-                pass
+            QTimer.singleShot(0, on_enter)
 
         if subtab:
             set_subtab = getattr(widget, "set_subtab", None)

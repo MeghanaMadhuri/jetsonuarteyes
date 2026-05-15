@@ -32,8 +32,13 @@ operator opens to figure out which sensor isn't coming up.
 from __future__ import annotations
 
 import logging
+import os
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from sirena_ui.workers.autonomy_controller import AutonomyController
+    from sirena_ui.workers.slam_worker import SlamWorker
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -68,14 +73,16 @@ log = logging.getLogger("sirena_ui.perception_screen")
 # Nano. 8 Hz is fast enough that operator scene changes feel live and
 # slow enough that we don't fight the RGB stream for paint cycles.
 _DEPTH_POLL_HZ = 8
+_PERCEPTION_DEFER_MS = max(0, int(os.environ.get("NINA_PERCEPTION_DEFER_MS", "16")))
 
 
 class PerceptionScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
-        self._slam = service.slam
-        self._autonomy = service.autonomy
+        self._slam_ref: Optional["SlamWorker"] = None
+        self._autonomy_ref: Optional["AutonomyController"] = None
+        self._signals_wired = False
 
         # Lifecycle bookkeeping for the resources we acquire on enter
         # and release on leave. Tracked as flags (not refcounts) so a
@@ -128,7 +135,9 @@ class PerceptionScreen(QWidget):
 
         outer.addLayout(self._build_footer())
 
-        self._wire_signals()
+        self._defer_enter_timer = QTimer(self)
+        self._defer_enter_timer.setSingleShot(True)
+        self._defer_enter_timer.timeout.connect(self._deferred_on_enter)
 
         # Poll timer for depth - we don't want a per-frame Qt signal
         # crossing the thread boundary at 15+ Hz from the realsense
@@ -138,6 +147,29 @@ class PerceptionScreen(QWidget):
         self._depth_timer = QTimer(self)
         self._depth_timer.setInterval(int(1000.0 / _DEPTH_POLL_HZ))
         self._depth_timer.timeout.connect(self._poll_depth)
+
+    @property
+    def _slam(self) -> "SlamWorker":
+        if self._slam_ref is None:
+            self._slam_ref = self._service.slam
+        return self._slam_ref
+
+    @property
+    def _autonomy(self) -> "AutonomyController":
+        if self._autonomy_ref is None:
+            self._autonomy_ref = self._service.autonomy
+        return self._autonomy_ref
+
+    def _autonomy_is_enabled(self) -> bool:
+        if self._autonomy_ref is not None:
+            return self._autonomy_ref.is_enabled()
+        return self._autonomy_btn.isChecked()
+
+    def _ensure_signals_wired(self) -> None:
+        if self._signals_wired:
+            return
+        self._signals_wired = True
+        self._wire_signals()
 
     # ------------------------------------------------------------------
     # Layout builders
@@ -394,34 +426,34 @@ class PerceptionScreen(QWidget):
     # ------------------------------------------------------------------
 
     def on_enter(self) -> None:
-        # 1) RGB - reuse the shared VisionWorker via refcount.
+        self._lidar_pill.setText("starting…")
+        self._lidar_pill.set_kind(Pill.KIND_NEUTRAL)
+        self._cam_pill.setText("starting…")
+        self._cam_pill.set_kind(Pill.KIND_NEUTRAL)
+        self._depth_pill.setText("starting…")
+        self._depth_pill.set_kind(Pill.KIND_NEUTRAL)
+        if self._defer_enter_timer.isActive():
+            self._defer_enter_timer.stop()
+        self._defer_enter_timer.start(_PERCEPTION_DEFER_MS)
+
+    def _deferred_on_enter(self) -> None:
+        if not self.isVisible():
+            return
+        self._ensure_signals_wired()
+
         if not self._holds_camera:
             try:
                 self._service.vision.acquire()
                 self._holds_camera = True
             except Exception as exc:
                 log.warning("vision.acquire failed: %s", exc)
-        self._service.reset_face_greet_cooldown()
         self._connect_vision_frame_preview()
 
-        try:
-            self._service.vision.set_face_enabled(True)
-        except Exception:
-            pass
-
-        # 2) Lidar / SLAM - passive; Map screen also calls start().
         try:
             self._slam.start()
         except Exception as exc:
             log.warning("slam.start failed: %s", exc)
 
-        # 3) Depth - acquire through the autonomy controller's
-        # refcount. NOTE: acquire_depth() is now non-blocking - it
-        # returns immediately and the actual `pipeline.start()` runs
-        # on a worker thread. We get the real outcome via the
-        # `depth_open_changed` signal -> `_on_depth_open_changed`.
-        # That keeps the Qt main thread responsive during the
-        # 1-3 s (occasionally tens-of-seconds) RealSense init.
         if not self._holds_depth:
             try:
                 ok, msg = self._autonomy.acquire_depth()
@@ -429,40 +461,29 @@ class PerceptionScreen(QWidget):
                 self._depth_open_ok = ok
                 self._depth_open_msg = msg
             except Exception as exc:
-                ok, msg = False, f"depth: {exc}"
                 self._depth_open_ok = False
-                self._depth_open_msg = msg
+                self._depth_open_msg = f"depth: {exc}"
                 log.warning("autonomy.acquire_depth failed: %s", exc)
-            # First-paint of the pill - either "opening..." (success
-            # path while open thread runs) or an immediate failure
-            # message. The signal handler will update it again when
-            # the worker thread finishes.
             self._update_depth_pill(self._depth_open_ok, self._depth_open_msg)
 
         try:
             self._autonomy.set_depth_visualization_enabled(True)
         except Exception:
             pass
-
-        # Start the depth poll loop. It gracefully no-ops while
-        # frames aren't arriving yet (returns None from
-        # latest_depth_visualization), so it's safe to start here
-        # even before the open thread has actually opened the
-        # pipeline.
         self._depth_timer.start()
-
-        # Sync footer + chip state with current reality in case the
-        # operator toggled autonomy from a different screen.
-        self._on_autonomy_enabled(self._autonomy.is_enabled())
+        self._on_autonomy_enabled(self._autonomy_is_enabled())
 
     def on_leave(self) -> None:
+        if self._defer_enter_timer.isActive():
+            self._defer_enter_timer.stop()
         self._disconnect_vision_frame_preview()
         self._depth_timer.stop()
-        try:
-            self._autonomy.set_depth_visualization_enabled(False)
-        except Exception:
-            pass
-        if self._holds_depth:
+        if self._autonomy_ref is not None:
+            try:
+                self._autonomy.set_depth_visualization_enabled(False)
+            except Exception:
+                pass
+        if self._holds_depth and self._autonomy_ref is not None:
             try:
                 self._autonomy.release_depth()
             finally:
@@ -666,6 +687,8 @@ class PerceptionScreen(QWidget):
         new frame has arrived (returns None and we bail).
         """
         if self._depth_image_label is None or self._depth_overlay_label is None:
+            return
+        if self._autonomy_ref is None:
             return
         try:
             payload = self._autonomy.latest_depth_visualization()
