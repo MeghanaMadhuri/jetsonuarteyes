@@ -148,7 +148,7 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     Does **not** use Motion-cal / ``hover_calibration.json`` ``turn_duration_sec``
     on ``nav.config`` (that value was forcing long holds). Env only:
 
-    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.3** s).
+    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.15** s).
     """
     _ = nav
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
@@ -158,9 +158,9 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
         except ValueError:
             pass
     try:
-        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.3"))))
+        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.15"))))
     except ValueError:
-        return 0.3
+        return 0.15
 
 
 def _left_fwd_extra_pp() -> int:
