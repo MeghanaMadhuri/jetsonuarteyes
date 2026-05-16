@@ -159,9 +159,9 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
             except (TypeError, ValueError):
                 pass
     try:
-        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.2"))))
+        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.12"))))
     except ValueError:
-        return 0.2
+        return 0.12
 
 
 def _left_fwd_extra_pp() -> int:
