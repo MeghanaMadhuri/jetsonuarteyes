@@ -126,6 +126,42 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 _TURN_PIVOT_GOAL_OFFSET_TICKS = 100
 
 
+def hover_computed_turn_pivot_goals(
+    axis: HoverboardAxisSettings,
+    *,
+    turn_left: bool,
+) -> tuple[int, int]:
+    """Full pivot (id_left, id_right) raw goals from FWD/REV + push ticks + pivot offset.
+
+    Used by motion calibration UI defaults and :meth:`HoverboardAxisDrive._goals_for_wheels`
+    when optional per-turn overrides are unset.
+    """
+    def _cg(t: int) -> int:
+        return max(0, min(4095, int(t)))
+
+    nl = _cg(int(axis.brake_pos_left))
+    nr = _cg(int(axis.brake_pos_right))
+    fl = _cg(int(axis.forward_pos_left))
+    fr = _cg(int(axis.forward_pos_right))
+    bl = _cg(int(axis.backward_pos_left))
+    br = _cg(int(axis.backward_pos_right))
+    if turn_left:
+        l_tgt, r_tgt = fl, br
+    else:
+        l_tgt, r_tgt = bl, fr
+    if axis.swap_turn_lr:
+        l_tgt, r_tgt = r_tgt, l_tgt
+    push = int(axis.turn_push_ticks)
+    if push > 0:
+        l_tgt = _nudge_goal_from_brake(l_tgt, nl, push)
+        r_tgt = _nudge_goal_from_brake(r_tgt, nr, push)
+    extra = int(_TURN_PIVOT_GOAL_OFFSET_TICKS)
+    if extra > 0:
+        l_tgt = _cg(_nudge_goal_from_brake(l_tgt, nl, extra))
+        r_tgt = _cg(_nudge_goal_from_brake(r_tgt, nr, extra))
+    return l_tgt, r_tgt
+
+
 def _straight_prime_goal_ticks() -> int:
     try:
         return max(0, min(4095, int(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_POS", "2048"))))
@@ -248,8 +284,14 @@ class HoverboardAxisDrive:
 
     # ------------------------------------------------------------------
     def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
-        """Refresh FWD/REV (and related) goals after motion calibration save."""
+        """Refresh FWD/REV / pivot goals after motion calibration save."""
         self._axis = axis_cfg
+
+    def update_navigation_settings(self, nav_cfg) -> None:
+        """Refresh navigation knobs (e.g. ``turn_duration_sec``) after calibration save."""
+        self.config = nav_cfg
+        self._invert_left = bool(getattr(nav_cfg, "invert_left_dir", False))
+        self._invert_right = bool(getattr(nav_cfg, "invert_right_dir", False))
 
     def initialize(self) -> None:
         if self._is_initialized:
@@ -997,28 +1039,28 @@ class HoverboardAxisDrive:
         # **Unequal speeds** ⇒ blend each axis toward its goal by speed/100 (timed
         # Turn left/right: strong forward lean vs weaker backward lean on the other axis).
         if left_speed > 0 and right_speed > 0 and lf != rf:
-            fl = self._dxl._clamp_pos(int(self._axis.forward_pos_left))
-            fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
-            bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
-            br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
-            if lf:
-                l_tgt, r_tgt = fl, br
+            turn_left_geom = bool(lf and not rf)
+            ax = self._axis
+            if (
+                turn_left_geom
+                and ax.turn_left_pos_left is not None
+                and ax.turn_left_pos_right is not None
+            ):
+                l_tgt = self._dxl._clamp_pos(int(ax.turn_left_pos_left))
+                r_tgt = self._dxl._clamp_pos(int(ax.turn_left_pos_right))
+            elif (
+                not turn_left_geom
+                and ax.turn_right_pos_left is not None
+                and ax.turn_right_pos_right is not None
+            ):
+                l_tgt = self._dxl._clamp_pos(int(ax.turn_right_pos_left))
+                r_tgt = self._dxl._clamp_pos(int(ax.turn_right_pos_right))
             else:
-                l_tgt, r_tgt = bl, fr
-            if self._axis.swap_turn_lr:
-                l_tgt, r_tgt = r_tgt, l_tgt
-            push = int(self._axis.turn_push_ticks)
-            if push > 0:
-                l_tgt = _nudge_goal_from_brake(l_tgt, nl, push)
-                r_tgt = _nudge_goal_from_brake(r_tgt, nr, push)
-            extra = int(_TURN_PIVOT_GOAL_OFFSET_TICKS)
-            if extra > 0:
-                l_tgt = self._dxl._clamp_pos(
-                    _nudge_goal_from_brake(l_tgt, nl, extra)
+                l_tgt, r_tgt = hover_computed_turn_pivot_goals(
+                    ax, turn_left=turn_left_geom
                 )
-                r_tgt = self._dxl._clamp_pos(
-                    _nudge_goal_from_brake(r_tgt, nr, extra)
-                )
+                l_tgt = self._dxl._clamp_pos(l_tgt)
+                r_tgt = self._dxl._clamp_pos(r_tgt)
             if left_speed == right_speed:
                 lg, rg = l_tgt, r_tgt
             else:

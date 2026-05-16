@@ -142,7 +142,7 @@ def _drive_pivot_speed_pct() -> int:
     return int(DEFAULT_PIVOT_SPEED_PCT)
 
 
-def _drive_turn_90_duration_sec() -> float:
+def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     """Pivot duration for Drive screen 90° buttons (see ``NINA_DRIVE_TURN_90_SEC``)."""
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
     if raw:
@@ -150,6 +150,14 @@ def _drive_turn_90_duration_sec() -> float:
             return max(0.1, min(60.0, float(raw)))
         except ValueError:
             pass
+    if nav is not None:
+        cfg = getattr(nav, "config", None)
+        if cfg is not None:
+            try:
+                td = float(getattr(cfg, "turn_duration_sec"))
+                return max(0.1, min(60.0, td))
+            except (TypeError, ValueError):
+                pass
     try:
         return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "3.0"))))
     except ValueError:
@@ -468,6 +476,12 @@ class DriveController(QObject):
         nav = self._nav if self._nav is not None else self._injected_nav
         if nav is not None and hasattr(nav, "update_axis_config"):
             nav.update_axis_config(axis_cfg)
+
+    def update_navigation_settings(self, nav_cfg: object) -> None:
+        """Apply navigation tunables (e.g. timed turn duration) without rebuilding."""
+        nav = self._nav if self._nav is not None else self._injected_nav
+        if nav is not None and hasattr(nav, "update_navigation_settings"):
+            nav.update_navigation_settings(nav_cfg)
 
     def supports_forward_pulse(self) -> bool:
         """True when nav offers straight pulse series and ``pulse_forward_enabled`` is on.
@@ -1063,7 +1077,7 @@ class DriveController(QObject):
                 )
             self._emit_state()
             speed = _drive_turn_90_speed_pct()
-            duration = _drive_turn_90_duration_sec()
+            duration = _drive_turn_90_duration_sec(self._nav)
             if which == _DIR_LEFT:
                 self._nav.turn_left(speed_percent=speed, duration=duration)
             else:

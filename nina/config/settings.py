@@ -169,6 +169,12 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
+    Optional per-pivot goals (Motion calibration UI / ``hover_calibration.json``):
+    ``turn_left_pos_left`` / ``turn_left_pos_right`` and
+    ``turn_right_pos_left`` / ``turn_right_pos_right``. When all of a pair are
+    set, timed and D-pad pivots use them instead of deriving from FWD/REV +
+    push/offset.
+
     **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
     ``start_pulse_straight_forward`` runs ``pulse_series_max`` cycles: forward hold
     ``pulse_series_fwd_sec``, coast dwell ``pulse_series_coast_initial_sec``, coast blend
@@ -217,6 +223,10 @@ class HoverboardAxisSettings:
     pulse_series_back_coast_initial_sec: float
     pulse_backward_coast_blend: float
     pulse_backward_return_ramp_sec: float
+    turn_left_pos_left: Optional[int] = None
+    turn_left_pos_right: Optional[int] = None
+    turn_right_pos_left: Optional[int] = None
+    turn_right_pos_right: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -576,12 +586,18 @@ def load_settings(repo_root: Path) -> NinaSettings:
             0.0,
             min(10.0, _env_float("NINA_HOVER_PULSE_BACK_RETURN_RAMP_SEC", 0.0)),
         ),
+        turn_left_pos_left=None,
+        turn_left_pos_right=None,
+        turn_right_pos_left=None,
+        turn_right_pos_right=None,
     )
 
     from nina.config.hover_calibration import (  # noqa: PLC0415 — after HoverboardAxisSettings
         merge_hover_calibration_into_axis,
+        merge_hover_calibration_into_navigation,
     )
 
+    navigation = merge_hover_calibration_into_navigation(navigation)
     hoverboard_axis = merge_hover_calibration_into_axis(hoverboard_axis)
 
     autonomy = AutonomySettings(

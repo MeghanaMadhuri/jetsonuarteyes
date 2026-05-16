@@ -484,8 +484,8 @@ class DriveScreen(QWidget):
         self._motion_cal_btn.setFocusPolicy(Qt.NoFocus)
         self._motion_cal_btn.setMinimumHeight(32)
         self._motion_cal_btn.setToolTip(
-            "Tune hoverboard lean Dynamixel goals for forward/backward motion "
-            "(saved to ~/.config/sirena/hover_calibration.json)."
+            "Tune hoverboard lean goals for forward, backward, turn left/right pivots, "
+            "and timed turn duration (1–5 s), saved to ~/.config/sirena/hover_calibration.json."
         )
         self._motion_cal_btn.clicked.connect(self.calibration_requested.emit)
         cal_row.addWidget(self._motion_cal_btn, stretch=1)
