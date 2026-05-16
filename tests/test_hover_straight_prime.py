@@ -78,7 +78,7 @@ def test_first_straight_forward_primes_2048_then_forward() -> None:
     cfg = SimpleNamespace(
         default_speed_percent=10,
         settle_delay_sec=0.0,
-        turn_duration_sec=2.3,
+        turn_duration_sec=5.0,
     )
     lock = __import__("threading").RLock()
     drv = HoverboardAxisDrive(dxl, lock, axis, cfg)
@@ -97,7 +97,7 @@ def test_second_forward_hold_skips_extra_prime() -> None:
     cfg = SimpleNamespace(
         default_speed_percent=10,
         settle_delay_sec=0.0,
-        turn_duration_sec=2.3,
+        turn_duration_sec=5.0,
     )
     lock = __import__("threading").RLock()
     drv = HoverboardAxisDrive(dxl, lock, axis, cfg)
@@ -115,7 +115,7 @@ def test_switch_forward_to_backward_primes_again() -> None:
     cfg = SimpleNamespace(
         default_speed_percent=10,
         settle_delay_sec=0.0,
-        turn_duration_sec=2.3,
+        turn_duration_sec=5.0,
     )
     lock = __import__("threading").RLock()
     drv = HoverboardAxisDrive(dxl, lock, axis, cfg)

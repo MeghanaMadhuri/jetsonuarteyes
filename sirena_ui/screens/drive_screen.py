@@ -503,7 +503,7 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed yaw (~2 s default: NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC): "
+            "Timed yaw (~5 s default: NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC): "
             "runs straight-line lean prime (same family as Straight test), then "
             "left lean axis (e.g. ID 12) toward FWD, right (e.g. 13) toward REV "
             "at NINA_HOVER_TURN_SLOW_WHEEL_PCT vs outer speed (NINA_DRIVE_TURN_90_PCT). "

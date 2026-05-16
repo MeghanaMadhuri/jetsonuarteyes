@@ -151,9 +151,9 @@ def _drive_turn_90_duration_sec() -> float:
         except ValueError:
             pass
     try:
-        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "2.0"))))
+        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "5.0"))))
     except ValueError:
-        return 2.0
+        return 5.0
 
 
 def _left_fwd_extra_pp() -> int:
@@ -959,7 +959,7 @@ class DriveController(QObject):
                 start_from_stop = self._active_drive is None
             # Use drive_continuous for all four directions so L/R is
             # held-while-pressed (matches forward/back) instead of the
-            # old timed turn that auto-stopped after ~2.3s.
+            # old timed turn that auto-stopped after a few seconds.
             if start_from_stop:
                 if direction in (_DIR_LEFT, _DIR_RIGHT):
                     pivot = _drive_pivot_speed_pct()

@@ -119,6 +119,9 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
+# Pivot only (L/R yaw): offset applied to both goal corners after ``turn_push_ticks``.
+_TURN_PIVOT_GOAL_OFFSET_TICKS = 5
+
 
 def _straight_prime_goal_ticks() -> int:
     try:
@@ -1005,6 +1008,12 @@ class HoverboardAxisDrive:
             if push > 0:
                 l_tgt = _nudge_goal_from_brake(l_tgt, nl, push)
                 r_tgt = _nudge_goal_from_brake(r_tgt, nr, push)
+            l_tgt = self._dxl._clamp_pos(
+                l_tgt + _TURN_PIVOT_GOAL_OFFSET_TICKS
+            )
+            r_tgt = self._dxl._clamp_pos(
+                r_tgt + _TURN_PIVOT_GOAL_OFFSET_TICKS
+            )
             if left_speed == right_speed:
                 lg, rg = l_tgt, r_tgt
             else:
@@ -1122,7 +1131,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 2.0)
+            else getattr(self.config, "turn_duration_sec", 5.0)
         )
         self._prime_straight_neutral()
         time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
@@ -1147,7 +1156,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 2.0)
+            else getattr(self.config, "turn_duration_sec", 5.0)
         )
         self._prime_straight_neutral()
         time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
