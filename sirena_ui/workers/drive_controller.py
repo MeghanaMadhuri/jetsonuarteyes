@@ -692,6 +692,7 @@ class DriveController(QObject):
             return
         with self._lock:
             if self._state["brake"]:
+                log.info("turn_90(%s) ignored: brake engaged", which)
                 return
         self._enqueue(lambda w=which: self._do_turn_90(w))
 

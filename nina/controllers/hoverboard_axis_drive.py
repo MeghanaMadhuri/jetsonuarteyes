@@ -12,8 +12,9 @@ D-pad pivots also skip the explicit prime.
 
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
-lean (right side uses ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer ``speed_percent``).
-**Turn right** is the mirror.
+lean. **Timed** ``turn_left`` / ``turn_right`` command **full** pivot goals (equal
+blend). **Held** D-pad pivots use ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer
+``speed_percent`` when the UI applies asymmetric duties. **Turn right** is the mirror.
 
 **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
 ``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` run **independent** timed
@@ -1166,12 +1167,12 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: left lean (``id_left``) forward, right lean backward (weaker).
+        """Timed yaw: full pivot lean (opposite FWD/REV corners), hold, then brake.
 
-        Does not run :meth:`_prime_straight_neutral`; pivot goals apply from the
-        current pose (``set_wheels`` still cancels any straight pulse series).
-        Outer lean uses *speed_percent*; inner uses
-        ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` (default 8).
+        Uses **equal** per-side blend weights so both leans reach full pivot goals
+        (``left_speed == right_speed`` → no partial blend). Asymmetric
+        ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` is for D-pad / held pivots via
+        :meth:`set_wheels`, not these short timed buttons.
         """
         outer = self._resolve_speed(speed_percent)
         slow = _hover_turn_slow_wheel_pct()
@@ -1185,7 +1186,7 @@ class HoverboardAxisDrive:
             left_dir=self.DIR_FORWARD,
             left_speed=outer,
             right_dir=self.DIR_BACKWARD,
-            right_speed=slow,
+            right_speed=outer,
         )
         time.sleep(max(0.0, dur))
         self.stop()
@@ -1195,7 +1196,7 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: right lean forward, left lean backward (weaker). See ``turn_left``."""
+        """Timed yaw: full pivot lean; mirror of :meth:`turn_left`."""
         outer = self._resolve_speed(speed_percent)
         slow = _hover_turn_slow_wheel_pct()
         outer = max(outer, slow)
@@ -1206,7 +1207,7 @@ class HoverboardAxisDrive:
         )
         self.set_wheels(
             left_dir=self.DIR_BACKWARD,
-            left_speed=slow,
+            left_speed=outer,
             right_dir=self.DIR_FORWARD,
             right_speed=outer,
         )
