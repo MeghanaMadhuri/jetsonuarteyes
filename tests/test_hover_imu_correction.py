@@ -1,10 +1,16 @@
-"""IMU yaw-drift correction wired into ``HoverboardAxisDrive`` straight pulses.
+"""Discrete IMU yaw-drift correction wired into ``HoverboardAxisDrive``.
 
-These tests exercise the asymmetric lean-bias correction added so a bot
-driving straight forward or backward auto-yaws toward zero drift, plus the
-``NINA_HOVER_POST_TURN_SETTLE_SEC`` knob that makes the priming pause visible
-right after a "Turn left/right" → "Straight back" sequence (the original
-"feels like priming was skipped" complaint).
+The straight pulse series polls the IMU yaw integrator at ~20 Hz; when drift
+crosses ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG`` the controller stops the wheels,
+runs an in-place pivot until drift returns inside
+``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (or ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``
+elapses), brakes, re-primes the lean stack, and only then resumes the primed
+forward / back pulse. Continuous asymmetric bias mid-pulse was intentionally
+removed — the operator saw it as uncommanded fast turns.
+
+These tests also cover the ``NINA_HOVER_POST_TURN_SETTLE_SEC`` knob that makes
+the priming pause visible right after a Turn left/right → Straight sequence
+(the original "feels like priming was skipped" complaint).
 """
 
 from __future__ import annotations
@@ -95,88 +101,259 @@ def _cfg() -> SimpleNamespace:
     )
 
 
+def _fast_correction_env(**extras: str) -> dict[str, str]:
+    """Tunables that make the discrete pivot fast and easy to observe in tests."""
+    env = {
+        "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "3.0",
+        "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.0",
+        "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
+        "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.08",
+        "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
+    }
+    env.update(extras)
+    return env
+
+
+def _pivot_left_goals_20pct() -> dict[int, int]:
+    """Expected lean goals for a 20% blend ``_goals_for_wheels(F, B)`` pivot.
+
+    With the test axis (brake=2048, fwd=2100, bwd=2000, swap_turn_lr=True,
+    push=0, extra=100): ``hover_computed_turn_pivot_goals(turn_left=True)``
+    returns (1900, 2200). At u=0.2: left = 2048 + (1900-2048)*0.2 = 2018,
+    right = 2048 + (2200-2048)*0.2 = 2078.
+    """
+    return {12: 2018, 13: 2078}
+
+
+def _pivot_right_goals_20pct() -> dict[int, int]:
+    """Mirror of :func:`_pivot_left_goals_20pct` for ``_goals_for_wheels(B, F)``."""
+    return {12: 2078, 13: 2018}
+
+
 # ----------------------------------------------------------------------
-# Goal-bias math
+# Drift sampler plumbing
 # ----------------------------------------------------------------------
 
-def test_imu_correction_zero_when_no_hook_wired() -> None:
+def test_imu_sample_drift_returns_none_without_hook() -> None:
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
-    assert drv._imu_correction_ticks() == 0
-    out = drv._imu_corrected_goals({12: 2100, 13: 2100}, is_forward=True)
-    assert out == {12: 2100, 13: 2100}
+    assert drv._imu_sample_drift_deg() is None
 
 
-def test_imu_correction_inside_deadband_returns_zero_ticks() -> None:
-    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
-    drv.initialize()
-    drv.set_imu_hooks(yaw_drift_fn=lambda: 0.2)  # below default 0.5 deg deadband
-    assert drv._imu_correction_ticks() == 0
-
-
-def test_imu_correction_forward_positive_drift_slows_left_speeds_right() -> None:
-    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
-    drv.initialize()
-    # +5 deg @ 6 ticks/deg = 30 ticks → left -30, right +30 in raw goal space
-    drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
-    out = drv._imu_corrected_goals({12: 2100, 13: 2100}, is_forward=True)
-    assert out[12] == 2070, out
-    assert out[13] == 2130, out
-
-
-def test_imu_correction_backward_flips_sign() -> None:
-    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
-    drv.initialize()
-    drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
-    # backward goals start at 2000 (less than brake 2048).
-    # speed_sign = -1 ⇒ left +30, right -30 in raw goal space
-    out = drv._imu_corrected_goals({12: 2000, 13: 2000}, is_forward=False)
-    assert out[12] == 2030, out
-    assert out[13] == 1970, out
-
-
-def test_imu_correction_clamped_to_max_ticks() -> None:
-    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
-    drv.initialize()
-    with patch.dict(
-        os.environ,
-        {
-            "NINA_HOVER_IMU_CORR_KP_TICKS_PER_DEG": "10",
-            "NINA_HOVER_IMU_CORR_MAX_TICKS": "25",
-            "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "0.0",
-        },
-        clear=False,
-    ):
-        drv.set_imu_hooks(yaw_drift_fn=lambda: 99.0)
-    assert drv._imu_correction_ticks() == 25
-    drv.set_imu_hooks(yaw_drift_fn=lambda: -99.0)
-    # set_imu_hooks rereads env, so previous patch is gone — but max from prior
-    # call is sticky on the instance, so this verifies clamping survives the
-    # second hook install too.
-
-
-def test_imu_correction_swallows_sampler_exceptions() -> None:
+def test_imu_sample_drift_swallows_sampler_exceptions() -> None:
     def boom() -> float:
         raise RuntimeError("imu wedged")
 
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
     drv.set_imu_hooks(yaw_drift_fn=boom)
-    assert drv._imu_correction_ticks() == 0  # no exception, no bias
+    assert drv._imu_sample_drift_deg() is None
 
 
-def test_imu_correction_respects_disable_env() -> None:
+def test_imu_sample_drift_respects_disable_env() -> None:
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
     with patch.dict(
         os.environ, {"NINA_HOVER_IMU_CORR_ENABLE": "0"}, clear=False
     ):
         drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)
-    assert drv._imu_correction_ticks() == 0
+    assert drv._imu_sample_drift_deg() is None
+
+
+def test_imu_sample_drift_returns_value_when_wired() -> None:
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    drv.set_imu_hooks(yaw_drift_fn=lambda: 4.2)
+    assert drv._imu_sample_drift_deg() == 4.2
 
 
 # ----------------------------------------------------------------------
-# Auto begin/end straight-leg hook plumbing
+# _imu_corrective_hold: no-correction paths
+# ----------------------------------------------------------------------
+
+def test_corrective_hold_no_hook_uses_plain_wait() -> None:
+    """Without an IMU sampler the hold should behave like ``halt.wait``."""
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(drv._dxl.goal_writes)
+    t0 = time.monotonic()
+    assert drv._imu_corrective_hold(base, 0.05, halt, is_forward=True) is False
+    assert time.monotonic() - t0 >= 0.04
+    # plain wait → no extra goal writes
+    assert len(drv._dxl.goal_writes) == pre
+
+
+def test_corrective_hold_below_threshold_only_repplies_base_goals() -> None:
+    """When drift stays inside the threshold the hold just keeps base lean."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.5)  # well below 3 deg threshold
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    assert drv._imu_corrective_hold(base, 0.06, halt, is_forward=True) is False
+    after = dxl.goal_writes[pre:]
+    # Every write inside the hold should equal base — no pivot writes appeared.
+    assert after, "expected at least one base re-apply during the hold"
+    for w in after:
+        assert w == base, f"unexpected non-base write during quiet hold: {w}"
+
+
+# ----------------------------------------------------------------------
+# _imu_corrective_hold: pause-pivot-resume
+# ----------------------------------------------------------------------
+
+def test_corrective_hold_pivots_left_for_positive_drift() -> None:
+    """Drift +5 → pause, pivot left (F,B geometry), brake, re-prime, resume base."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_left = _pivot_left_goals_20pct()
+    assert any(w == pivot_left for w in after), (
+        f"expected pivot-left lean {pivot_left} in writes, saw {after}"
+    )
+    # Brake goals (2048, 2048) must appear between base and pivot.
+    brake = {12: 2048, 13: 2048}
+    assert any(w == brake for w in after)
+    # Once the pivot completes the loop should resume the primed base lean.
+    assert after[-1] == base, f"hold did not resume primed base lean; tail={after[-3:]}"
+
+
+def test_corrective_hold_pivots_right_for_negative_drift() -> None:
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: -5.0)
+    halt = threading.Event()
+    base = {12: 1986, 13: 1986}  # ~primed backward
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_right = _pivot_right_goals_20pct()
+    assert any(w == pivot_right for w in after), (
+        f"expected pivot-right lean {pivot_right} in writes, saw {after}"
+    )
+
+
+def test_corrective_hold_exits_pivot_when_drift_returns_to_deadband() -> None:
+    """Pivot should stop as soon as drift drops back inside the deadband."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # First call (trigger) returns +5 (above threshold); subsequent calls
+    # return 0 so the closed-loop pivot exits immediately on the very first
+    # poll inside the pivot.
+    yaws = [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else 0.0
+
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.5"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre_writes = len(dxl.goal_writes)
+    t0 = time.monotonic()
+    drv._imu_corrective_hold(base, 0.4, halt, is_forward=True)
+    elapsed = time.monotonic() - t0
+    after = dxl.goal_writes[pre_writes:]
+    # We capped pivot at 0.5s but the deadband should exit in well under 0.2s.
+    # Total hold is 0.4s; ensure it took at least the hold duration but the
+    # pivot itself was short (pivot_left only appears a small number of times).
+    assert elapsed >= 0.35, "hold was cut short"
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    assert len(pivot_writes) <= 3, (
+        f"expected closed-loop pivot to exit promptly; saw {len(pivot_writes)} pivot writes"
+    )
+
+
+def test_corrective_hold_pivot_capped_by_max_sec() -> None:
+    """When drift never returns to deadband the pivot must still end by the cap."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.06"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 30.0)  # stuck high
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    t0 = time.monotonic()
+    drv._imu_corrective_hold(base, 0.20, halt, is_forward=True)
+    elapsed = time.monotonic() - t0
+    # Hold ran for full 0.2s, but the pivot itself was capped at 0.06s and the
+    # loop should have re-triggered another pivot on the next poll. Allow a
+    # bit of slack for thread scheduling.
+    assert elapsed >= 0.18, "hold returned early"
+
+
+def test_corrective_hold_halt_during_pivot_aborts_promptly() -> None:
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="1.0"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 30.0)
+    halt = threading.Event()
+
+    def _later() -> None:
+        time.sleep(0.04)
+        halt.set()
+
+    threading.Thread(target=_later, daemon=True).start()
+    t0 = time.monotonic()
+    aborted = drv._imu_corrective_hold({12: 2114, 13: 2114}, 5.0, halt, is_forward=True)
+    elapsed = time.monotonic() - t0
+    assert aborted is True
+    assert elapsed < 0.5, "halt did not interrupt the pivot promptly"
+
+
+# ----------------------------------------------------------------------
+# set_wheels must NOT bias the symmetric-straight lean (no continuous turns)
+# ----------------------------------------------------------------------
+
+def test_set_wheels_does_not_apply_imu_bias_to_straight() -> None:
+    """Continuous bias mid-motion was perceived as uncommanded turns. Gone."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)  # huge drift
+    pre = len(dxl.goal_writes)
+    drv.forward(10)  # symmetric straight
+    after = dxl.goal_writes[pre:]
+    # Symmetric forward at speed 10 yields equal left/right goals — they must
+    # remain symmetric (no asymmetric bias).
+    last = after[-1]
+    assert last[12] == last[13], (
+        f"set_wheels symmetric straight should not bias L/R; got {last}"
+    )
+
+
+# ----------------------------------------------------------------------
+# Auto begin/end straight-leg hook plumbing (unchanged from prior tests)
 # ----------------------------------------------------------------------
 
 def test_set_wheels_calls_imu_begin_only_when_entering_straight() -> None:
@@ -191,11 +368,11 @@ def test_set_wheels_calls_imu_begin_only_when_entering_straight() -> None:
     )
     drv.forward(10)
     assert begins == [1]
-    drv.forward(10)  # second straight in same direction → no extra begin
+    drv.forward(10)
     assert begins == [1]
-    drv.backward(10)  # switching direction primes again → second begin
+    drv.backward(10)
     assert begins == [1, 1]
-    assert ends == []  # never left a straight key
+    assert ends == []
     drv.stop()
     assert ends == [1]
 
@@ -211,28 +388,25 @@ def test_pivot_after_straight_ends_then_resumes_on_next_straight() -> None:
         end_straight_fn=lambda: ends.append(1),
     )
     drv.forward(10)
-    # Pivot leaves the symmetric-straight key → end fires once.
     drv.set_wheels(
         left_dir=drv.DIR_FORWARD, left_speed=20,
         right_dir=drv.DIR_BACKWARD, right_speed=20,
     )
     assert ends == [1]
-    # Resuming straight after the pivot triggers a fresh begin.
     drv.forward(10)
     assert begins == [1, 1]
 
 
 # ----------------------------------------------------------------------
-# Pulse loops actually re-issue goals during their main holds
+# Pulse loops actually trigger pause-pivot-resume during their main holds
 # ----------------------------------------------------------------------
 
-def test_backward_pulse_main_hold_repolls_imu() -> None:
-    """During the back-hold the pulse loop should re-apply IMU-corrected goals."""
+def test_backward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
+    """Above-threshold drift inside the back-hold must surface a pivot lean write."""
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(
         dxl,
         threading.RLock(),
-        # Make the back hold long enough to observe several poll ticks.
         replace(
             _axis(),
             pulse_series_max=1,
@@ -246,35 +420,26 @@ def test_backward_pulse_main_hold_repolls_imu() -> None:
 
     def fake_drift() -> float:
         samples["calls"] += 1
-        # Constant +2 deg → ticks = round(6 * 2) = 12 → left -12, right +12 on back leg sign
-        return 2.0
+        return 5.0  # constant above-threshold drift
 
-    with patch.dict(
-        os.environ,
-        {
-            "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
-            "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "0.0",
-        },
-        clear=False,
-    ):
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
         drv.set_imu_hooks(yaw_drift_fn=fake_drift)
 
     drv.start_pulse_straight_backward(50)
-    for _ in range(100):
+    for _ in range(200):
         if not drv.is_forward_pulse_active():
             break
         time.sleep(0.02)
     drv.stop()
-    assert samples["calls"] >= 3, "imu drift sampler should be polled during main hold"
-    # speed_sign=-1, sign_left=+1: left_goal = 2000 - (1 * -1 * 12) = 2012
-    # right_goal = 2000 + (1 * -1 * 12) = 1988
-    saw_corrected = any(
-        g.get(12) == 2012 and g.get(13) == 1988 for g in dxl.goal_writes
+    assert samples["calls"] >= 2, "drift sampler should be polled in the main hold"
+    pivot_left = _pivot_left_goals_20pct()
+    assert any(g == pivot_left for g in dxl.goal_writes), (
+        f"expected pivot-left lean {pivot_left} during backward pulse, "
+        f"saw writes={dxl.goal_writes!r}"
     )
-    assert saw_corrected, "expected at least one IMU-corrected backward goal write"
 
 
-def test_forward_pulse_main_hold_repolls_imu() -> None:
+def test_forward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(
         dxl,
@@ -288,36 +453,56 @@ def test_forward_pulse_main_hold_repolls_imu() -> None:
         _cfg(),
     )
     drv.initialize()
-    samples = {"calls": 0}
 
     def fake_drift() -> float:
-        samples["calls"] += 1
-        return -3.0  # bot drifting left → corr negative → speed up left, slow right
+        return -5.0  # bot drifted left → pivot right
 
-    with patch.dict(
-        os.environ,
-        {
-            "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
-            "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "0.0",
-        },
-        clear=False,
-    ):
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
         drv.set_imu_hooks(yaw_drift_fn=fake_drift)
 
     drv.start_pulse_straight_forward(50)
-    for _ in range(100):
+    for _ in range(200):
         if not drv.is_forward_pulse_active():
             break
         time.sleep(0.02)
     drv.stop()
-    assert samples["calls"] >= 3
-    # corr = round(6 * -3) = -18, speed_sign=+1, sign_left=+1, forward base=2114
-    # (forward_pos_left=2100 + _STRAIGHT_FWD_EXTRA_TICKS 14 = 2114)
-    # left = 2114 - (1 * 1 * -18) = 2132; right = 2114 + (1 * 1 * -18) = 2096
-    saw_corrected = any(
-        g.get(12) == 2132 and g.get(13) == 2096 for g in dxl.goal_writes
+    pivot_right = _pivot_right_goals_20pct()
+    assert any(g == pivot_right for g in dxl.goal_writes), (
+        f"expected pivot-right lean {pivot_right} during forward pulse, "
+        f"saw writes={dxl.goal_writes!r}"
     )
-    assert saw_corrected, "expected at least one IMU-corrected forward goal write"
+
+
+def test_pulse_main_hold_skips_pivot_when_drift_is_quiet() -> None:
+    """When drift stays inside the threshold the pulse loop must not pivot."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(
+        dxl,
+        threading.RLock(),
+        replace(
+            _axis(),
+            pulse_series_max=1,
+            pulse_series_back_sec=0.20,
+            pulse_series_back_coast_initial_sec=0.0,
+        ),
+        _cfg(),
+    )
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.5)  # well inside deadband
+
+    drv.start_pulse_straight_backward(50)
+    for _ in range(200):
+        if not drv.is_forward_pulse_active():
+            break
+        time.sleep(0.02)
+    drv.stop()
+    pivot_left = _pivot_left_goals_20pct()
+    pivot_right = _pivot_right_goals_20pct()
+    for g in dxl.goal_writes:
+        assert g != pivot_left and g != pivot_right, (
+            f"unexpected pivot lean {g} while drift was quiet"
+        )
 
 
 # ----------------------------------------------------------------------
@@ -325,7 +510,6 @@ def test_forward_pulse_main_hold_repolls_imu() -> None:
 # ----------------------------------------------------------------------
 
 def test_post_turn_settle_dwells_before_pulse_starts() -> None:
-    """``NINA_HOVER_POST_TURN_SETTLE_SEC`` should add an observable pause."""
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
     with patch.dict(
@@ -335,8 +519,6 @@ def test_post_turn_settle_dwells_before_pulse_starts() -> None:
     ):
         t0 = time.monotonic()
         drv.start_pulse_straight_backward(50)
-        # Just after start_pulse_straight_backward returns we expect at least
-        # the settle dwell + prime to have happened.
         elapsed = time.monotonic() - t0
     drv.stop()
     assert elapsed >= 0.12, (
@@ -348,7 +530,6 @@ def test_post_turn_settle_dwells_before_pulse_starts() -> None:
 def test_post_turn_settle_default_is_no_op() -> None:
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
-    # Default = unset; start should be quick.
     os.environ.pop("NINA_HOVER_POST_TURN_SETTLE_SEC", None)
     t0 = time.monotonic()
     drv.start_pulse_straight_backward(50)
@@ -360,8 +541,9 @@ def test_post_turn_settle_default_is_no_op() -> None:
 
 
 def test_yaw_drift_none_falls_back_to_plain_wait() -> None:
-    """A sampler returning None (calibrating / idle) must not bias the goals."""
-    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    """A sampler returning None (calibrating / idle) must not trigger a pivot."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
     sampler_calls: List[int] = []
 
@@ -369,9 +551,16 @@ def test_yaw_drift_none_falls_back_to_plain_wait() -> None:
         sampler_calls.append(1)
         return None
 
-    drv.set_imu_hooks(yaw_drift_fn=sampler)
-    assert drv._imu_corrected_goals({12: 2100, 13: 2100}, is_forward=True) == {
-        12: 2100,
-        13: 2100,
-    }
-    assert sampler_calls  # was actually consulted
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.05, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_left = _pivot_left_goals_20pct()
+    pivot_right = _pivot_right_goals_20pct()
+    assert all(w != pivot_left and w != pivot_right for w in after), (
+        f"None-drift must not trigger any pivot lean; saw {after}"
+    )
+    assert sampler_calls, "sampler should still be consulted"
