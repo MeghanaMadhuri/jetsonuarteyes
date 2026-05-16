@@ -147,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    ratio = (
+        float(args.divider_ratio)
+        if args.divider_ratio is not None
+        else divider_ratio_from_resistors(args.r1_ohm, args.r2_ohm)
+    )
+
     bus = resolve_battery_i2c_bus(
         args.bus,
         auto_discover=not args.no_auto,
