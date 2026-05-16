@@ -210,7 +210,7 @@ Save the JSON file (or env + restart); the next boot will reuse it.
 | `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward — boot-time default when no `drive_polarity.json` yet; once the JSON exists, its value wins. |
 | `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward — same as `NINA_NAV_INVERT_LEFT`. |
 | `NINA_DRIVE_PIVOT_PCT`         | (app **20**)      | D-pad left/right from rest: kick+cruise duty (pivot only; 8–100). |
-| `NINA_NAV_TURN_SEC`            | **0.08**           | Default duration (seconds) for timed **turn_left** / **turn_right** (`NavigationSettings.turn_duration_sec`). Motion calibration UI clamps saved duration to **0.05–1** s. After tap, lean returns to brake without settle delay. |
+| `NINA_NAV_TURN_SEC`            | **0.01**           | Default duration (seconds) for timed **turn_left** / **turn_right** (`NavigationSettings.turn_duration_sec`). Motion calibration UI clamps saved duration to **0.01–1** s. After tap, lean returns to brake without settle delay. |
 | `NINA_DRIVE_TURN_90_SEC`      | (uses **NINA_NAV_TURN_SEC**) | Drive screen 90° turns: overrides duration when set. |
 | `NINA_DRIVE_TURN_90_PCT`       | (app **20**)      | Drive **Turn left/right** timed pivot duty (8–100). |
 | `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi (`pi_motor_bridge` bench only) |
