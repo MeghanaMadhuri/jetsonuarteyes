@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.hoverboard_axis_drive import (
+    estimate_backward_pulse_series_duration_sec,
     estimate_forward_pulse_series_duration_sec,
 )
 
@@ -140,7 +141,7 @@ def _straight_back_sequence_spec(
         except ValueError:
             ms = 20_000
     elif use_backward_pulse_bench:
-        est_sec = estimate_forward_pulse_series_duration_sec(axis)
+        est_sec = estimate_backward_pulse_series_duration_sec(axis)
         ms = min(120_000, max(100, int(math.ceil(est_sec * 1000.0)) + 200))
     else:
         ms = 20_000

@@ -9,10 +9,9 @@ both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up
 ``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). Pivots skip this path.
 
 **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
-symmetric D-pad / bench **forward** from rest runs ``start_pulse_straight_forward``, and symmetric
-**backward** runs ``start_pulse_straight_backward``: each is ``pulse_series_max`` cycles with a
-**constant** near-brake lean (``pulse_forward_coast_blend`` of brake→that direction’s full lean,
-default **0.2**). ``pulse_series_fwd_sec`` names the main hold for both directions. Then full brake.
+``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` run **independent** timed
+series (separate parameters for forward vs backward hold, coast dwell, coast blend, and return ramps).
+Both use ``pulse_series_max`` then full brake.
 Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
 """
 
@@ -137,12 +136,10 @@ def _straight_prime_tol_ticks() -> int:
 
 
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
-    """Upper-bound seconds for ``start_pulse_straight_forward`` / ``start_pulse_straight_backward``.
+    """Upper-bound seconds for ``start_pulse_straight_forward`` until the pulse thread exits.
 
-    Includes worst-case straight-line prime (``NINA_HOVER_STRAIGHT_PRIME_SEC`` cap) plus the
-    series loop timing (ramp legs use ``eff_ramp``, then ``pulse_series_fwd_sec`` hold and
-    ``pulse_series_coast_initial_sec`` dwell per pulse). Forward and backward series use the same
-    timing model. Matches the Straight / Straight-back bench defaults when test-ms env is unset.
+    Uses straight-line prime cap plus forward-only series timing (``pulse_forward_return_ramp_sec``,
+    ``pulse_series_fwd_sec``, ``pulse_series_coast_initial_sec``).
     """
     ramp_sec = max(
         0.0,
@@ -164,6 +161,35 @@ def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> 
     )
     prime = _straight_prime_timeout_sec()
     pulse_body = (1.0 + 2.0 * float(n)) * eff_ramp + float(n) * (series_fwd + coast_init)
+    return prime + pulse_body
+
+
+def estimate_backward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
+    """Upper-bound seconds for ``start_pulse_straight_backward`` until the pulse thread exits.
+
+    Uses the same prime cap plus **backward-only** series timing (``pulse_backward_return_ramp_sec``,
+    ``pulse_series_back_sec``, ``pulse_series_back_coast_initial_sec``).
+    """
+    ramp_sec = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_backward_return_ramp_sec", 0.0))),
+    )
+    min_trans = max(
+        0.0,
+        min(2.0, float(getattr(axis, "pulse_series_min_transition_sec", 0.0))),
+    )
+    eff_ramp = min(5.0, max(ramp_sec, min_trans))
+    n = max(1, min(20, int(getattr(axis, "pulse_series_max", 12))))
+    series_back = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_series_back_sec", 0.9))),
+    )
+    coast_init = max(
+        0.0,
+        min(10.0, float(getattr(axis, "pulse_series_back_coast_initial_sec", 0.30))),
+    )
+    prime = _straight_prime_timeout_sec()
+    pulse_body = (1.0 + 2.0 * float(n)) * eff_ramp + float(n) * (series_back + coast_init)
     return prime + pulse_body
 
 
@@ -342,8 +368,10 @@ class HoverboardAxisDrive:
     def start_pulse_straight_backward(self, speed_percent: int) -> None:
         """Backward pulse series for manual D-pad / Straight bench back (when enabled).
 
-        Same structure as ``start_pulse_straight_forward`` but full lean uses symmetric reverse
-        goals; near-brake pose blends brake toward those goals by ``pulse_forward_coast_blend``.
+        Separate timing from forward: ``pulse_series_back_sec`` hold at full reverse lean,
+        ``pulse_series_back_coast_initial_sec`` dwell at the near-brake pose,
+        ``pulse_backward_coast_blend`` (brake→reverse span), ramps
+        ``max(pulse_backward_return_ramp_sec, pulse_series_min_transition_sec)``.
         If ``pulse_forward_enabled`` is False, falls back to ``backward()``.
         """
         if not self._is_initialized:
@@ -365,12 +393,7 @@ class HoverboardAxisDrive:
         thr.start()
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
-        self._symmetric_straight_pulse_loop(speed_pct, forward=True)
-
-    def _backward_pulse_loop(self, speed_pct: int) -> None:
-        self._symmetric_straight_pulse_loop(speed_pct, forward=False)
-
-    def _symmetric_straight_pulse_loop(self, speed_pct: int, *, forward: bool) -> None:
+        """Forward-only pulse series: brake→coast blend→…→full brake (see module doc)."""
         halt = self._pulse_halt
         brake_goals = {
             self._left_id: self._brake_left,
@@ -394,7 +417,7 @@ class HoverboardAxisDrive:
 
         series_max = int(getattr(self._axis, "pulse_series_max", 12))
         series_max = max(1, min(20, series_max))
-        series_fwd = max(
+        main_hold = max(
             0.0,
             min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 0.9))),
         )
@@ -413,22 +436,19 @@ class HoverboardAxisDrive:
             ),
         )
 
-        wheel_dir = self.DIR_FORWARD if forward else self.DIR_BACKWARD
         goals = self._goals_for_wheels(
-            left_dir=wheel_dir,
+            left_dir=self.DIR_FORWARD,
             left_speed=speed_pct,
-            right_dir=wheel_dir,
+            right_dir=self.DIR_FORWARD,
             right_speed=speed_pct,
         )
         coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
-        way = "forward" if forward else "backward"
 
         log.info(
-            "hover straight pulse series (%s): n=%s main_hold=%.2fs coast_dwell=%.2fs "
-            "transition=%.2fs coast_blend=%.2f | lean L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
-            way,
+            "hover forward pulse series: n=%s fwd_hold=%.2fs coast_dwell=%.2fs "
+            "transition=%.2fs coast_blend=%.2f | FWD L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
             series_max,
-            series_fwd,
+            main_hold,
             coast_init,
             eff_ramp,
             coast_blend,
@@ -455,7 +475,106 @@ class HoverboardAxisDrive:
                 )
                 if halt.is_set():
                     break
-                if series_fwd > 0.0 and halt.wait(timeout=series_fwd):
+                if main_hold > 0.0 and halt.wait(timeout=main_hold):
+                    break
+                self._pulse_ramp_goals_between(
+                    goals, coast_goals, eff_ramp, halt
+                )
+                if halt.is_set():
+                    break
+                if coast_dwell > 0.0 and halt.wait(timeout=coast_dwell):
+                    break
+                prev_coast = dict(coast_goals)
+
+            if not halt.is_set():
+                self._apply_goals(brake_goals)
+        finally:
+            self._sync_pulse_moving_speed()
+
+    def _backward_pulse_loop(self, speed_pct: int) -> None:
+        """Backward-only pulse series: brake→coast blend→…→full brake (separate knobs from FWD)."""
+        halt = self._pulse_halt
+        brake_goals = {
+            self._left_id: self._brake_left,
+            self._right_id: self._brake_right,
+        }
+        ramp_sec = max(
+            0.0,
+            min(
+                10.0,
+                float(getattr(self._axis, "pulse_backward_return_ramp_sec", 0.0)),
+            ),
+        )
+        min_trans = max(
+            0.0,
+            min(
+                2.0,
+                float(getattr(self._axis, "pulse_series_min_transition_sec", 0.0)),
+            ),
+        )
+        eff_ramp = min(5.0, max(ramp_sec, min_trans))
+
+        series_max = int(getattr(self._axis, "pulse_series_max", 12))
+        series_max = max(1, min(20, series_max))
+        main_hold = max(
+            0.0,
+            min(10.0, float(getattr(self._axis, "pulse_series_back_sec", 0.9))),
+        )
+        coast_init = max(
+            0.0,
+            min(
+                10.0,
+                float(getattr(self._axis, "pulse_series_back_coast_initial_sec", 0.30)),
+            ),
+        )
+        coast_blend = max(
+            0.0,
+            min(
+                1.0,
+                float(getattr(self._axis, "pulse_backward_coast_blend", 0.2)),
+            ),
+        )
+
+        goals = self._goals_for_wheels(
+            left_dir=self.DIR_BACKWARD,
+            left_speed=speed_pct,
+            right_dir=self.DIR_BACKWARD,
+            right_speed=speed_pct,
+        )
+        coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
+
+        log.info(
+            "hover backward pulse series: n=%s back_hold=%.2fs coast_dwell=%.2fs "
+            "transition=%.2fs coast_blend=%.2f | REV L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
+            series_max,
+            main_hold,
+            coast_init,
+            eff_ramp,
+            coast_blend,
+            self._left_id,
+            goals[self._left_id],
+            self._right_id,
+            goals[self._right_id],
+            coast_goals[self._left_id],
+            coast_goals[self._right_id],
+        )
+
+        try:
+            if not halt.is_set():
+                self._pulse_ramp_goals_between(
+                    brake_goals, coast_goals, eff_ramp, halt
+                )
+            prev_coast: Dict[int, int] = dict(coast_goals)
+            for _ in range(series_max):
+                if halt.is_set():
+                    break
+                coast_dwell = coast_init
+                self._pulse_ramp_goals_between(
+                    prev_coast, goals, eff_ramp, halt
+                )
+                if halt.is_set():
+                    break
+                if main_hold > 0.0 and halt.wait(timeout=main_hold):
                     break
                 self._pulse_ramp_goals_between(
                     goals, coast_goals, eff_ramp, halt

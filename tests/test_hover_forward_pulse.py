@@ -15,6 +15,7 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
+    estimate_backward_pulse_series_duration_sec,
     estimate_forward_pulse_series_duration_sec,
 )
 
@@ -75,6 +76,10 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
         pulse_series_fwd_sec=0.02,
         pulse_series_coast_initial_sec=0.01,
         pulse_series_min_transition_sec=0.015,
+        pulse_series_back_sec=0.02,
+        pulse_series_back_coast_initial_sec=0.01,
+        pulse_backward_coast_blend=0.2,
+        pulse_backward_return_ramp_sec=0.0,
     )
 
 
@@ -91,6 +96,20 @@ def test_estimate_forward_pulse_series_duration_sec_formula() -> None:
         got = estimate_forward_pulse_series_duration_sec(axis)
     # prime 0.05 + (1 + 2*12) * eff_ramp(0) + 12 * (0.9 + 0.3) = 0.05 + 14.4
     assert abs(got - 14.45) < 1e-9
+
+
+def test_estimate_backward_pulse_series_duration_sec_formula() -> None:
+    axis = replace(
+        _axis_pulse_fast(),
+        pulse_series_max=12,
+        pulse_backward_return_ramp_sec=0.0,
+        pulse_series_min_transition_sec=0.0,
+        pulse_series_back_sec=0.9,
+        pulse_series_back_coast_initial_sec=0.3,
+    )
+    with patch.dict(os.environ, {"NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05"}, clear=False):
+        got = estimate_backward_pulse_series_duration_sec(axis)
+    assert abs(got - (0.05 + 12.0 * (0.9 + 0.3))) < 1e-9
 
 
 def test_forward_pulse_alternates_forward_and_brake() -> None:
@@ -256,11 +275,11 @@ def test_backward_pulse_series_ends_at_full_brake() -> None:
     axis = replace(
         _axis_pulse_fast(),
         pulse_series_max=3,
-        pulse_series_fwd_sec=0.02,
-        pulse_series_coast_initial_sec=0.01,
+        pulse_series_back_sec=0.02,
+        pulse_series_back_coast_initial_sec=0.01,
         pulse_series_min_transition_sec=0.012,
-        pulse_forward_return_ramp_sec=0.02,
-        pulse_forward_coast_blend=0.2,
+        pulse_backward_return_ramp_sec=0.02,
+        pulse_backward_coast_blend=0.2,
     )
     cfg = SimpleNamespace(
         default_speed_percent=10,

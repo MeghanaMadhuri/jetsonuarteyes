@@ -170,13 +170,17 @@ class HoverboardAxisSettings:
     asymmetric fallback (non-straight paths).
 
     **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
-    ``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` each run ``pulse_series_max``
-    cycles toward full forward / full reverse lean respectively, holding the main segment for
-    ``pulse_series_fwd_sec`` (same knob for both directions), then near-brake for
-    ``pulse_series_coast_initial_sec``. Near-brake **lean** is ``pulse_forward_coast_blend`` (0–1)
-    from brake toward that direction’s full lean, default **0.2** via ``NINA_HOVER_PULSE_COAST_BLEND``.
-    Ramps use ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)`` (each defaults to **0**).
-    Then servos go to full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
+    ``start_pulse_straight_forward`` runs ``pulse_series_max`` cycles: forward hold
+    ``pulse_series_fwd_sec``, coast dwell ``pulse_series_coast_initial_sec``, coast blend
+    ``pulse_forward_coast_blend`` (brake→full forward lean), ramps
+    ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)``.
+
+    ``start_pulse_straight_backward`` is a **separate** series: backward hold ``pulse_series_back_sec``
+    (default **0.9** s), coast dwell ``pulse_series_back_coast_initial_sec``, blend
+    ``pulse_backward_coast_blend`` (brake→full reverse lean), ramps
+    ``max(pulse_backward_return_ramp_sec, pulse_series_min_transition_sec)``.
+
+    Both end at full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
     """
 
     id_left: int
@@ -209,6 +213,10 @@ class HoverboardAxisSettings:
     pulse_series_fwd_sec: float
     pulse_series_coast_initial_sec: float
     pulse_series_min_transition_sec: float
+    pulse_series_back_sec: float
+    pulse_series_back_coast_initial_sec: float
+    pulse_backward_coast_blend: float
+    pulse_backward_return_ramp_sec: float
 
 
 @dataclass(frozen=True)
@@ -551,6 +559,22 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pulse_series_min_transition_sec=max(
             0.0,
             min(2.0, _env_float("NINA_HOVER_PULSE_SERIES_MIN_RAMP_SEC", 0.0)),
+        ),
+        pulse_series_back_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_SERIES_BACK_SEC", 0.9)),
+        ),
+        pulse_series_back_coast_initial_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_BACK_COAST_INITIAL_SEC", 0.30)),
+        ),
+        pulse_backward_coast_blend=max(
+            0.0,
+            min(1.0, _env_float("NINA_HOVER_PULSE_BACK_COAST_BLEND", 0.2)),
+        ),
+        pulse_backward_return_ramp_sec=max(
+            0.0,
+            min(10.0, _env_float("NINA_HOVER_PULSE_BACK_RETURN_RAMP_SEC", 0.0)),
         ),
     )
 
