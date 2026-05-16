@@ -7,7 +7,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
-from nina.sensors.ads1115 import ADS1115, is_available, pack_voltage_from_ain_volts
+from nina.sensors.ads1115 import (
+    ADS1115,
+    is_available,
+    pack_voltage_from_ain_volts,
+    publish_battery_reading,
+    set_battery_latched_low,
+)
 
 if TYPE_CHECKING:
     from sirena_ui.workers.nina_service import NinaService
@@ -98,13 +104,24 @@ class BatteryAds1115Monitor:
                 )
             except Exception:
                 log.debug("ADS1115 read failed", exc_info=True)
+                publish_battery_reading(ok=False, low_threshold_v=self._low_v)
                 time.sleep(max(self._poll_sec, 0.5))
                 continue
+
+            publish_battery_reading(
+                pack_v=pack_v,
+                ain_v=v_pin,
+                ok=True,
+                low_threshold_v=self._low_v,
+            )
 
             if self._latched_low:
                 if pack_v >= self._clear_v:
                     self._latched_low = False
                     self._hits = 0
+                    set_battery_latched_low(False)
+                else:
+                    set_battery_latched_low(True)
                 time.sleep(self._poll_sec)
                 continue
 
@@ -119,6 +136,7 @@ class BatteryAds1115Monitor:
                 self._last_fire_mono = now
                 self._latched_low = True
                 self._hits = 0
+                set_battery_latched_low(True)
                 try:
                     self._svc.run_low_battery_reaction()
                 except Exception:

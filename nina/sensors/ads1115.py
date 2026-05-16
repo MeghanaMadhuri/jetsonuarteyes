@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
+from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 # Orin NX 40-pin: pins 3 (SDA) + 5 (SCL) → /dev/i2c-7 on this bot (verified).
@@ -38,6 +40,11 @@ DEFAULT_BATTERY_R1_OHM = 218_000.0
 DEFAULT_BATTERY_R2_OHM = 33_000.0
 # One-point DMM trim (26.3 V vs ~24.24 V uncorrected on bench); override with env.
 DEFAULT_BATTERY_CAL_SCALE = 26.3 / (3.197 * (251.0 / 33.0))
+# Pack thresholds (override via ``NINA_BATTERY_LOW_VOLTAGE_V`` / settings).
+DEFAULT_LOW_BATTERY_V = 23.5
+DEFAULT_CLEAR_BATTERY_V = 24.0
+LOW_BATTERY_TTS = "i am low on battery , please put me on charge"
+NEUTRAL_MOTOR_GOAL = 2048
 # Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
 _BATTERY_PROBE_BUSES: Tuple[int, ...] = (7, 1, 2, 8, 0)
 
@@ -213,3 +220,127 @@ class ADS1115:
         if val >= 0x8000:
             val -= 0x10000
         return int(val)
+
+
+@dataclass(frozen=True)
+class BatterySnapshot:
+    """Latest ADS1115 pack reading for UI and safety (thread-safe store)."""
+
+    pack_v: float
+    ain_v: float
+    ok: bool
+    is_low: bool
+    latched_low: bool
+    monotonic_ts: float
+
+
+@dataclass(frozen=True)
+class BatteryHealthInfo:
+    """Health / overview row text without importing the UI layer."""
+
+    detail: str
+    status: str  # ok | warn | error | pending
+
+
+_store_lock = threading.Lock()
+_latest: Optional[BatterySnapshot] = None
+_latched_low = False
+
+
+def publish_battery_reading(
+    *,
+    pack_v: float = 0.0,
+    ain_v: float = 0.0,
+    ok: bool = True,
+    low_threshold_v: float = DEFAULT_LOW_BATTERY_V,
+) -> None:
+    """Update the shared snapshot (called from ``BatteryAds1115Monitor`` poll loop)."""
+    global _latest
+    ts = time.monotonic()
+    is_low = bool(ok) and float(pack_v) <= float(low_threshold_v)
+    snap = BatterySnapshot(
+        pack_v=float(pack_v),
+        ain_v=float(ain_v),
+        ok=bool(ok),
+        is_low=is_low,
+        latched_low=_latched_low,
+        monotonic_ts=ts,
+    )
+    with _store_lock:
+        _latest = snap
+
+
+def set_battery_latched_low(latched: bool) -> None:
+    """Latch / clear low-battery safety (blocks motion while latched)."""
+    global _latched_low, _latest
+    with _store_lock:
+        _latched_low = bool(latched)
+        if _latest is not None:
+            _latest = BatterySnapshot(
+                pack_v=_latest.pack_v,
+                ain_v=_latest.ain_v,
+                ok=_latest.ok,
+                is_low=_latest.is_low,
+                latched_low=_latched_low,
+                monotonic_ts=_latest.monotonic_ts,
+            )
+
+
+def is_battery_latched_low() -> bool:
+    with _store_lock:
+        return _latched_low
+
+
+def is_battery_motion_blocked() -> bool:
+    """True when pack is latched low — block actions, drive, and recording."""
+    return is_battery_latched_low()
+
+
+def get_battery_snapshot() -> Optional[BatterySnapshot]:
+    with _store_lock:
+        return _latest
+
+
+def format_pack_voltage(snap: Optional[BatterySnapshot]) -> str:
+    """Short label for header / footer (no console spam)."""
+    if snap is None or not snap.ok:
+        return "\u2014"
+    text = f"{snap.pack_v:.1f} V"
+    if snap.latched_low:
+        return f"{text} LOW"
+    return text
+
+
+def battery_health_info(
+    *,
+    low_threshold_v: float = DEFAULT_LOW_BATTERY_V,
+) -> BatteryHealthInfo:
+    """Detail + status for Health screen and Home overview battery pill."""
+    snap = get_battery_snapshot()
+    if snap is None or not snap.ok:
+        return BatteryHealthInfo("No ADC reading", "pending")
+    detail = f"{snap.pack_v:.1f} V pack"
+    if snap.latched_low:
+        return BatteryHealthInfo(f"{detail} \u00b7 LOW", "error")
+    if snap.is_low or snap.pack_v <= float(low_threshold_v):
+        return BatteryHealthInfo(f"{detail} \u00b7 low", "warn")
+    return BatteryHealthInfo(detail, "ok")
+
+
+def overview_pill_for_battery(
+    *,
+    low_threshold_v: float = DEFAULT_LOW_BATTERY_V,
+) -> tuple[str, str]:
+    """Return ``(caption, pill_kind)`` for Home system-overview battery tile."""
+    info = battery_health_info(low_threshold_v=low_threshold_v)
+    st = info.status
+    if st == "ok":
+        kind = "ok"
+    elif st == "warn":
+        kind = "warn"
+    elif st == "error":
+        kind = "error"
+    else:
+        kind = "neutral"
+    cap = (info.detail or "\u2014")[:22]
+    return cap, kind

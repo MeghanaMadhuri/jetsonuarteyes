@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from nina.sensors.ads1115 import get_battery_snapshot
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from sirena_ui.widgets.status_bar import StatusBar
@@ -142,9 +143,18 @@ class MainWindow(QMainWindow):
 
         self._bus_init_thread: Optional[_BusInitThread] = None
 
+        self._battery_ui_timer = QTimer(self)
+        self._battery_ui_timer.setInterval(2000)
+        self._battery_ui_timer.timeout.connect(self._refresh_battery_tray)
+        self._battery_ui_timer.start()
+
         # Initial state
         self.navigate("home")
         self._sidebar.select("home")
+
+        # Header I²C sensors do not need the Dynamixel bus; start early.
+        QTimer.singleShot(200, self._service.start_battery_ads1115_monitor)
+        QTimer.singleShot(250, self._service.start_touch_at42qt2120_monitor)
 
         # Try to bring up the bus shortly after the window appears so the
         # status bar shows accurate dots without blocking the UI.
@@ -378,6 +388,20 @@ class MainWindow(QMainWindow):
 
     # ---------- bus / footer ----------
 
+    def _refresh_battery_tray(self) -> None:
+        """Update header + footer battery indicators from the ADS1115 snapshot."""
+        self._header.set_battery_text(self._service.battery_pack_voltage_display())
+        snap = get_battery_snapshot()
+        if snap is not None and snap.ok:
+            self._status_bar.set_dot(
+                "battery",
+                ok=not snap.latched_low,
+                warn=bool(snap.is_low) and not snap.latched_low,
+            )
+        home = self._screens.get("home")
+        if home is not None and hasattr(home, "refresh_battery_pill"):
+            home.refresh_battery_pill()
+
     def _initialize_bus(self) -> None:
         if self._service.bus_ready:
             self._apply_bus_footer_from_health({})
@@ -399,6 +423,7 @@ class MainWindow(QMainWindow):
             self._apply_bus_footer_from_health({})
         self._service.start_obstacle_stop_monitor()
         self._service.start_battery_ads1115_monitor()
+        self._service.start_touch_at42qt2120_monitor()
         self._service.start_mpu9250_imu_monitor()
 
     def _on_bus_init_failed(self, message: str) -> None:

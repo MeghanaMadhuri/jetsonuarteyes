@@ -8,6 +8,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from nina.sensors.ads1115 import is_battery_motion_blocked
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.error_hints import explain_error
 from sirena_ui.workers.nina_service import NinaService
@@ -61,6 +62,11 @@ class PlaybackWorker(QThread):
         timer.start()
 
     def run(self) -> None:
+        if is_battery_motion_blocked():
+            self.failed.emit(
+                "Low battery — motion blocked. Please charge the pack."
+            )
+            return
         if self._ensure_before_play:
             try:
                 self._service.ensure_bus()

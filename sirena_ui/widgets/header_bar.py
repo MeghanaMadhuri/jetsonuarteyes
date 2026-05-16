@@ -80,6 +80,14 @@ class HeaderBar(QFrame):
     def set_title(self, text: str) -> None:
         self._title.setText(text)
 
+    def set_battery_text(self, text: str) -> None:
+        """Show pack voltage in the header tray (e.g. ``26.3 V``)."""
+        t = (text or "").strip()
+        self._battery.setText(t if t else "\u25AE")
+        self._battery.setToolTip(
+            "Pack voltage (ADS1115)" if t else "Battery voltage unavailable"
+        )
+
     def _refresh_clock(self) -> None:
         from datetime import datetime
         self._clock.setText(datetime.now().strftime("%H:%M"))

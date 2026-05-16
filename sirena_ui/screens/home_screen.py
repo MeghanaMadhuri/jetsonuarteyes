@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
 
 from sirena_ui.styles import asset_path
 from sirena_ui.widgets.common import Breadcrumb, Card, CardTitle, MutedLabel, Pill, SectionLabel
+from nina.sensors.ads1115 import overview_pill_for_battery
 from sirena_ui.workers.health_collector import collect
 from sirena_ui.workers.nina_service import NinaService
 
@@ -176,6 +177,9 @@ class HomeScreen(QWidget):
         self._hero_pill_timer = QTimer(self)
         self._hero_pill_timer.setInterval(5000)
         self._hero_pill_timer.timeout.connect(self._refresh_hero_pills_async)
+        self._battery_ov_timer = QTimer(self)
+        self._battery_ov_timer.setInterval(2000)
+        self._battery_ov_timer.timeout.connect(self.refresh_battery_pill)
         self._health_collect_thread: Optional[_HealthCollectThread] = None
         self._wire_drive_hero_pills()
 
@@ -311,11 +315,30 @@ class HomeScreen(QWidget):
 
     def on_enter(self) -> None:
         self._refresh_hero_pills_async()
+        self.refresh_battery_pill()
         if not self._hero_pill_timer.isActive():
             self._hero_pill_timer.start()
+        if not self._battery_ov_timer.isActive():
+            self._battery_ov_timer.start()
 
     def on_leave(self) -> None:
         self._hero_pill_timer.stop()
+        self._battery_ov_timer.stop()
+
+    def refresh_battery_pill(self) -> None:
+        """Lightweight pack-voltage refresh for System overview (no full health scan)."""
+        pill = self._ov_pills.get("battery")
+        if pill is None:
+            return
+        low_v = float(self._service.settings.battery_ads1115.low_voltage_v)
+        cap, kind_key = overview_pill_for_battery(low_threshold_v=low_v)
+        kind = {
+            "ok": Pill.KIND_OK,
+            "warn": Pill.KIND_WARN,
+            "error": Pill.KIND_ERROR,
+        }.get(kind_key, Pill.KIND_NEUTRAL)
+        pill.setText(cap)
+        pill.set_kind(kind)
 
     def _refresh_hero_pills_async(self) -> None:
         if self._health_collect_thread is not None and self._health_collect_thread.isRunning():

@@ -262,6 +262,25 @@ class BatteryAds1115Settings:
 
 
 @dataclass(frozen=True)
+class TouchAt42qt2120Settings:
+    """AT42QT2120 capacitive touch on header pins **3** SDA + **5** SCL (``/dev/i2c-7``).
+
+    Fixed I²C address **0x1C** (shares bus with ADS1115 @ **0x48**, MPU-9250 @ **0x68**).
+    On touch: park Dynamixel IDs **1–13** at ``motor_goal`` (default **2048**) + gTTS
+  (US English). Enable with ``NINA_TOUCH_AT42QT2120_ENABLE=1``.
+    """
+
+    enabled: bool
+    i2c_bus: int
+    i2c_address: int
+    debounce_reads: int
+    cooldown_sec: float
+    poll_interval_sec: float
+    tts_text: str
+    motor_goal: int
+
+
+@dataclass(frozen=True)
 class ObstacleStopSettings:
     """Single forward HC-SR04: stop JYQD drive, park lean brake, run neutral pose, TTS.
 
@@ -402,6 +421,7 @@ class NinaSettings:
     hoverboard_axis: HoverboardAxisSettings
     obstacle_stop: ObstacleStopSettings
     battery_ads1115: BatteryAds1115Settings
+    touch_at42qt2120: TouchAt42qt2120Settings
 
 
 def serial_collision_warnings(settings: NinaSettings) -> list[str]:
@@ -815,6 +835,20 @@ def load_settings(repo_root: Path) -> NinaSettings:
         lean_goal=max(0, min(4095, _env_int("NINA_BATTERY_LEAN_GOAL", 2048))),
     )
 
+    touch_at42qt2120 = TouchAt42qt2120Settings(
+        enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
+        i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
+        i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
+        debounce_reads=max(1, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 2))),
+        cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 8.0)),
+        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.1)),
+        tts_text=(
+            (os.environ.get("NINA_TOUCH_TTS") or "").strip()
+            or "please dont touch me"
+        ),
+        motor_goal=max(0, min(4095, _env_int("NINA_TOUCH_MOTOR_GOAL", 2048))),
+    )
+
     return NinaSettings(
         serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB0"),
         baudrate=int(os.environ.get("NINA_DXL_BAUD", "222222")),
@@ -831,4 +865,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         hoverboard_axis=hoverboard_axis,
         obstacle_stop=obstacle_stop,
         battery_ads1115=battery_ads1115,
+        touch_at42qt2120=touch_at42qt2120,
     )

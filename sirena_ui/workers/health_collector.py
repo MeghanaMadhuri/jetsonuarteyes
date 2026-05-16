@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from nina.config.settings import serial_collision_warnings
+from nina.sensors.ads1115 import battery_health_info
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -114,11 +115,20 @@ def collect(service: NinaService) -> List[HealthRow]:
     # 8) BLDC drive controller -----------------------------------------
     rows.append(_drive_row(service))
 
-    # 9) Battery -------------------------------------------------------
+    # 9) Battery (ADS1115 pack voltage via shared snapshot) ------------
+    batt = battery_health_info(
+        low_threshold_v=float(service.settings.battery_ads1115.low_voltage_v),
+    )
+    batt_status = {
+        "ok": STATUS_OK,
+        "warn": STATUS_WARN,
+        "error": STATUS_ERROR,
+        "pending": STATUS_PENDING,
+    }.get(batt.status, STATUS_PENDING)
     rows.append(HealthRow(
         "battery", "Battery", "\u2615",
-        "Power telemetry pending",
-        STATUS_PENDING,
+        batt.detail,
+        batt_status,
     ))
 
     # 10) Wi-Fi --------------------------------------------------------

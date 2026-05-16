@@ -25,11 +25,20 @@ from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
+from nina.sensors.ads1115 import (
+    LOW_BATTERY_TTS,
+    format_pack_voltage,
+    get_battery_snapshot,
+    is_battery_motion_blocked,
+    set_battery_latched_low,
+)
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     apply_hoverboard_brake_positions,
 )
+from nina.sensors.at42qt2120 import DEFAULT_TOUCH_TTS
 from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
+from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.obstacle_stop_monitor import ObstacleStopMonitor
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
@@ -74,6 +83,7 @@ class NinaService:
         self._autonomy: Optional[AutonomyController] = None
         self._obstacle_monitor: Optional[ObstacleStopMonitor] = None
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
+        self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
 
     @property
@@ -272,6 +282,66 @@ class NinaService:
         except Exception as exc:
             log.warning("Battery ADS1115 monitor did not start: %s", exc)
 
+    def start_touch_at42qt2120_monitor(self) -> None:
+        """Start AT42QT2120 touch monitor when enabled in settings."""
+        if not self.settings.touch_at42qt2120.enabled:
+            return
+        if self._touch_monitor is not None:
+            return
+        try:
+            mon = TouchAt42qt2120Monitor(self)
+            mon.start()
+            self._touch_monitor = mon
+        except Exception as exc:
+            log.warning("AT42QT2120 touch monitor did not start: %s", exc)
+
+    def _park_all_motors_at_goal(self, goal: int) -> None:
+        """Sync-write goal position for Dynamixel IDs 1–13 (neutral pose)."""
+        axis = self.settings.hoverboard_axis
+        ms = max(0, min(1023, int(axis.moving_speed)))
+        goals = {int(sid): int(goal) for sid in EXPECTED_DYNAMIXEL_IDS}
+        with self.bus_lock:
+            if not self._bus_ready:
+                return
+            try:
+                self.dxl._require_initialized()
+            except Exception:
+                return
+            try:
+                self.dxl.set_moving_speed_all(ms)
+                self.dxl.sync_write_goal_position(goals)
+            except Exception:
+                log.exception("Park all motors at goal %s failed", goal)
+
+    def run_touch_reaction(self) -> None:
+        """Stop drive, park motors 1–13 at neutral (2048), speak touch TTS."""
+        try:
+            if self._face_follow is not None:
+                try:
+                    self._face_follow.stop()
+                except Exception:
+                    pass
+            self.drive.stop(drain=True)
+        except Exception:
+            log.exception("Touch: drive / face-follow stop failed")
+
+        goal = max(0, min(4095, int(self.settings.touch_at42qt2120.motor_goal)))
+        self._park_all_motors_at_goal(goal)
+
+        phrase = (self.settings.touch_at42qt2120.tts_text or "").strip()
+        if not phrase:
+            phrase = DEFAULT_TOUCH_TTS
+        out = Path(tempfile.gettempdir()) / "nina_touch_alert.mp3"
+        try:
+            AudioGenerator.generate(
+                phrase, out, lang="en", tld="us", slow=False
+            )
+            AudioPlayer().play(out)
+        except AudioGeneratorError as exc:
+            log.warning("Touch TTS unavailable: %s", exc)
+        except Exception:
+            log.exception("Touch TTS / playback failed")
+
     def start_mpu9250_imu_monitor(self) -> None:
         """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set."""
         if not is_imu_monitor_enabled():
@@ -297,8 +367,15 @@ class NinaService:
         if self._imu_monitor is not None:
             self._imu_monitor.end_straight_leg()
 
+    def is_battery_low_latched(self) -> bool:
+        return is_battery_motion_blocked()
+
+    def battery_pack_voltage_display(self) -> str:
+        return format_pack_voltage(get_battery_snapshot())
+
     def run_low_battery_reaction(self) -> None:
-        """JYQD stop, neutral action, lean IDs to ``lean_goal`` (default 2048), gTTS."""
+        """Stop drive, park motors 1–13 at neutral (2048), speak low-battery TTS."""
+        set_battery_latched_low(True)
         try:
             if self._face_follow is not None:
                 try:
@@ -309,31 +386,12 @@ class NinaService:
         except Exception:
             log.exception("Low battery: drive / face-follow stop failed")
 
-        axis = self.settings.hoverboard_axis
-        lid = int(axis.id_left)
-        rid = int(axis.id_right)
-        ms = max(0, min(1023, int(axis.moving_speed)))
-        goal = int(self.settings.battery_ads1115.lean_goal)
-
-        with self.bus_lock:
-            if not self._bus_ready:
-                return
-            try:
-                self.dxl._require_initialized()
-            except Exception:
-                return
-            try:
-                self.action_runner.run_named_action(
-                    self.settings.neutral_action_name
-                )
-                self.dxl.sync_write_moving_speed_subset({lid: ms, rid: ms})
-                self.dxl.sync_write_goal_position({lid: goal, rid: goal})
-            except Exception:
-                log.exception("Low battery: neutral / lean goal failed")
+        goal = max(0, min(4095, int(self.settings.battery_ads1115.lean_goal)))
+        self._park_all_motors_at_goal(goal)
 
         phrase = (self.settings.battery_ads1115.tts_text or "").strip()
         if not phrase:
-            phrase = "I'm low on battery , please put me on charge"
+            phrase = LOW_BATTERY_TTS
         out = Path(tempfile.gettempdir()) / "nina_low_battery_alert.mp3"
         try:
             AudioGenerator.generate(
@@ -451,6 +509,12 @@ class NinaService:
             except Exception:
                 pass
             self._battery_monitor = None
+        if self._touch_monitor is not None:
+            try:
+                self._touch_monitor.stop()
+            except Exception:
+                pass
+            self._touch_monitor = None
         if self._obstacle_monitor is not None:
             try:
                 self._obstacle_monitor.stop()
