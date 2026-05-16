@@ -32,7 +32,7 @@ _STATUS_KEYS = 1 << 0
 _STATUS_SLIDER = 1 << 1
 _STATUS_CALIBRATING = 1 << 7
 
-DEFAULT_TOUCH_TTS = "please dont touch me"
+DEFAULT_TOUCH_TTS = "Please dont touch me"
 DEFAULT_MOTOR_GOAL = 2048
 
 log = logging.getLogger("nina.sensors.at42qt2120")

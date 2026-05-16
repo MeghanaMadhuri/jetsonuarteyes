@@ -43,7 +43,7 @@ DEFAULT_BATTERY_CAL_SCALE = 26.3 / (3.197 * (251.0 / 33.0))
 # Pack thresholds (override via ``NINA_BATTERY_LOW_VOLTAGE_V`` / settings).
 DEFAULT_LOW_BATTERY_V = 23.5
 DEFAULT_CLEAR_BATTERY_V = 24.0
-LOW_BATTERY_TTS = "i am low on battery , please put me on charge"
+LOW_BATTERY_TTS = "I am low on battery , Please put me on charge"
 NEUTRAL_MOTOR_GOAL = 2048
 # Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
 _BATTERY_PROBE_BUSES: Tuple[int, ...] = (7, 1, 2, 8, 0)

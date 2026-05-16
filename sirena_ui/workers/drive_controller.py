@@ -482,6 +482,22 @@ class DriveController(QObject):
         if nav is not None and hasattr(nav, "update_navigation_settings"):
             nav.update_navigation_settings(nav_cfg)
 
+    def _should_start_straight_pulse(self, direction: str) -> bool:
+        """Whether the next FWD/BACK command should run the hoverboard pulse series.
+
+        Uses ``_hover_straight_pulse_next`` (same gate as :meth:`_do_drive_wheels`) so a
+        pivot or timed turn followed immediately by straight FWD/BACK still gets the pulse
+        algorithm even when ``_active_drive`` is still set from the prior pivot hold.
+        """
+        if direction not in (_DIR_FORWARD, _DIR_BACK):
+            return False
+        if not self.supports_forward_pulse():
+            return False
+        if getattr(self._nav, "is_forward_pulse_active", lambda: False)():
+            return False
+        with self._lock:
+            return bool(self._hover_straight_pulse_next)
+
     def supports_forward_pulse(self) -> bool:
         """True when nav offers straight pulse series and ``pulse_forward_enabled`` is on.
 
@@ -970,10 +986,24 @@ class DriveController(QObject):
                 return
             with self._lock:
                 start_from_stop = self._active_drive is None
+            use_straight_pulse = self._should_start_straight_pulse(direction)
             # Use drive_continuous for all four directions so L/R is
             # held-while-pressed (matches forward/back) instead of the
             # old timed turn that auto-stopped after a few seconds.
-            if start_from_stop:
+            if use_straight_pulse:
+                if direction == _DIR_FORWARD:
+                    self._nav.start_pulse_straight_forward(int(speed_pct))
+                else:
+                    self._nav.start_pulse_straight_backward(int(speed_pct))
+                with self._lock:
+                    self._active_drive = None
+                    self._hover_straight_pulse_next = False
+                log.info(
+                    "drive: hover %s pulse speed=%s%%",
+                    "forward" if direction == _DIR_FORWARD else "backward",
+                    speed_pct,
+                )
+            elif start_from_stop:
                 if direction in (_DIR_LEFT, _DIR_RIGHT):
                     pivot = _drive_pivot_speed_pct()
                     kick = max(MIN_SPEED_PCT, min(100, pivot))
@@ -1016,24 +1046,6 @@ class DriveController(QObject):
                         "drive from stop (pivot): kick %s%% then cruise %s%%",
                         kick,
                         cruise,
-                    )
-                elif direction == _DIR_FORWARD and self.supports_forward_pulse():
-                    self._nav.start_pulse_straight_forward(int(speed_pct))
-                    with self._lock:
-                        self._active_drive = None
-                        self._hover_straight_pulse_next = False
-                    log.info(
-                        "drive from stop: hover forward pulse speed=%s%%",
-                        speed_pct,
-                    )
-                elif direction == _DIR_BACK and self.supports_forward_pulse():
-                    self._nav.start_pulse_straight_backward(int(speed_pct))
-                    with self._lock:
-                        self._active_drive = None
-                        self._hover_straight_pulse_next = False
-                    log.info(
-                        "drive from stop: hover backward pulse speed=%s%%",
-                        speed_pct,
                     )
                 else:
                     kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))

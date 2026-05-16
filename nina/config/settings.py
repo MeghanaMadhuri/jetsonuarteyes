@@ -830,7 +830,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         poll_interval_sec=max(0.25, _env_float("NINA_BATTERY_POLL_SEC", 2.0)),
         tts_text=(
             (os.environ.get("NINA_BATTERY_TTS") or "").strip()
-            or "I'm low on battery , please put me on charge"
+            or "I am low on battery , Please put me on charge"
         ),
         lean_goal=max(0, min(4095, _env_int("NINA_BATTERY_LEAN_GOAL", 2048))),
     )
@@ -844,7 +844,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.1)),
         tts_text=(
             (os.environ.get("NINA_TOUCH_TTS") or "").strip()
-            or "please dont touch me"
+            or "Please dont touch me"
         ),
         motor_goal=max(0, min(4095, _env_int("NINA_TOUCH_MOTOR_GOAL", 2048))),
     )

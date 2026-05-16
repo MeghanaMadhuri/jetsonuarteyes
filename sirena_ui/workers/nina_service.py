@@ -26,7 +26,6 @@ from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
-    LOW_BATTERY_TTS,
     format_pack_voltage,
     get_battery_snapshot,
     is_battery_motion_blocked,
@@ -36,13 +35,13 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     apply_hoverboard_brake_positions,
 )
-from nina.sensors.at42qt2120 import DEFAULT_TOUCH_TTS
 from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
 from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.obstacle_stop_monitor import ObstacleStopMonitor
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
+from nina.services.sensor_alert_audio import play_low_battery_alert, play_touch_alert
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.face_follow_controller import FaceFollowController
@@ -328,19 +327,12 @@ class NinaService:
         goal = max(0, min(4095, int(self.settings.touch_at42qt2120.motor_goal)))
         self._park_all_motors_at_goal(goal)
 
-        phrase = (self.settings.touch_at42qt2120.tts_text or "").strip()
-        if not phrase:
-            phrase = DEFAULT_TOUCH_TTS
-        out = Path(tempfile.gettempdir()) / "nina_touch_alert.mp3"
         try:
-            AudioGenerator.generate(
-                phrase, out, lang="en", tld="us", slow=False
+            play_touch_alert(
+                phrase=(self.settings.touch_at42qt2120.tts_text or "").strip()
             )
-            AudioPlayer().play(out)
-        except AudioGeneratorError as exc:
-            log.warning("Touch TTS unavailable: %s", exc)
         except Exception:
-            log.exception("Touch TTS / playback failed")
+            log.exception("Touch alert playback failed")
 
     def start_mpu9250_imu_monitor(self) -> None:
         """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set."""
@@ -389,19 +381,12 @@ class NinaService:
         goal = max(0, min(4095, int(self.settings.battery_ads1115.lean_goal)))
         self._park_all_motors_at_goal(goal)
 
-        phrase = (self.settings.battery_ads1115.tts_text or "").strip()
-        if not phrase:
-            phrase = LOW_BATTERY_TTS
-        out = Path(tempfile.gettempdir()) / "nina_low_battery_alert.mp3"
         try:
-            AudioGenerator.generate(
-                phrase, out, lang="en", tld="us", slow=False
+            play_low_battery_alert(
+                phrase=(self.settings.battery_ads1115.tts_text or "").strip()
             )
-            AudioPlayer().play(out)
-        except AudioGeneratorError as exc:
-            log.warning("Low battery TTS unavailable: %s", exc)
         except Exception:
-            log.exception("Low battery TTS / playback failed")
+            log.exception("Low battery alert playback failed")
 
     @property
     def drive(self) -> DriveController:

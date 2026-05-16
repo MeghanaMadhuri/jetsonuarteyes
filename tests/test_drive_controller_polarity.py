@@ -56,12 +56,15 @@ class FakeNav:
 
     DIR_FORWARD = "forward"
     DIR_BACKWARD = "backward"
+    DRIVER_LABEL = "Hoverboard lean — Dynamixel MX-28 (ID 12+13)"
 
     def __init__(self) -> None:
         self.calls: list = []
         self.invert_left: bool = False
         self.invert_right: bool = False
         self.brake_engaged = False
+        self.pulse_enabled = False
+        self._pulse_active = False
 
     def initialize(self) -> None:
         self.calls.append(("initialize",))
@@ -113,6 +116,38 @@ class FakeNav:
 
     def set_wheels(self, **kwargs) -> None:
         self.calls.append(("set_wheels", kwargs))
+
+    def is_forward_pulse_enabled(self) -> bool:
+        return bool(self.pulse_enabled)
+
+    def is_forward_pulse_active(self) -> bool:
+        return self._pulse_active
+
+    def start_pulse_straight_forward(self, speed_percent: int) -> None:
+        self.calls.append(("start_pulse_straight_forward", int(speed_percent)))
+        self._pulse_active = True
+
+    def start_pulse_straight_backward(self, speed_percent: int) -> None:
+        self.calls.append(("start_pulse_straight_backward", int(speed_percent)))
+        self._pulse_active = True
+
+    def turn_left(
+        self,
+        speed_percent: Optional[int] = None,
+        duration: Optional[float] = None,
+    ) -> None:
+        self.calls.append(
+            ("turn_left", {"speed_percent": speed_percent, "duration": duration})
+        )
+
+    def turn_right(
+        self,
+        speed_percent: Optional[int] = None,
+        duration: Optional[float] = None,
+    ) -> None:
+        self.calls.append(
+            ("turn_right", {"speed_percent": speed_percent, "duration": duration})
+        )
 
 
 def _make_controller(nav: FakeNav, default_speed: int = 15):
@@ -517,6 +552,53 @@ def test_drive_left_fwd_extra_pp_env(
         assert (
             last_sw["right_speed"]
             == dc.FROM_STOP_CRUISE_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
+        )
+    finally:
+        ctrl.shutdown()
+
+
+def test_back_after_pivot_uses_backward_pulse(
+    isolate_polarity_dir: Path,
+) -> None:
+    """D-pad pivot then straight back must run backward pulse, not kick/cruise SET."""
+    nav = FakeNav()
+    nav.pulse_enabled = True
+    ctrl = _make_controller(nav, default_speed=12)
+    try:
+        ctrl.ensure_hardware()
+        assert _wait_for(lambda: nav.brake_engaged)
+        ctrl.set_brake(False)
+        assert _wait_for(lambda: not nav.brake_engaged)
+        ctrl.drive("left")
+        assert _wait_for(lambda: getattr(ctrl, "_active_drive") is not None)
+        nav.calls.clear()
+        ctrl.drive("back")
+        assert _wait_for(
+            lambda: any(c[0] == "start_pulse_straight_backward" for c in nav.calls)
+        )
+        assert not any(c[0] == "drive_continuous" for c in nav.calls)
+    finally:
+        ctrl.shutdown()
+
+
+def test_back_after_turn_90_uses_backward_pulse(
+    isolate_polarity_dir: Path,
+) -> None:
+    """Timed Turn left then D-pad back must run backward pulse."""
+    nav = FakeNav()
+    nav.pulse_enabled = True
+    ctrl = _make_controller(nav, default_speed=12)
+    try:
+        ctrl.ensure_hardware()
+        assert _wait_for(lambda: nav.brake_engaged)
+        ctrl.set_brake(False)
+        assert _wait_for(lambda: not nav.brake_engaged)
+        ctrl.turn_90("left")
+        assert _wait_for(lambda: any(c[0] == "turn_left" for c in nav.calls))
+        nav.calls.clear()
+        ctrl.drive("back")
+        assert _wait_for(
+            lambda: any(c[0] == "start_pulse_straight_backward" for c in nav.calls)
         )
     finally:
         ctrl.shutdown()
