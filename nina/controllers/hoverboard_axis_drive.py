@@ -852,18 +852,24 @@ class HoverboardAxisDrive:
         """Logical brake off; hoverboard lean axes need no extra action here."""
 
     def _halt_pulse_series(self, *, wait: bool = True) -> None:
-        """Signal the straight pulse-series worker to exit and optionally join it."""
+        """Signal the straight pulse-series worker to exit and optionally join it.
+
+        When the caller interrupts a *live* pulse-series thread, the truncated
+        caller stack is logged at DEBUG level so ``NINA_LOG_LEVEL=DEBUG`` can
+        re-enable the diagnostic that helped track the kiosk-vs-bench double-
+        instance early-stop without spamming normal INFO operation.
+        """
         t = self._pulse_series_thread
         active = t is not None and t.is_alive()
-        if active:
+        if active and log.isEnabledFor(logging.DEBUG):
             try:
                 stack = "".join(traceback.format_stack(limit=8)[:-1])
-                log.info(
+                log.debug(
                     "hover _halt_pulse_series: caller stack:\n%s",
                     stack.rstrip(),
                 )
             except Exception:
-                log.info("hover _halt_pulse_series: (stack capture failed)")
+                log.debug("hover _halt_pulse_series: (stack capture failed)")
         self._pulse_halt.set()
         if t is not None and wait and threading.current_thread() is not t:
             t.join(timeout=3.0)
@@ -1040,79 +1046,39 @@ class HoverboardAxisDrive:
             coast_goals[self._right_id],
         )
 
-        loop_t0 = time.monotonic()
-        log.info("hover forward pulse loop: ENTER series_max=%s", series_max)
         try:
             if not halt.is_set():
                 self._pulse_ramp_goals_between(
                     brake_goals, coast_goals, eff_ramp, halt
                 )
             prev_coast: Dict[int, int] = dict(coast_goals)
-            for cycle_idx in range(series_max):
-                cycle_t0 = time.monotonic()
+            for _ in range(series_max):
                 if halt.is_set():
-                    log.info(
-                        "hover fwd loop: halt SET before cycle %s/%s (t=%.2fs)",
-                        cycle_idx, series_max, cycle_t0 - loop_t0,
-                    )
                     break
                 coast_dwell = coast_init
                 self._pulse_ramp_goals_between(
                     prev_coast, goals, eff_ramp, halt
                 )
                 if halt.is_set():
-                    log.info(
-                        "hover fwd loop: halt SET after ramp-up cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 if self._imu_corrective_hold(
                     goals, main_hold, halt, is_forward=True
                 ):
-                    log.info(
-                        "hover fwd loop: imu_hold returned True (=halt) in cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 self._pulse_ramp_goals_between(
                     goals, coast_goals, eff_ramp, halt
                 )
                 if halt.is_set():
-                    log.info(
-                        "hover fwd loop: halt SET after ramp-down cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 if self._imu_corrective_hold(
                     coast_goals, coast_dwell, halt, is_forward=True
                 ):
-                    log.info(
-                        "hover fwd loop: imu_hold (coast) returned True in cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 prev_coast = dict(coast_goals)
-                log.info(
-                    "hover fwd cycle %s done dt=%.2fs total=%.2fs",
-                    cycle_idx,
-                    time.monotonic() - cycle_t0,
-                    time.monotonic() - loop_t0,
-                )
 
             if not halt.is_set():
                 self._apply_goals(brake_goals)
-        except Exception:
-            log.exception(
-                "hover fwd loop: EXCEPTION at t=%.2fs",
-                time.monotonic() - loop_t0,
-            )
-            raise
         finally:
-            log.info(
-                "hover forward pulse loop: EXIT halt=%s total=%.2fs",
-                halt.is_set(),
-                time.monotonic() - loop_t0,
-            )
             self._imu_end_straight()
             self._sync_pulse_moving_speed()
 
@@ -1184,79 +1150,39 @@ class HoverboardAxisDrive:
             coast_goals[self._right_id],
         )
 
-        loop_t0 = time.monotonic()
-        log.info("hover backward pulse loop: ENTER series_max=%s", series_max)
         try:
             if not halt.is_set():
                 self._pulse_ramp_goals_between(
                     brake_goals, coast_goals, eff_ramp, halt
                 )
             prev_coast: Dict[int, int] = dict(coast_goals)
-            for cycle_idx in range(series_max):
-                cycle_t0 = time.monotonic()
+            for _ in range(series_max):
                 if halt.is_set():
-                    log.info(
-                        "hover back loop: halt SET before cycle %s/%s (t=%.2fs)",
-                        cycle_idx, series_max, cycle_t0 - loop_t0,
-                    )
                     break
                 coast_dwell = coast_init
                 self._pulse_ramp_goals_between(
                     prev_coast, goals, eff_ramp, halt
                 )
                 if halt.is_set():
-                    log.info(
-                        "hover back loop: halt SET after ramp-up cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 if self._imu_corrective_hold(
                     goals, main_hold, halt, is_forward=False
                 ):
-                    log.info(
-                        "hover back loop: imu_hold returned True in cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 self._pulse_ramp_goals_between(
                     goals, coast_goals, eff_ramp, halt
                 )
                 if halt.is_set():
-                    log.info(
-                        "hover back loop: halt SET after ramp-down cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 if self._imu_corrective_hold(
                     coast_goals, coast_dwell, halt, is_forward=False
                 ):
-                    log.info(
-                        "hover back loop: imu_hold (coast) returned True in cycle %s (t=%.2fs)",
-                        cycle_idx, time.monotonic() - loop_t0,
-                    )
                     break
                 prev_coast = dict(coast_goals)
-                log.info(
-                    "hover back cycle %s done dt=%.2fs total=%.2fs",
-                    cycle_idx,
-                    time.monotonic() - cycle_t0,
-                    time.monotonic() - loop_t0,
-                )
 
             if not halt.is_set():
                 self._apply_goals(brake_goals)
-        except Exception:
-            log.exception(
-                "hover back loop: EXCEPTION at t=%.2fs",
-                time.monotonic() - loop_t0,
-            )
-            raise
         finally:
-            log.info(
-                "hover backward pulse loop: EXIT halt=%s total=%.2fs",
-                halt.is_set(),
-                time.monotonic() - loop_t0,
-            )
             self._imu_end_straight()
             self._sync_pulse_moving_speed()
 
