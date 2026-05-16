@@ -926,14 +926,15 @@ class HoverboardAxisDrive:
         finally:
             self._sync_pulse_moving_speed()
 
-    def stop(self) -> None:
+    def stop(self, *, settle: bool = True) -> None:
         if not self._is_initialized:
             return
         self._halt_pulse_series(wait=True)
         self._apply_goals(
             {self._left_id: self._brake_left, self._right_id: self._brake_right}
         )
-        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
+        if settle:
+            time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self._last_straight_key = None
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
@@ -1180,7 +1181,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 0.12)
+            else getattr(self.config, "turn_duration_sec", 0.05)
         )
         self.set_wheels(
             left_dir=self.DIR_FORWARD,
@@ -1189,7 +1190,7 @@ class HoverboardAxisDrive:
             right_speed=outer,
         )
         time.sleep(max(0.0, dur))
-        self.stop()
+        self.stop(settle=False)
 
     def turn_right(
         self,
@@ -1203,7 +1204,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 0.12)
+            else getattr(self.config, "turn_duration_sec", 0.05)
         )
         self.set_wheels(
             left_dir=self.DIR_BACKWARD,
@@ -1212,7 +1213,7 @@ class HoverboardAxisDrive:
             right_speed=outer,
         )
         time.sleep(max(0.0, dur))
-        self.stop()
+        self.stop(settle=False)
 
     def forward(self, speed_percent: Optional[int] = None) -> None:
         sp = self._resolve_speed(speed_percent)

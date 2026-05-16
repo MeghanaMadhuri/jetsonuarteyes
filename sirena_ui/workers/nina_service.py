@@ -138,7 +138,7 @@ class NinaService:
                 continue
             updates[key] = max(0, min(4095, int(val)))
         if turn_duration_sec is not None:
-            updates["turn_duration_sec"] = max(0.1, min(1.0, float(turn_duration_sec)))
+            updates["turn_duration_sec"] = max(0.05, min(1.0, float(turn_duration_sec)))
         if not updates:
             return
         save_hover_calibration_partial(updates)

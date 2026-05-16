@@ -27,7 +27,7 @@ _PreviewMode = Literal["fwd", "back", "tl", "tr"]
 
 _POS_MIN = 0
 _POS_MAX = 4095
-_TURN_DUR_MIN = 0.1
+_TURN_DUR_MIN = 0.05
 _TURN_DUR_MAX = 1.0
 
 

@@ -147,7 +147,7 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
     if raw:
         try:
-            return max(0.1, min(60.0, float(raw)))
+            return max(0.05, min(60.0, float(raw)))
         except ValueError:
             pass
     if nav is not None:
@@ -155,13 +155,13 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
         if cfg is not None:
             try:
                 td = float(getattr(cfg, "turn_duration_sec"))
-                return max(0.1, min(60.0, td))
+                return max(0.05, min(60.0, td))
             except (TypeError, ValueError):
                 pass
     try:
-        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.12"))))
+        return max(0.05, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.05"))))
     except ValueError:
-        return 0.12
+        return 0.05
 
 
 def _left_fwd_extra_pp() -> int:

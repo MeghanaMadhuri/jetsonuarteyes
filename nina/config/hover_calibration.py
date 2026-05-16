@@ -4,7 +4,7 @@ Values merge over env-loaded defaults and are read at ``load_settings()`` time.
 Writes go to ``$XDG_CONFIG_HOME/sirena/hover_calibration.json`` (fallback:
 ``~/.config/sirena/``).
 
-Optional ``turn_duration_sec`` (0.1–1.0) merges into ``NavigationSettings`` for
+Optional ``turn_duration_sec`` (0.05–1.0) merges into ``NavigationSettings`` for
 timed :meth:`turn_left` / :meth:`turn_right` and Drive screen pivots.
 """
 
@@ -92,7 +92,7 @@ def read_hover_calibration_turn_duration_sec() -> float | None:
         v = float(raw[_TURN_DURATION_SEC])
     except (TypeError, ValueError):
         return None
-    return max(1.0, min(5.0, v))
+    return max(0.05, min(1.0, v))
 
 
 def merge_hover_calibration_into_axis(axis: HoverboardAxisSettings) -> HoverboardAxisSettings:
@@ -121,7 +121,7 @@ def save_hover_calibration_partial(
     data = _read_file_dict()
     for k, v in updates.items():
         if k == _TURN_DURATION_SEC:
-            data[k] = max(0.1, min(1.0, float(v)))
+            data[k] = max(0.05, min(1.0, float(v)))
         elif k in _POSITION_INT_KEYS:
             data[k] = max(0, min(4095, int(v)))
     path.write_text(
