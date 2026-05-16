@@ -6,7 +6,13 @@ matches ``NavigationManager`` as used by ``DriveController``, autonomy, and goto
 
 **Straight-line prime:** before each new symmetric straight FWD/BACK ``set_wheels``,
 both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up to
-``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). Pivots skip this path.
+``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). **Timed Turn left/right** (Drive
+GUI) call the same prime before starting. D-pad pivots skip that explicit prime.
+
+**Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
+opposite forward/back goals. **Turn left** = left forward lean + right backward
+lean (right side uses ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer ``speed_percent``).
+**Turn right** is the mirror.
 
 **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
 ``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` run **independent** timed
@@ -133,6 +139,14 @@ def _straight_prime_tol_ticks() -> int:
         return max(1, min(512, int(os.environ.get("NINA_HOVER_STRAIGHT_PRIME_TOL_TICKS", "32"))))
     except ValueError:
         return 32
+
+
+def _hover_turn_slow_wheel_pct() -> int:
+    """Backward-side lean strength for timed Turn left/right (1–100, default 8)."""
+    try:
+        return max(1, min(100, int(os.environ.get("NINA_HOVER_TURN_SLOW_WHEEL_PCT", "8"))))
+    except ValueError:
+        return 8
 
 
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
@@ -973,23 +987,31 @@ class HoverboardAxisDrive:
             br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
             return {self._left_id: bl, self._right_id: br}
 
-        # Pivot: opposite leans from configured straight-line goals (left back + right
-        # forward = turn left; left forward + right back = turn right).
+        # Pivot: opposite leans. **Equal speeds** ⇒ full calibrated pivot (D-pad).
+        # **Unequal speeds** ⇒ blend each axis toward its goal by speed/100 (timed
+        # Turn left/right: strong forward lean vs weaker backward lean on the other axis).
         if left_speed > 0 and right_speed > 0 and lf != rf:
             fl = self._dxl._clamp_pos(int(self._axis.forward_pos_left))
             fr = self._dxl._clamp_pos(int(self._axis.forward_pos_right))
             bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
             br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
             if lf:
-                lg, rg = fl, br
+                l_tgt, r_tgt = fl, br
             else:
-                lg, rg = bl, fr
+                l_tgt, r_tgt = bl, fr
             if self._axis.swap_turn_lr:
-                lg, rg = rg, lg
+                l_tgt, r_tgt = r_tgt, l_tgt
             push = int(self._axis.turn_push_ticks)
             if push > 0:
-                lg = _nudge_goal_from_brake(lg, nl, push)
-                rg = _nudge_goal_from_brake(rg, nr, push)
+                l_tgt = _nudge_goal_from_brake(l_tgt, nl, push)
+                r_tgt = _nudge_goal_from_brake(r_tgt, nr, push)
+            if left_speed == right_speed:
+                lg, rg = l_tgt, r_tgt
+            else:
+                u_l = max(0.0, min(1.0, left_speed / 100.0))
+                u_r = max(0.0, min(1.0, right_speed / 100.0))
+                lg = int(round(nl + (l_tgt - nl) * u_l))
+                rg = int(round(nr + (r_tgt - nr) * u_r))
             return {
                 self._left_id: self._dxl._clamp_pos(lg),
                 self._right_id: self._dxl._clamp_pos(rg),
@@ -1088,17 +1110,27 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        speed = self._resolve_speed(speed_percent)
+        """Timed yaw: left lean (``id_left``) forward, right lean backward (weaker).
+
+        Runs straight-line :meth:`_prime_straight_neutral` first (same family as
+        symmetric straight). Outer lean uses *speed_percent*; inner uses
+        ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` (default 8).
+        """
+        outer = self._resolve_speed(speed_percent)
+        slow = _hover_turn_slow_wheel_pct()
+        outer = max(outer, slow)
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 2.3)
+            else getattr(self.config, "turn_duration_sec", 2.0)
         )
+        self._prime_straight_neutral()
+        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self.set_wheels(
-            left_dir=self.DIR_BACKWARD,
-            left_speed=speed,
-            right_dir=self.DIR_FORWARD,
-            right_speed=speed,
+            left_dir=self.DIR_FORWARD,
+            left_speed=outer,
+            right_dir=self.DIR_BACKWARD,
+            right_speed=slow,
         )
         time.sleep(max(0.0, dur))
         self.stop()
@@ -1108,17 +1140,22 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        speed = self._resolve_speed(speed_percent)
+        """Timed yaw: right lean forward, left lean backward (weaker). See ``turn_left``."""
+        outer = self._resolve_speed(speed_percent)
+        slow = _hover_turn_slow_wheel_pct()
+        outer = max(outer, slow)
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 2.3)
+            else getattr(self.config, "turn_duration_sec", 2.0)
         )
+        self._prime_straight_neutral()
+        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self.set_wheels(
-            left_dir=self.DIR_FORWARD,
-            left_speed=speed,
-            right_dir=self.DIR_BACKWARD,
-            right_speed=speed,
+            left_dir=self.DIR_BACKWARD,
+            left_speed=slow,
+            right_dir=self.DIR_FORWARD,
+            right_speed=outer,
         )
         time.sleep(max(0.0, dur))
         self.stop()

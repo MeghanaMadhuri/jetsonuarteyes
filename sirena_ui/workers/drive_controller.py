@@ -18,9 +18,15 @@ replacement:
 Hardware-touching operations (init, brake, drive, stop, shutdown) are
 serialised onto a dedicated worker thread via a command queue so:
 
+  * **All** Nina UI motion (manual D-pad, bench straight tests, autonomy,
+    goto, ArUco follow, face follow, Android HTTP momentary FWD/BACK when
+    wired through ``DriveController``) runs the same hoverboard primitives:
+    straight pulse series + kick/cruise fallbacks, timed ``turn_left`` /
+    ``turn_right`` for 90° buttons, and asymmetric pivot duties
+    (``NINA_HOVER_TURN_SLOW_WHEEL_PCT``) for held L/R and in-loop pivots.
   * `forward`/`backward` calls (which include a 0.1s settle sleep)
     don't stall the GUI.
-  * `turn_left`/`turn_right` (which block for ~2.3s by design) run
+  * `turn_left`/`turn_right` (which block for ~2s by design) run
     concurrently with UI updates.
   * Commands always execute in the order they were issued.
 
@@ -50,6 +56,10 @@ from typing import Callable, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from nina.controllers.hoverboard_axis_drive import (
+    HoverboardAxisDrive,
+    _hover_turn_slow_wheel_pct,
+)
 from nina.controllers.navigation_manager import (
     DEFAULT_PINS,
     NavigationConfig,
@@ -141,9 +151,9 @@ def _drive_turn_90_duration_sec() -> float:
         except ValueError:
             pass
     try:
-        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "2.3"))))
+        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "2.0"))))
     except ValueError:
-        return 2.3
+        return 2.0
 
 
 def _left_fwd_extra_pp() -> int:
@@ -210,6 +220,42 @@ def _pair_duties_with_right_bias(
     lb2 = max(0, min(100, int(lb) + int(extra_l)))
     rb2 = max(0, min(100, int(rb) + int(extra_r)))
     return lb2, rb2
+
+
+def _hoverboard_pivot_outer_slow(sym_speed: int) -> Tuple[int, int]:
+    """Outer / slow-wheel duties matching :meth:`HoverboardAxisDrive.turn_left`."""
+    slow = _hover_turn_slow_wheel_pct()
+    outer = max(int(sym_speed), slow)
+    return outer, slow
+
+
+def _apply_hoverboard_equal_pivot_blend(
+    nav: object,
+    ldir: str,
+    rdir: str,
+    left_speed: int,
+    right_speed: int,
+) -> Tuple[int, int]:
+    """When both pivot sides use the same duty, split like timed ``turn_*``."""
+    if getattr(nav, "DRIVER_LABEL", None) != HoverboardAxisDrive.DRIVER_LABEL:
+        return left_speed, right_speed
+    if left_speed != right_speed or left_speed <= 0:
+        return left_speed, right_speed
+    if ldir == rdir:
+        return left_speed, right_speed
+    outer, slow = _hoverboard_pivot_outer_slow(left_speed)
+    if (
+        ldir == HoverboardAxisDrive.DIR_FORWARD
+        and rdir == HoverboardAxisDrive.DIR_BACKWARD
+    ):
+        return outer, slow
+    if (
+        ldir == HoverboardAxisDrive.DIR_BACKWARD
+        and rdir == HoverboardAxisDrive.DIR_FORWARD
+    ):
+        return slow, outer
+    return left_speed, right_speed
+
 
 # Heartbeat interval for re-issuing the current SET while a D-pad
 # button or arrow key is held. Re-writing the same duty is cheap on
@@ -376,6 +422,12 @@ class DriveController(QObject):
         # estop so the heartbeat goes quiet between drives.
         self._active_drive: Optional[Tuple[str, int, str, int]] = None
 
+        # Hoverboard: allow one straight FWD/BACK pulse series per "segment"
+        # (until stop/brake/zero-wheels). Without this, autonomy would
+        # restart ``start_pulse_straight_*`` every tick once ``_active_drive``
+        # is cleared while the pulse thread runs.
+        self._hover_straight_pulse_next: bool = True
+
         # All hardware-touching work runs on a single worker thread, in
         # the order commands were issued, so GUI clicks never collide
         # with a still-blocking turn.
@@ -450,6 +502,7 @@ class DriveController(QObject):
         self._nav.start_pulse_straight_forward(int(speed_pct))
         with self._lock:
             self._active_drive = None
+            self._hover_straight_pulse_next = False
 
     def _do_start_backward_pulse_bench(self, speed_pct: int) -> None:
         if self._nav is None or not self.supports_forward_pulse():
@@ -457,6 +510,7 @@ class DriveController(QObject):
         self._nav.start_pulse_straight_backward(int(speed_pct))
         with self._lock:
             self._active_drive = None
+            self._hover_straight_pulse_next = False
 
     def ensure_hardware(self) -> None:
         """Kick off lazy initialisation of the BLDC drivers.
@@ -707,8 +761,10 @@ class DriveController(QObject):
                     "forward" if left_dir == _DIR_FORWARD else "back"
                 )
             else:
+                lv_f = left_dir == _DIR_FORWARD
+                rv_f = right_dir == _DIR_FORWARD
                 self._state["direction"] = (
-                    "left" if left_dir == _DIR_BACK else "right"
+                    "left" if lv_f and not rv_f else "right"
                 )
         self._emit_state()
         self._enqueue(
@@ -871,6 +927,7 @@ class DriveController(QObject):
             self._nav.engage_brake()
             with self._lock:
                 self._active_drive = None
+                self._hover_straight_pulse_next = True
         except Exception as exc:
             log.exception("engage_brake failed: %s", exc)
 
@@ -908,13 +965,40 @@ class DriveController(QObject):
                     pivot = _drive_pivot_speed_pct()
                     kick = max(MIN_SPEED_PCT, min(100, pivot))
                     cruise = max(MIN_SPEED_PCT, min(100, pivot))
-                    self._nav.drive_continuous(ldir, rdir, kick)
-                    self._commit_wheels(
-                        ldir, kick, rdir, kick, start_phase=True,
-                    )
-                    self._commit_wheels(
-                        ldir, cruise, rdir, cruise, start_phase=False,
-                    )
+                    if (
+                        getattr(self._nav, "DRIVER_LABEL", None)
+                        == HoverboardAxisDrive.DRIVER_LABEL
+                    ):
+                        ko, ksl = _hoverboard_pivot_outer_slow(kick)
+                        co, csl = _hoverboard_pivot_outer_slow(cruise)
+                        if direction == _DIR_LEFT:
+                            self._nav.drive_continuous(
+                                ldir, rdir, ko, right_speed_percent=ksl,
+                            )
+                            self._commit_wheels(
+                                ldir, ko, rdir, ksl, start_phase=True,
+                            )
+                            self._commit_wheels(
+                                ldir, co, rdir, csl, start_phase=False,
+                            )
+                        else:
+                            self._nav.drive_continuous(
+                                ldir, rdir, ksl, right_speed_percent=ko,
+                            )
+                            self._commit_wheels(
+                                ldir, ksl, rdir, ko, start_phase=True,
+                            )
+                            self._commit_wheels(
+                                ldir, csl, rdir, co, start_phase=False,
+                            )
+                    else:
+                        self._nav.drive_continuous(ldir, rdir, kick)
+                        self._commit_wheels(
+                            ldir, kick, rdir, kick, start_phase=True,
+                        )
+                        self._commit_wheels(
+                            ldir, cruise, rdir, cruise, start_phase=False,
+                        )
                     log.info(
                         "drive from stop (pivot): kick %s%% then cruise %s%%",
                         kick,
@@ -924,6 +1008,7 @@ class DriveController(QObject):
                     self._nav.start_pulse_straight_forward(int(speed_pct))
                     with self._lock:
                         self._active_drive = None
+                        self._hover_straight_pulse_next = False
                     log.info(
                         "drive from stop: hover forward pulse speed=%s%%",
                         speed_pct,
@@ -932,6 +1017,7 @@ class DriveController(QObject):
                     self._nav.start_pulse_straight_backward(int(speed_pct))
                     with self._lock:
                         self._active_drive = None
+                        self._hover_straight_pulse_next = False
                     log.info(
                         "drive from stop: hover backward pulse speed=%s%%",
                         speed_pct,
@@ -946,6 +1032,8 @@ class DriveController(QObject):
                     self._commit_wheels(
                         ldir, cruise, rdir, cruise, start_phase=False,
                     )
+                    with self._lock:
+                        self._hover_straight_pulse_next = False
                     log.info(
                         "drive from stop (straight): kick %s%% then cruise %s%%",
                         kick,
@@ -993,6 +1081,7 @@ class DriveController(QObject):
             with self._lock:
                 self._state["direction"] = "idle"
                 self._active_drive = None
+                self._hover_straight_pulse_next = True
             self._emit_state()
 
     def _do_apply_live_speed(self, direction: str, speed_pct: int) -> None:
@@ -1010,6 +1099,23 @@ class DriveController(QObject):
         if ldir is None or rdir is None:
             return
         try:
+            if (
+                direction in (_DIR_LEFT, _DIR_RIGHT)
+                and getattr(
+                    self._nav, "DRIVER_LABEL", None
+                )
+                == HoverboardAxisDrive.DRIVER_LABEL
+            ):
+                o, sl = _hoverboard_pivot_outer_slow(speed_pct)
+                if direction == _DIR_LEFT:
+                    self._commit_wheels(
+                        ldir, o, rdir, sl, start_phase=False,
+                    )
+                else:
+                    self._commit_wheels(
+                        ldir, sl, rdir, o, start_phase=False,
+                    )
+                return
             self._commit_wheels(
                 ldir, speed_pct, rdir, speed_pct, start_phase=False,
             )
@@ -1028,9 +1134,9 @@ class DriveController(QObject):
         if direction == _DIR_BACK:
             return self._nav.DIR_BACKWARD, self._nav.DIR_BACKWARD
         if direction == _DIR_LEFT:
-            return self._nav.DIR_BACKWARD, self._nav.DIR_FORWARD
-        if direction == _DIR_RIGHT:
             return self._nav.DIR_FORWARD, self._nav.DIR_BACKWARD
+        if direction == _DIR_RIGHT:
+            return self._nav.DIR_BACKWARD, self._nav.DIR_FORWARD
         return None, None
 
     def _do_stop(self) -> None:
@@ -1045,11 +1151,13 @@ class DriveController(QObject):
             # wedged, the heartbeat thread must not replay a stale SET forever.
             with self._lock:
                 self._active_drive = None
+                self._hover_straight_pulse_next = True
 
     def _do_emergency_stop(self) -> None:
         if self._nav is None:
             with self._lock:
                 self._active_drive = None
+                self._hover_straight_pulse_next = True
                 self._state["driver_message"] = (
                     "EMERGENCY STOP requested - hardware not connected"
                 )
@@ -1068,6 +1176,7 @@ class DriveController(QObject):
         finally:
             with self._lock:
                 self._active_drive = None
+                self._hover_straight_pulse_next = True
 
     def _do_drive_wheels(
         self,
@@ -1097,7 +1206,9 @@ class DriveController(QObject):
                 if right_dir == _DIR_FORWARD
                 else self._nav.DIR_BACKWARD
             )
-            if left_speed == 0 and right_speed == 0:
+            ls = max(0, min(100, int(left_speed)))
+            rs = max(0, min(100, int(right_speed)))
+            if ls == 0 and rs == 0:
                 self._nav.set_wheels(
                     left_dir=ldir,
                     left_speed=0,
@@ -1106,26 +1217,30 @@ class DriveController(QObject):
                 )
                 with self._lock:
                     self._active_drive = None
+                    self._hover_straight_pulse_next = True
                 return
-            is_turn_left = (
-                ldir == self._nav.DIR_BACKWARD
-                and rdir == self._nav.DIR_FORWARD
-                and left_speed == right_speed
-                and left_speed > 0
+            ls, rs = _apply_hoverboard_equal_pivot_blend(
+                self._nav, ldir, rdir, ls, rs
             )
-            is_turn_right = (
+            is_pivot_left = (
                 ldir == self._nav.DIR_FORWARD
                 and rdir == self._nav.DIR_BACKWARD
-                and left_speed == right_speed
-                and left_speed > 0
+                and ls > 0
+                and rs > 0
+            )
+            is_pivot_right = (
+                ldir == self._nav.DIR_BACKWARD
+                and rdir == self._nav.DIR_FORWARD
+                and ls > 0
+                and rs > 0
             )
             is_symmetric_straight = (
                 ldir == rdir
-                and left_speed == right_speed
-                and left_speed > 0
+                and ls == rs
+                and ls > 0
             )
             entering_symmetric_motion = False
-            if is_turn_left or is_turn_right or is_symmetric_straight:
+            if is_pivot_left or is_pivot_right or is_symmetric_straight:
                 with self._lock:
                     prev = self._active_drive
                 if prev is None:
@@ -1135,16 +1250,17 @@ class DriveController(QObject):
                     if not (
                         p_ld == ldir
                         and p_rd == rdir
-                        and p_ls == p_rs == left_speed
+                        and p_ls == ls
+                        and p_rs == rs
                     ):
                         entering_symmetric_motion = True
             entering_symmetric_pivot = entering_symmetric_motion and (
-                is_turn_left or is_turn_right
+                is_pivot_left or is_pivot_right
             )
             entering_symmetric_straight = (
                 entering_symmetric_motion and is_symmetric_straight
             )
-            run_turn_left_prep = is_turn_left and entering_symmetric_motion
+            run_turn_left_prep = is_pivot_left and entering_symmetric_motion
             if run_turn_left_prep:
                 cfg = getattr(self._nav, "config", None)
                 if cfg is not None:
@@ -1164,32 +1280,58 @@ class DriveController(QObject):
                     # Seat gears at least at D-pad pivot torque; autonomy
                     # often uses NINA_AUTO_TURN_PCT (~9%) which is too weak
                     # alone for straight back/fwd pulses.
-                    prep_sp = max(
-                        int(left_speed), int(_drive_pivot_speed_pct())
-                    )
+                    prep_sp = max(int(ls), int(_drive_pivot_speed_pct()))
                     prep_sp = max(1, min(100, prep_sp))
                     prime(prep_sp)
-            if entering_symmetric_pivot and (is_turn_left or is_turn_right):
-                # Match _do_drive pivot path: two commits (start_phase toggles
-                # only affect forward-forward bias). First frame at pivot-class
-                # duty breaks static friction; second applies the requested cruise.
-                kick_sp = max(int(left_speed), int(_drive_pivot_speed_pct()))
-                kick_sp = max(1, min(100, kick_sp))
-                self._commit_wheels(
-                    ldir, kick_sp, rdir, kick_sp, start_phase=True,
-                )
-                self._commit_wheels(
-                    ldir, left_speed, rdir, right_speed, start_phase=False,
-                )
+            if entering_symmetric_pivot and (is_pivot_left or is_pivot_right):
+                # Break static friction on the outer wheel, then cruise duties.
+                pivot_boost = max(1, min(100, int(_drive_pivot_speed_pct())))
+                if is_pivot_left:
+                    kick_o = max(int(ls), pivot_boost)
+                    self._commit_wheels(
+                        ldir, kick_o, rdir, rs, start_phase=True,
+                    )
+                    self._commit_wheels(
+                        ldir, ls, rdir, rs, start_phase=False,
+                    )
+                else:
+                    kick_o = max(int(rs), pivot_boost)
+                    self._commit_wheels(
+                        ldir, ls, rdir, kick_o, start_phase=True,
+                    )
+                    self._commit_wheels(
+                        ldir, ls, rdir, rs, start_phase=False,
+                    )
             elif entering_symmetric_straight:
-                # Bench "Straight" and the first autonomy forward/reverse tick
-                # used to call only set_wheels(); D-pad W/S use drive_continuous +
-                # kick/cruise from rest. Without that sequence, the first straight
-                # after app start often does nothing until a later command.
+                pulse_series_live = bool(
+                    getattr(
+                        self._nav, "is_forward_pulse_active", lambda: False
+                    )()
+                )
+                if pulse_series_live:
+                    return
+                if (
+                    self.supports_forward_pulse()
+                    and self._hover_straight_pulse_next
+                ):
+                    if ldir == self._nav.DIR_FORWARD:
+                        self._nav.start_pulse_straight_forward(int(ls))
+                        with self._lock:
+                            self._active_drive = None
+                            self._hover_straight_pulse_next = False
+                        return
+                    if ldir == self._nav.DIR_BACKWARD:
+                        self._nav.start_pulse_straight_backward(int(ls))
+                        with self._lock:
+                            self._active_drive = None
+                            self._hover_straight_pulse_next = False
+                        return
+                with self._lock:
+                    self._hover_straight_pulse_next = False
                 kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
-                kick = max(kick, int(left_speed))
+                kick = max(kick, int(ls))
                 kick = min(100, kick)
-                cruise = max(0, min(100, int(left_speed)))
+                cruise = max(0, min(100, int(ls)))
                 self._nav.drive_continuous(ldir, rdir, kick)
                 self._commit_wheels(
                     ldir, kick, rdir, kick, start_phase=True,
@@ -1199,7 +1341,7 @@ class DriveController(QObject):
                 )
             else:
                 self._commit_wheels(
-                    ldir, left_speed, rdir, right_speed, start_phase=False,
+                    ldir, ls, rdir, rs, start_phase=False,
                 )
         except Exception as exc:
             log.exception(

@@ -69,17 +69,29 @@ def momentary_drive(
                 _set_last_drive_error("navigation not initialized")
                 return
             if direction == "stop":
-                nav.stop()
+                dc._do_stop()  # noqa: SLF001
                 _set_last_drive_error(None)
                 return
+            # On the drive worker already: call wheel ops directly (do not
+            # re-enqueue via ``drive_wheels`` — would deadlock the worker).
             if direction == "forward":
-                nav.forward(speed_percent=speed_percent)
+                dc._do_drive_wheels(  # noqa: SLF001
+                    "forward",
+                    speed_percent,
+                    "forward",
+                    speed_percent,
+                )
                 time.sleep(d_sec)
-                nav.stop()
+                dc._do_stop()  # noqa: SLF001
             elif direction == "back":
-                nav.backward(speed_percent=speed_percent)
+                dc._do_drive_wheels(  # noqa: SLF001
+                    "back",
+                    speed_percent,
+                    "back",
+                    speed_percent,
+                )
                 time.sleep(d_sec)
-                nav.stop()
+                dc._do_stop()  # noqa: SLF001
             elif direction == "left":
                 nav.turn_left(speed_percent=speed_percent, duration=d_sec)
             elif direction == "right":

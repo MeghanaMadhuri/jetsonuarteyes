@@ -637,9 +637,9 @@ class GotoPilot:
             elif action == "reverse":
                 self._drive.drive_wheels(_DIR_BACK, cruise, _DIR_BACK, cruise)
             elif action == "turn_left":
-                self._drive.drive_wheels(_DIR_BACK, turn, _DIR_FORWARD, turn)
-            elif action == "turn_right":
                 self._drive.drive_wheels(_DIR_FORWARD, turn, _DIR_BACK, turn)
+            elif action == "turn_right":
+                self._drive.drive_wheels(_DIR_BACK, turn, _DIR_FORWARD, turn)
             else:
                 self._drive.stop()
         except Exception:

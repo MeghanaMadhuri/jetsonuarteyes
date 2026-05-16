@@ -610,6 +610,9 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 # export NINA_IMU_YAW_DISPLAY_SIGN=1       # -1 if HUD left/right feels inverted
 # export NINA_IMU_DRIFT_DEADBAND_DEG=0.5
 
+# Timed Turn left/right (hoverboard): weaker-axis duty vs outer (default 8%).
+# export NINA_HOVER_TURN_SLOW_WHEEL_PCT=8
+
 # Drive / BLDC: espeak-ng alerts on init failure or drive ignored (backend not ready).
 # NINA_BLDC_ALERT_SPEECH=0           # disable spoken BLDC errors
 # NINA_BLDC_ALERT_COOLDOWN_SEC=12   # suppress repeat of identical phrase (seconds)

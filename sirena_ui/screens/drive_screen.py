@@ -503,12 +503,11 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "In-place pivot: left lean axis to REV goal (NINA_HOVER_REV_POS_LEFT), "
-            "right to FWD goal (NINA_HOVER_FWD_POS_RIGHT), held for "
-            "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
-            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 20). "
-            "If left/right feel reversed, set NINA_HOVER_SWAP_TURN_LR=0. "
-            "D-pad left uses the same pairing while held."
+            "Timed yaw (~2 s default: NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC): "
+            "runs straight-line lean prime (same family as Straight test), then "
+            "left lean axis (e.g. ID 12) toward FWD, right (e.g. 13) toward REV "
+            "at NINA_HOVER_TURN_SLOW_WHEEL_PCT vs outer speed (NINA_DRIVE_TURN_90_PCT). "
+            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad left matches."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
         turn_row.addWidget(self._turn_90_left_btn, stretch=1)
@@ -518,12 +517,9 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "In-place pivot: left lean axis to FWD goal (NINA_HOVER_FWD_POS_LEFT), "
-            "right to REV goal (NINA_HOVER_REV_POS_RIGHT), held for "
-            "NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC. "
-            "Extra pivot lean vs brake: NINA_HOVER_TURN_PUSH_TICKS (default 20). "
-            "If left/right feel reversed, set NINA_HOVER_SWAP_TURN_LR=0. "
-            "D-pad right uses the same pairing while held."
+            "Timed yaw (~2 s default): straight-line lean prime, then right lean "
+            "toward FWD and left toward REV (weaker side: NINA_HOVER_TURN_SLOW_WHEEL_PCT). "
+            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad right matches."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
         turn_row.addWidget(self._turn_90_right_btn, stretch=1)
