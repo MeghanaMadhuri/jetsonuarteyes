@@ -15,8 +15,8 @@ I2C details:
     0xFE = 0x02. We read the shift register on connect to scale
     correctly.
 
-Default I2C bus is `/dev/i2c-1` on Jetson Nano (40-pin header), bus 0
-on the J41 alt header. Override via NINA_IR_I2C_BUS / NINA_IR_I2C_ADDR.
+Default I2C bus is `/dev/i2c-7` on Orin Nano header pins 3/5 (same bus as
+IMU, ADS1115, touch). Override via NINA_IR_I2C_BUS / NINA_IR_I2C_ADDR.
 """
 
 from __future__ import annotations
@@ -33,22 +33,25 @@ from nina.sensors.types import IRReading
 log = logging.getLogger("nina.sensors.gp2y0e02b")
 
 
-DEFAULT_BUS = int(os.environ.get("NINA_IR_I2C_BUS", "1"))
+DEFAULT_BUS = int(os.environ.get("NINA_IR_I2C_BUS", "7"))
 DEFAULT_ADDR = int(os.environ.get("NINA_IR_I2C_ADDR", "0x40"), 0)
 DEFAULT_POSITION = os.environ.get("NINA_IR_POSITION", "front_cliff")
 
 
-def is_available() -> Tuple[bool, str]:
+def is_available(bus_num: Optional[int] = None) -> Tuple[bool, str]:
     if os.environ.get("NINA_IR_DISABLE", "").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         return False, "disabled via NINA_IR_DISABLE"
+    if bus_num is None:
+        bus_num = DEFAULT_BUS
     try:
         import smbus2  # noqa: F401  type: ignore
     except Exception as exc:  # pragma: no cover
         return False, f"smbus2 not installed ({exc})"
-    if not os.path.exists(f"/dev/i2c-{DEFAULT_BUS}"):
-        return False, f"/dev/i2c-{DEFAULT_BUS} not present"
+    dev = f"/dev/i2c-{int(bus_num)}"
+    if not os.path.exists(dev):
+        return False, f"{dev} not present"
     return True, ""
 
 

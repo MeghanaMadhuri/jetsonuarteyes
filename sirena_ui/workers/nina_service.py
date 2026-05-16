@@ -38,10 +38,12 @@ from nina.controllers.hoverboard_axis_drive import (
 from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
 from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
-from nina.sensors.obstacle_stop_monitor import ObstacleStopMonitor
-from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
-from nina.services.audio_player import AudioPlayer
-from nina.services.sensor_alert_audio import play_low_battery_alert, play_touch_alert
+from nina.sensors.ir_obstacle_stop_monitor import IrObstacleStopMonitor
+from nina.services.sensor_alert_audio import (
+    play_low_battery_alert,
+    play_obstacle_alert,
+    play_touch_alert,
+)
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.face_follow_controller import FaceFollowController
@@ -80,7 +82,7 @@ class NinaService:
         self._face_greeter: Optional[FaceGreeter] = None
         self._slam: Optional[SlamWorker] = None
         self._autonomy: Optional[AutonomyController] = None
-        self._obstacle_monitor: Optional[ObstacleStopMonitor] = None
+        self._ir_obstacle_monitor: Optional[IrObstacleStopMonitor] = None
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
@@ -209,18 +211,28 @@ class NinaService:
                 "detail": health.detail,
             }
 
-    def start_obstacle_stop_monitor(self) -> None:
-        """Start forward HC-SR04 obstacle handling when enabled in settings."""
-        if not self.settings.obstacle_stop.enabled:
+    def is_hoverboard_in_motion(self) -> bool:
+        """True when drive layer reports wheels away from idle/brake neutral."""
+        drv = self._drive
+        if drv is None:
+            return False
+        return bool(getattr(drv, "is_in_motion", lambda: False)())
+
+    def start_ir_obstacle_stop_monitor(self) -> None:
+        """Start motion-gated GP2Y0E02B IR obstacle handling when enabled."""
+        if not self.settings.ir_obstacle_stop.enabled:
             return
-        if self._obstacle_monitor is not None:
+        if self._ir_obstacle_monitor is not None:
             return
         try:
-            mon = ObstacleStopMonitor(self)
+            mon = IrObstacleStopMonitor(
+                self,
+                in_motion_fn=self.is_hoverboard_in_motion,
+            )
             mon.start()
-            self._obstacle_monitor = mon
+            self._ir_obstacle_monitor = mon
         except Exception as exc:
-            log.warning("Obstacle stop monitor did not start: %s", exc)
+            log.warning("IR obstacle stop monitor did not start: %s", exc)
 
     def run_obstacle_stop_reaction(self) -> None:
         """JYQD stop, neutral action, lean brake, then US-English gTTS phrase."""
@@ -254,19 +266,11 @@ class NinaService:
             except Exception:
                 log.exception("Obstacle stop: neutral / brake pose failed")
 
-        phrase = (self.settings.obstacle_stop.tts_text or "").strip()
-        if not phrase:
-            phrase = "There is an obstacle in my way"
-        out = Path(tempfile.gettempdir()) / "nina_obstacle_stop_alert.mp3"
+        phrase = (self.settings.ir_obstacle_stop.tts_text or "").strip()
         try:
-            AudioGenerator.generate(
-                phrase, out, lang="en", tld="us", slow=False
-            )
-            AudioPlayer().play(out)
-        except AudioGeneratorError as exc:
-            log.warning("Obstacle stop TTS unavailable: %s", exc)
+            play_obstacle_alert(phrase=phrase)
         except Exception:
-            log.exception("Obstacle stop TTS / playback failed")
+            log.exception("Obstacle stop alert playback failed")
 
     def start_battery_ads1115_monitor(self) -> None:
         """Start ADS1115 pack-voltage monitor when enabled in settings."""
@@ -549,12 +553,12 @@ class NinaService:
             except Exception:
                 pass
             self._touch_monitor = None
-        if self._obstacle_monitor is not None:
+        if self._ir_obstacle_monitor is not None:
             try:
-                self._obstacle_monitor.stop()
+                self._ir_obstacle_monitor.stop()
             except Exception:
                 pass
-            self._obstacle_monitor = None
+            self._ir_obstacle_monitor = None
         with self.bus_lock:
             # Order matters: autonomy depends on slam (lidar) and drive,
             # so it has to come down first - that also parks the wheels.

@@ -281,23 +281,22 @@ class TouchAt42qt2120Settings:
 
 
 @dataclass(frozen=True)
-class ObstacleStopSettings:
-    """Single forward HC-SR04: stop JYQD drive, park lean brake, run neutral pose, TTS.
+class IrObstacleStopSettings:
+    """GP2Y0E02B forward IR on header I²C (pins 3/5 → ``/dev/i2c-7``, addr **0x40**).
 
-    Enable with ``NINA_OBSTACLE_STOP_ENABLE=1``. Default Trig/Echo BCM **4 / 9**
-    map to physical header pins **7 / 21** on the reference Orin NX / Orin Nano
-    40-pin layout (``Jetson.GPIO`` / ``JETSON_ORIN_NANO_BOARD_BY_BCM``). Trig uses
-    **BCM 4** instead of **19** so physical **35** (often audio / I2S on carriers)
-    stays free. BCM **4** overlaps the HC-SR04 ring's default **rear_left Echo**
-    slot—remap one side if you run both the ring and this monitor.
+    Polls only while the hoverboard is **in motion** (not idle / brake neutral).
+    At or below ``threshold_mm`` (default **1000** = 100 cm) with a valid reading,
+    stops drive, parks lean brake, runs neutral pose, plays obstacle TTS.
+    Enable with ``NINA_IR_OBSTACLE_STOP_ENABLE=1`` (default on).
     """
 
     enabled: bool
+    i2c_bus: int
+    i2c_address: int
     threshold_mm: int
-    hcsr04_trig_bcm: int
-    hcsr04_echo_bcm: int
     debounce_reads: int
     cooldown_sec: float
+    poll_interval_sec: float
     tts_text: str
 
 
@@ -419,7 +418,7 @@ class NinaSettings:
     lidar: LidarSettings
     goto: GotoSettings
     hoverboard_axis: HoverboardAxisSettings
-    obstacle_stop: ObstacleStopSettings
+    ir_obstacle_stop: IrObstacleStopSettings
     battery_ads1115: BatteryAds1115Settings
     touch_at42qt2120: TouchAt42qt2120Settings
 
@@ -785,18 +784,23 @@ def load_settings(repo_root: Path) -> NinaSettings:
         emergency_stop_mm=int(os.environ.get("NINA_GOTO_ESTOP_MM", "580")),
     )
 
-    obstacle_stop = ObstacleStopSettings(
-        enabled=_env_bool("NINA_OBSTACLE_STOP_ENABLE", False),
+    obstacle_tts = (
+        (os.environ.get("NINA_OBSTACLE_TTS") or "").strip()
+        or "There is an obstacle in my way"
+    )
+
+    ir_obstacle_stop = IrObstacleStopSettings(
+        enabled=_env_bool("NINA_IR_OBSTACLE_STOP_ENABLE", True),
+        i2c_bus=_env_int("NINA_IR_OBSTACLE_I2C_BUS", _env_int("NINA_IR_I2C_BUS", 7)),
+        i2c_address=_env_int("NINA_IR_OBSTACLE_I2C_ADDR", _env_int("NINA_IR_I2C_ADDR", 0x40)),
         threshold_mm=max(
-            50, min(5000, _env_int("NINA_OBSTACLE_STOP_MM", 1000))
+            50, min(5000, _env_int("NINA_IR_OBSTACLE_MM", 1000))
         ),
-        hcsr04_trig_bcm=_env_int("NINA_OBSTACLE_HCSR04_TRIG", 4),
-        hcsr04_echo_bcm=_env_int("NINA_OBSTACLE_HCSR04_ECHO", 9),
-        debounce_reads=max(1, min(20, _env_int("NINA_OBSTACLE_DEBOUNCE", 2))),
-        cooldown_sec=max(0.0, _env_float("NINA_OBSTACLE_COOLDOWN_SEC", 15.0)),
+        debounce_reads=max(1, min(20, _env_int("NINA_IR_OBSTACLE_DEBOUNCE", 2))),
+        cooldown_sec=max(0.0, _env_float("NINA_IR_OBSTACLE_COOLDOWN_SEC", 15.0)),
+        poll_interval_sec=max(0.02, _env_float("NINA_IR_OBSTACLE_POLL_SEC", 0.05)),
         tts_text=(
-            (os.environ.get("NINA_OBSTACLE_TTS") or "").strip()
-            or "There is an obstacle in my way"
+            (os.environ.get("NINA_IR_OBSTACLE_TTS") or "").strip() or obstacle_tts
         ),
     )
 
@@ -863,7 +867,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         lidar=lidar,
         goto=goto,
         hoverboard_axis=hoverboard_axis,
-        obstacle_stop=obstacle_stop,
+        ir_obstacle_stop=ir_obstacle_stop,
         battery_ads1115=battery_ads1115,
         touch_at42qt2120=touch_at42qt2120,
     )

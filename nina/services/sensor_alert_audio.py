@@ -1,4 +1,4 @@
-"""Pre-generated US-English MP3 alerts for low battery and touch (gTTS + ffmpeg).
+"""Pre-generated US-English MP3 alerts for low battery, touch, and obstacle (gTTS + ffmpeg).
 
 Clips live under ``nina/audio/alerts/``. Regenerate with::
 
@@ -21,6 +21,9 @@ log = logging.getLogger("nina.services.sensor_alert_audio")
 _ALERTS_DIR = Path(__file__).resolve().parents[1] / "audio" / "alerts"
 LOW_BATTERY_ALERT_MP3 = _ALERTS_DIR / "low_battery.mp3"
 TOUCH_ALERT_MP3 = _ALERTS_DIR / "touch.mp3"
+OBSTACLE_ALERT_MP3 = _ALERTS_DIR / "obstacle.mp3"
+
+DEFAULT_OBSTACLE_TTS = "There is an obstacle in my way"
 
 
 def low_battery_alert_path() -> Path:
@@ -29,6 +32,10 @@ def low_battery_alert_path() -> Path:
 
 def touch_alert_path() -> Path:
     return TOUCH_ALERT_MP3
+
+
+def obstacle_alert_path() -> Path:
+    return OBSTACLE_ALERT_MP3
 
 
 def play_bundled_or_gtts(
@@ -70,4 +77,12 @@ def play_touch_alert(*, phrase: str | None = None) -> None:
         touch_alert_path(),
         phrase=(phrase or "").strip() or DEFAULT_TOUCH_TTS,
         temp_basename="nina_touch_alert.mp3",
+    )
+
+
+def play_obstacle_alert(*, phrase: str | None = None) -> None:
+    play_bundled_or_gtts(
+        obstacle_alert_path(),
+        phrase=(phrase or "").strip() or DEFAULT_OBSTACLE_TTS,
+        temp_basename="nina_obstacle_alert.mp3",
     )

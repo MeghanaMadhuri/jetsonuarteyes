@@ -1,8 +1,8 @@
-"""Unit tests for HC-SR04 obstacle-stop debounce helper."""
+"""Unit tests for IR obstacle-stop debounce helper."""
 
 import unittest
 
-from nina.sensors.obstacle_stop_monitor import obstacle_debounce_step
+from nina.sensors.ir_obstacle_stop_monitor import obstacle_debounce_step
 
 
 class ObstacleDebounceStepTests(unittest.TestCase):

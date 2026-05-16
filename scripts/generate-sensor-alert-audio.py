@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate US-English gTTS MP3s for low-battery and touch sensor alerts.
+"""Generate US-English gTTS MP3s for low-battery, touch, and obstacle sensor alerts.
 
 Output (committed in repo)::
 
     nina/audio/alerts/low_battery.mp3
     nina/audio/alerts/touch.mp3
+    nina/audio/alerts/obstacle.mp3
 
 Examples::
 
@@ -30,7 +31,9 @@ if str(ROOT) not in sys.path:
 from nina.sensors.ads1115 import LOW_BATTERY_TTS  # noqa: E402
 from nina.sensors.at42qt2120 import DEFAULT_TOUCH_TTS  # noqa: E402
 from nina.services.sensor_alert_audio import (  # noqa: E402
+    DEFAULT_OBSTACLE_TTS,
     LOW_BATTERY_ALERT_MP3,
+    OBSTACLE_ALERT_MP3,
     TOUCH_ALERT_MP3,
 )
 
@@ -79,9 +82,17 @@ def main() -> int:
     )
     if rc != 0:
         return rc
-    return _generate_one(
+    rc = _generate_one(
         TOUCH_ALERT_MP3,
         DEFAULT_TOUCH_TTS,
+        lang=args.lang,
+        tld=args.tld,
+    )
+    if rc != 0:
+        return rc
+    return _generate_one(
+        OBSTACLE_ALERT_MP3,
+        DEFAULT_OBSTACLE_TTS,
         lang=args.lang,
         tld=args.tld,
     )

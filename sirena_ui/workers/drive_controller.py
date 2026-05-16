@@ -470,6 +470,28 @@ class DriveController(QObject):
         with self._lock:
             return dict(self._state)
 
+    def is_in_motion(self) -> bool:
+        """True when wheels are commanded away from idle/brake neutral."""
+        with self._lock:
+            if self._state.get("brake", True):
+                return False
+            direction = str(self._state.get("direction", "idle"))
+            if direction == "idle":
+                return False
+        active = self._active_drive
+        if active is not None:
+            _, ls, _, rs = active
+            if ls > 0 or rs > 0:
+                return True
+        nav = self._nav if self._nav is not None else self._injected_nav
+        if nav is not None and hasattr(nav, "is_straight_pulse_series_active"):
+            try:
+                if nav.is_straight_pulse_series_active():
+                    return True
+            except Exception:
+                pass
+        return False
+
     def update_hoverboard_axis(self, axis_cfg: object) -> None:
         """Apply new lean goal ticks without rebuilding this controller."""
         nav = self._nav if self._nav is not None else self._injected_nav

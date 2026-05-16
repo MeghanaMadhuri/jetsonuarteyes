@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         # Header I²C sensors do not need the Dynamixel bus; start early.
         QTimer.singleShot(200, self._service.start_battery_ads1115_monitor)
         QTimer.singleShot(250, self._service.start_touch_at42qt2120_monitor)
+        QTimer.singleShot(300, self._service.start_ir_obstacle_stop_monitor)
 
         # Try to bring up the bus shortly after the window appears so the
         # status bar shows accurate dots without blocking the UI.
@@ -421,7 +422,7 @@ class MainWindow(QMainWindow):
             self._apply_bus_footer_from_health(health)
         else:
             self._apply_bus_footer_from_health({})
-        self._service.start_obstacle_stop_monitor()
+        self._service.start_ir_obstacle_stop_monitor()
         self._service.start_battery_ads1115_monitor()
         self._service.start_touch_at42qt2120_monitor()
         self._service.start_mpu9250_imu_monitor()
