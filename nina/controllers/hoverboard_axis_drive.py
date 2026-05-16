@@ -120,7 +120,7 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
 # Pivot only (L/R yaw): offset applied to both goal corners after ``turn_push_ticks``.
-_TURN_PIVOT_GOAL_OFFSET_TICKS = 5
+_TURN_PIVOT_GOAL_OFFSET_TICKS = 20
 
 
 def _straight_prime_goal_ticks() -> int:
