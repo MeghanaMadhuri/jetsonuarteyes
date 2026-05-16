@@ -119,7 +119,9 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
-# Pivot only (L/R yaw): offset applied to both goal corners after ``turn_push_ticks``.
+# Pivot only (L/R yaw): extra nudge away from each side's brake (after
+# ``turn_push_ticks``). Must use directional nudge — a raw +Δ on both goals
+# can land on brake and wipe blended timed-turn motion for that axis.
 _TURN_PIVOT_GOAL_OFFSET_TICKS = 20
 
 
@@ -1008,12 +1010,14 @@ class HoverboardAxisDrive:
             if push > 0:
                 l_tgt = _nudge_goal_from_brake(l_tgt, nl, push)
                 r_tgt = _nudge_goal_from_brake(r_tgt, nr, push)
-            l_tgt = self._dxl._clamp_pos(
-                l_tgt + _TURN_PIVOT_GOAL_OFFSET_TICKS
-            )
-            r_tgt = self._dxl._clamp_pos(
-                r_tgt + _TURN_PIVOT_GOAL_OFFSET_TICKS
-            )
+            extra = int(_TURN_PIVOT_GOAL_OFFSET_TICKS)
+            if extra > 0:
+                l_tgt = self._dxl._clamp_pos(
+                    _nudge_goal_from_brake(l_tgt, nl, extra)
+                )
+                r_tgt = self._dxl._clamp_pos(
+                    _nudge_goal_from_brake(r_tgt, nr, extra)
+                )
             if left_speed == right_speed:
                 lg, rg = l_tgt, r_tgt
             else:
