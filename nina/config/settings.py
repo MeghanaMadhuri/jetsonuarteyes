@@ -814,7 +814,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         batt_divider_ratio = (batt_r1 + batt_r2) / batt_r2
 
     battery_ads1115 = BatteryAds1115Settings(
-        enabled=_env_bool("NINA_BATTERY_ADS1115_ENABLE", False),
+        enabled=_env_bool("NINA_BATTERY_ADS1115_ENABLE", True),
         i2c_bus=_env_int("NINA_BATTERY_I2C_BUS", 7),
         i2c_address=_env_int("NINA_BATTERY_I2C_ADDR", 0x48),
         channel=max(0, min(3, _env_int("NINA_BATTERY_ADS1115_CHANNEL", 0))),

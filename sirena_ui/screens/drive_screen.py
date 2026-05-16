@@ -20,7 +20,8 @@ Two input modes are supported:
   Extra lean vs brake:
   ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
   left/right pivots feel reversed.
-* D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
+* D-pad **left/right** repeat the same timed ~15° steps as Turn left/right while held
+  (``NINA_DRIVE_TURN_PIVOT_DEG`` / ``NINA_NAV_TURN_SEC`` per step).
 * Keyboard — W/A/S/D forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
@@ -195,6 +196,10 @@ class DriveScreen(QWidget):
         self._imu_poll_timer = QTimer(self)
         self._imu_poll_timer.setInterval(50)
         self._imu_poll_timer.timeout.connect(self._refresh_imu_hud)
+
+        self._battery_hud_timer = QTimer(self)
+        self._battery_hud_timer.setInterval(2000)
+        self._battery_hud_timer.timeout.connect(self._refresh_battery_hud)
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -509,8 +514,8 @@ class DriveScreen(QWidget):
             "Timed yaw (~0.3 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend from brake; "
             "left (e.g. ID 12) toward FWD, right (e.g. 13) toward REV. "
-            "Held D-pad left uses full asymmetric pivot duties. "
-            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad left matches."
+            "Held D-pad left repeats this timed step (~15° / 0.3 s) until release. "
+            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
         turn_row.addWidget(self._turn_90_left_btn, stretch=1)
@@ -522,8 +527,8 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setToolTip(
             "Timed yaw (~0.3 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend; right toward FWD, left toward REV. "
-            "Held D-pad right uses full asymmetric pivot duties. "
-            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad right matches."
+            "Held D-pad right repeats this timed step (~15° / 0.3 s) until release. "
+            "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
         turn_row.addWidget(self._turn_90_right_btn, stretch=1)
@@ -721,6 +726,14 @@ class DriveScreen(QWidget):
         else:
             self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
 
+    def _refresh_battery_hud(self) -> None:
+        try:
+            lbl = self._hud_battery._value_label  # type: ignore[attr-defined]
+        except Exception:
+            return
+        text = self._service.battery_pack_voltage_display()
+        lbl.setText(text if text and text != "\u2014" else "n/a")
+
     def _set_imu_hud_idle(self) -> None:
         try:
             self._hud_imu._value_label.setText("\u2014")  # type: ignore[attr-defined]
@@ -887,6 +900,10 @@ class DriveScreen(QWidget):
         """Refresh drive handle and defer BLDC/camera work so the screen paints first."""
         self._drive = self._service.drive
         self._queue_render_state(self._drive.state())
+        self._service.start_battery_ads1115_monitor()
+        self._refresh_battery_hud()
+        if not self._battery_hud_timer.isActive():
+            self._battery_hud_timer.start()
         self.setFocus()
         if self._defer_heavy_timer.isActive():
             self._defer_heavy_timer.stop()
@@ -898,6 +915,7 @@ class DriveScreen(QWidget):
         self._drive.ensure_hardware()
         self._on_autonomy_enabled(self._autonomy_ctrl().is_enabled())
         try:
+            self._service.start_battery_ads1115_monitor()
             self._service.start_mpu9250_imu_monitor()
         except Exception:
             pass
@@ -927,6 +945,7 @@ class DriveScreen(QWidget):
     def on_leave(self) -> None:
         if self._defer_heavy_timer.isActive():
             self._defer_heavy_timer.stop()
+        self._battery_hud_timer.stop()
         self._imu_poll_timer.stop()
         self._service.imu_straight_end()
         self._state_coalesce_timer.stop()

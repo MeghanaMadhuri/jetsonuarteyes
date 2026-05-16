@@ -271,6 +271,10 @@ class NinaService:
     def start_battery_ads1115_monitor(self) -> None:
         """Start ADS1115 pack-voltage monitor when enabled in settings."""
         if not self.settings.battery_ads1115.enabled:
+            log.info(
+                "Battery ADS1115 monitor disabled "
+                "(set NINA_BATTERY_ADS1115_ENABLE=1 for UI pack voltage)"
+            )
             return
         if self._battery_monitor is not None:
             return
