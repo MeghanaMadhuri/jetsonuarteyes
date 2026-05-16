@@ -3,20 +3,18 @@
 Used for scaled pack voltage: hardware must divide the battery down so the
 AIN pin stays **below the ADS1115 VDD** (typically 3.3 V on the Jetson header).
 
-Connections (typical Jetson 40-pin + ADS1115 module)
-----------------------------------------------------
-* **ADS1115 VDD** → **3.3 V** header (same logic rail as Jetson I/O).
-* **ADS1115 GND** → **GND**.
-* **ADS1115 SDA** → I²C **SDA** for the chosen bus (default ``/dev/i2c-1`` is
-  usually **BCM 2** = physical pin **3** on the reference Orin NX / Orin Nano
-  header layout used by ``Jetson.GPIO``).
-* **ADS1115 SCL** → I²C **SCL** (default bus 1 is often **BCM 3** = physical pin **5**).
-  Confirm with ``i2cdetect -y 1`` and your carrier pinout; bus index can differ.
-* **ADDR** → **GND** for default address **0x48** (or VDD / SDA / SCL for 0x49–0x4B).
-* **AIN0** (or AIN1–3 per ``NINA_BATTERY_ADS1115_CHANNEL``) → centre tap of a
-  **resistor divider** from pack (+) to GND so **V_ain ≤ VDD** at max charge.
-  Example: 24 V nominal → use e.g. **100 kΩ** from **BAT+** to **AIN0**, **10 kΩ**
-  from **AIN0** to **GND** → ratio **11:1** → ``NINA_BATTERY_DIVIDER_RATIO=11``.
+Connections (Nina / Orin NX — battery on **I2C2**, IMU on pins 3+5)
+--------------------------------------------------------------------
+* **IMU (MPU-9250)** — header pins **3** (SDA) + **5** (SCL) → ``/dev/i2c-7``
+  (``NINA_IMU_I2C_BUS=7``). Do **not** wire the ADS1115 here.
+* **ADS1115 (pack voltage)** — enable **i2c2** on pins **27** (SDA) + **28** (SCL)
+  via ``jetson-io.py`` → **Save and reboot** (persists across boots). On Orin NX
+  this is usually ``/dev/i2c-1`` (run ``sudo i2cdetect -y 1`` → **0x48**).
+* **ADS1115 VDD** → **3.3 V**; **GND** → GND; **ADDR** → GND (**0x48**).
+* **AIN0** → divider centre: **218 kΩ** BAT+→AIN0, **33 kΩ** AIN0→GND
+  (``V_pack = V_ain * 251/33``).
+
+One-time header setup (or ``scripts/jetson-enable-battery-i2c2.sh``).
 
 Register map matches TI datasheet. Default gain is **±4.096 V** full-scale
 (PGA = 001); single-ended readings are interpreted as 0..+4.096 V at the pin.
@@ -29,7 +27,13 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
+
+# Orin NX 40-pin: jetson-io label **i2c2** on physical pins 27/28 → usually i2c-1.
+DEFAULT_BATTERY_I2C_BUS = 1
+DEFAULT_BATTERY_I2C_ADDR = 0x48
+# IMU bus 7 is intentionally last in auto-probe order.
+_BATTERY_PROBE_BUSES: Tuple[int, ...] = (1, 2, 8, 0, 7)
 
 log = logging.getLogger("nina.sensors.ads1115")
 
@@ -42,9 +46,81 @@ _REG_CONFIG = 0x01
 _BASE_CONFIG = 0x8000 | 0x0200 | 0x0100 | (4 << 5) | 0x0003
 
 
+def default_battery_i2c_bus() -> int:
+    """Return configured battery I²C bus (``NINA_BATTERY_I2C_BUS`` or default)."""
+    raw = (os.environ.get("NINA_BATTERY_I2C_BUS") or "").strip()
+    if raw:
+        try:
+            return max(0, int(raw, 0))
+        except ValueError:
+            pass
+    return int(DEFAULT_BATTERY_I2C_BUS)
+
+
+def probe_ads1115_on_bus(bus_num: int, address: int = DEFAULT_BATTERY_I2C_ADDR) -> bool:
+    """Return True if an ADS1115 answers on ``/dev/i2c-<bus_num>``."""
+    dev = f"/dev/i2c-{int(bus_num)}"
+    if not os.path.exists(dev):
+        return False
+    try:
+        import smbus2  # type: ignore
+
+        bus = smbus2.SMBus(int(bus_num))
+        try:
+            data = bus.read_i2c_block_data(int(address) & 0x7F, _REG_CONVERSION, 2)
+            return len(data) == 2
+        finally:
+            bus.close()
+    except Exception:
+        return False
+
+
+def discover_ads1115_bus(
+    address: int = DEFAULT_BATTERY_I2C_ADDR,
+    *,
+    prefer: Optional[int] = None,
+    candidates: Optional[Sequence[int]] = None,
+) -> Optional[int]:
+    """Find ``/dev/i2c-N`` with ADS1115 at ``address`` (prefers ``prefer`` first)."""
+    if prefer is not None and probe_ads1115_on_bus(prefer, address):
+        return int(prefer)
+    for bus_num in candidates or _BATTERY_PROBE_BUSES:
+        if prefer is not None and int(bus_num) == int(prefer):
+            continue
+        if probe_ads1115_on_bus(int(bus_num), address):
+            return int(bus_num)
+    return None
+
+
+def resolve_battery_i2c_bus(
+    explicit: Optional[int] = None,
+    *,
+    auto_discover: bool = False,
+) -> int:
+    """Bus for pack ADC: explicit arg → env → optional probe → ``DEFAULT_BATTERY_I2C_BUS``."""
+    if explicit is not None:
+        return int(explicit)
+    env = (os.environ.get("NINA_BATTERY_I2C_BUS") or "").strip()
+    if env:
+        try:
+            return max(0, int(env, 0))
+        except ValueError:
+            pass
+    if auto_discover or _env_bool_auto_discover():
+        found = discover_ads1115_bus(prefer=DEFAULT_BATTERY_I2C_BUS)
+        if found is not None:
+            return found
+    return int(DEFAULT_BATTERY_I2C_BUS)
+
+
+def _env_bool_auto_discover() -> bool:
+    raw = (os.environ.get("NINA_BATTERY_I2C_AUTO") or "1").strip().lower()
+    return raw in ("1", "true", "yes", "on", "y")
+
+
 def is_available(bus_num: Optional[int] = None) -> Tuple[bool, str]:
     if bus_num is None:
-        bus_num = int(os.environ.get("NINA_BATTERY_I2C_BUS", "1"))
+        bus_num = default_battery_i2c_bus()
     try:
         import smbus2  # noqa: F401
     except Exception as exc:
@@ -76,8 +152,8 @@ class ADS1115:
                 pass
             self._bus = None
 
-    def read_single_ended_volts(self, channel: int) -> float:
-        """Return voltage **at the AIN pin** (0..~4.096 V for default PGA)."""
+    def read_single_ended_sample(self, channel: int) -> tuple[int, float]:
+        """Return ``(signed_raw_code, pin_volts)`` for single-ended *channel* 0..3."""
         if self._bus is None:
             raise RuntimeError("ADS1115 not opened")
         if channel < 0 or channel > 3:
@@ -94,11 +170,14 @@ class ADS1115:
         # 128 SPS → ~8.9 ms conversion; margin for clock tolerance
         time.sleep(0.012)
         raw = self._read_conversion_i16()
-        # ±4.096 V full-scale → LSB = 4.096 / 32768 V
         volts = (raw / 32768.0) * 4.096
         if volts < 0.0:
             volts = 0.0
-        return float(volts)
+        return raw, float(volts)
+
+    def read_single_ended_volts(self, channel: int) -> float:
+        """Return voltage **at the AIN pin** (0..~4.096 V for default PGA)."""
+        return self.read_single_ended_sample(channel)[1]
 
     def _read_conversion_i16(self) -> int:
         assert self._bus is not None

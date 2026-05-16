@@ -233,8 +233,13 @@ class HoverboardAxisSettings:
 class BatteryAds1115Settings:
     """Pack voltage via ADS1115 I²C ADC (scaled input); low-V speech + neutral + lean goal.
 
-    Enable with ``NINA_BATTERY_ADS1115_ENABLE=1``. Tune ``NINA_BATTERY_DIVIDER_RATIO``
-    so ``V_pack ≈ V_ain * ratio`` matches a DMM on the pack. ``clear_voltage_v`` must
+    Enable with ``NINA_BATTERY_ADS1115_ENABLE=1``. ADS1115 on header **I2C2**
+    (physical pins **27** SDA, **28** SCL) → default ``NINA_BATTERY_I2C_BUS=1``
+    (IMU uses pins **3**/**5** → bus **7**). Enable I2C2 once via jetson-io
+    **Save and reboot** (see ``scripts/jetson-enable-battery-i2c2.sh``).
+    Tune ``NINA_BATTERY_DIVIDER_RATIO`` so ``V_pack ≈ V_ain * ratio`` matches a DMM
+    (default **251/33** for **218 kΩ** BAT+→AIN, **33 kΩ** AIN→GND).
+    ``clear_voltage_v`` must
     stay **above** ``low_voltage_v`` to avoid alert chatter while the pack recovers.
     """
 
@@ -781,7 +786,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         i2c_bus=_env_int("NINA_BATTERY_I2C_BUS", 1),
         i2c_address=_env_int("NINA_BATTERY_I2C_ADDR", 0x48),
         channel=max(0, min(3, _env_int("NINA_BATTERY_ADS1115_CHANNEL", 0))),
-        divider_ratio=max(1.0, _env_float("NINA_BATTERY_DIVIDER_RATIO", 11.0)),
+        divider_ratio=max(1.0, _env_float("NINA_BATTERY_DIVIDER_RATIO", 251.0 / 33.0)),
         low_voltage_v=low_v,
         clear_voltage_v=clear_v,
         debounce_reads=max(1, min(30, _env_int("NINA_BATTERY_DEBOUNCE", 3))),
