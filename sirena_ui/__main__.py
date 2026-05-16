@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import sys
 
@@ -22,7 +23,33 @@ def _env_truthy(name: str) -> bool:
     return raw in ("1", "true", "yes", "y", "on")
 
 
+def _configure_logging() -> None:
+    """Honour ``NINA_LOG_LEVEL`` so on-bot diagnostics actually reach stderr.
+
+    Without this the UI never calls :func:`logging.basicConfig`, so every
+    ``log.info(...)`` in the drive / hover / sensor stack is silently dropped
+    by the root logger's WARNING default. Set ``NINA_LOG_LEVEL=INFO`` (or
+    ``DEBUG``) to surface them while debugging.
+    """
+    raw = (os.environ.get("NINA_LOG_LEVEL") or "").strip().upper()
+    if not raw:
+        return
+    level = getattr(logging, raw, None)
+    if not isinstance(level, int):
+        try:
+            level = int(raw)
+        except ValueError:
+            return
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
+
+
 def main() -> int:
+    _configure_logging()
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
