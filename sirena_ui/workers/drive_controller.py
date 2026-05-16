@@ -143,25 +143,24 @@ def _drive_pivot_speed_pct() -> int:
 
 
 def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
-    """Pivot duration for Drive screen 90° buttons (see ``NINA_DRIVE_TURN_90_SEC``)."""
+    """Hold time for Drive **Turn left/right** buttons only.
+
+    Does **not** use Motion-cal / ``hover_calibration.json`` ``turn_duration_sec``
+    on ``nav.config`` (that value was forcing long holds). Env only:
+
+    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0** = no sleep).
+    """
+    _ = nav
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
     if raw:
         try:
-            return max(0.01, min(60.0, float(raw)))
+            return max(0.0, min(60.0, float(raw)))
         except ValueError:
             pass
-    if nav is not None:
-        cfg = getattr(nav, "config", None)
-        if cfg is not None:
-            try:
-                td = float(getattr(cfg, "turn_duration_sec"))
-                return max(0.01, min(60.0, td))
-            except (TypeError, ValueError):
-                pass
     try:
-        return max(0.01, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.01"))))
+        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0"))))
     except ValueError:
-        return 0.01
+        return 0.0
 
 
 def _left_fwd_extra_pp() -> int:
@@ -1079,6 +1078,12 @@ class DriveController(QObject):
             self._emit_state()
             speed = _drive_turn_90_speed_pct()
             duration = _drive_turn_90_duration_sec(self._nav)
+            log.info(
+                "turn_90(%s): software hold %.3fs (NINA_DRIVE_TURN_90_SEC / "
+                "NINA_NAV_TURN_SEC; ignores Motion-cal turn_duration_sec)",
+                which,
+                duration,
+            )
             if which == _DIR_LEFT:
                 self._nav.turn_left(speed_percent=speed, duration=duration)
             else:

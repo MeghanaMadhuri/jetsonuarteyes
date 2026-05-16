@@ -13,7 +13,9 @@ Two input modes are supported:
   configured brake pose).
 * **Turn left / Turn right** — timed in-place pivots using opposite
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
-  FWD/REV, but no straight-line prime first). Default duration ``NINA_NAV_TURN_SEC`` ( **0.01** s); Motion calibration **0.01–1** s. Overrides: ``NINA_DRIVE_TURN_90_SEC`` /
+  FWD/REV, but no straight-line prime first). Turn buttons: **no software hold** by default
+  (``NINA_NAV_TURN_SEC=0``); Motion-cal timed duration does **not** apply to these buttons.
+  Override: ``NINA_DRIVE_TURN_90_SEC`` /
   ``NINA_NAV_TURN_SEC``; pivot angle ``NINA_DRIVE_TURN_PIVOT_DEG`` (default **30**° of 90°).
   Extra lean vs brake:
   ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
@@ -504,7 +506,7 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed yaw (~0.01 s, ~30° lean default: NINA_DRIVE_TURN_PIVOT_DEG / NINA_NAV_TURN_SEC): "
+            "Timed yaw (no hold by default; ~30° lean: NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend from brake; "
             "left (e.g. ID 12) toward FWD, right (e.g. 13) toward REV. "
             "Held D-pad left uses full asymmetric pivot duties. "
@@ -518,7 +520,7 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "Timed yaw (~0.01 s, ~30° lean default: NINA_DRIVE_TURN_PIVOT_DEG / NINA_NAV_TURN_SEC): "
+            "Timed yaw (no hold by default; ~30° lean: NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend; right toward FWD, left toward REV. "
             "Held D-pad right uses full asymmetric pivot duties. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad right matches."
