@@ -703,3 +703,122 @@ def test_default_tunables_are_conservative() -> None:
     assert drv._imu_corr_settle_sec >= 0.20, "brake settle should be long by default"
     assert drv._imu_corr_cooldown_sec >= 0.5, "cooldown should be substantial by default"
     assert drv._imu_corr_poll_sec >= 1.0 / 10.0, "poll rate should be slow by default"
+    assert drv._imu_corr_invert_sign is False, "invert flag must default off (per-bot opt-in)"
+
+
+# ----------------------------------------------------------------------
+# NINA_HOVER_IMU_CORR_INVERT_SIGN — per-bot pivot-direction flip
+# ----------------------------------------------------------------------
+
+def test_invert_sign_flips_pivot_direction_for_positive_drift() -> None:
+    """With invert ON, drift +5 should produce a *pivot-right* lean, not left."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(NINA_HOVER_IMU_CORR_INVERT_SIGN="1")
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_right = _pivot_right_goals_20pct()
+    pivot_left = _pivot_left_goals_20pct()
+    assert any(w == pivot_right for w in after), (
+        f"invert=1 + drift=+5 should pivot RIGHT, saw {after}"
+    )
+    assert not any(w == pivot_left for w in after), (
+        f"invert=1 + drift=+5 must NOT emit the un-inverted pivot-left lean, "
+        f"saw {after}"
+    )
+
+
+def test_invert_sign_flips_pivot_direction_for_negative_drift() -> None:
+    """With invert ON, drift -5 should produce a *pivot-left* lean."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(NINA_HOVER_IMU_CORR_INVERT_SIGN="1")
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: -5.0)
+    halt = threading.Event()
+    base = {12: 1986, 13: 1986}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_left = _pivot_left_goals_20pct()
+    assert any(w == pivot_left for w in after), (
+        f"invert=1 + drift=-5 should pivot LEFT, saw {after}"
+    )
+
+
+def test_invert_sign_off_preserves_original_convention() -> None:
+    """Default invert=off keeps the old positive-drift → pivot-left mapping."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(NINA_HOVER_IMU_CORR_INVERT_SIGN="0")
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    assert any(w == _pivot_left_goals_20pct() for w in after)
+
+
+# ----------------------------------------------------------------------
+# Wrong-direction bail — defends against an un-flipped sign on a new chassis
+# ----------------------------------------------------------------------
+
+def test_pivot_bails_when_drift_grows_past_starting_magnitude() -> None:
+    """Closed-loop pivot must abort early when drift grows past the start.
+
+    Mirrors the observed log on the real bot when the sign was wrong: drift
+    started at +8.20° and the next sample read +11.18° (delta=+2.98°, well
+    outside the 1° deadband). The closed-loop pivot itself (inside one
+    ``_perform_pivot_correction`` call) must bail almost immediately on that
+    second sample rather than burning the full ``pivot_max_sec`` cap going
+    the wrong way.
+
+    Production cooldown (1 s default) prevents the surrounding hold from
+    re-firing pivots back-to-back; that's covered separately by the cooldown
+    tests, so this test asserts the *single* pivot routine bails quickly when
+    invoked directly on the bad sample stream.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    yaws = [11.18, 14.0, 17.0]  # samples observed during the pivot itself
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else 17.0
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.5",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_POLL_HZ="200",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+    halt = threading.Event()
+    pre = len(dxl.goal_writes)
+    t0 = time.monotonic()
+    drv._perform_pivot_correction(8.20, halt)
+    elapsed = time.monotonic() - t0
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    assert len(pivot_writes) <= 2, (
+        f"wrong-direction bail must abort the pivot quickly; saw "
+        f"{len(pivot_writes)} pivot-left writes"
+    )
+    # Brake must appear after the bail so the wheels don't remain leaned in
+    # the wrong direction (re-prime is the caller's responsibility).
+    brake = {12: 2048, 13: 2048}
+    assert any(w == brake for w in after), (
+        "bail path must brake the pivot before returning to the caller"
+    )
+    # Sanity: the full pivot cap (0.5s) was *not* used.
+    assert elapsed < 0.4, f"bail should be quick, elapsed={elapsed:.3f}s"

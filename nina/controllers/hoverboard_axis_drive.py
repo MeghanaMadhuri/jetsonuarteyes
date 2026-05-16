@@ -57,6 +57,12 @@ if the bot can't keep heading):
                                                           pulse cycles so corrections don't fire
                                                           back-to-back)
   ``NINA_HOVER_IMU_CORR_POLL_HZ``          default 5     (drift sample rate inside pulse holds)
+  ``NINA_HOVER_IMU_CORR_INVERT_SIGN``      default 0     (flip pivot direction if the IMU mount
+                                                          orientation and / or ``NINA_HOVER_SWAP_TURN_LR``
+                                                          combination makes positive drift map to
+                                                          "pivot right" on this chassis. Symptom:
+                                                          drift magnitude *grows* after every
+                                                          correction. Set to ``1`` on the bot only.)
 """
 
 from __future__ import annotations
@@ -324,6 +330,20 @@ def _imu_corr_cooldown_sec() -> float:
         return 1.0
 
 
+def _imu_corr_invert_sign() -> bool:
+    """Flip the IMU drift sign before choosing a pivot direction.
+
+    Defaults to off so behaviour matches the original convention
+    ("positive drift = drifted right, pivot left"). Set to ``1`` on chassis
+    where the MPU mount orientation and / or ``NINA_HOVER_SWAP_TURN_LR``
+    combination cause every correction to **add** drift in the same
+    direction (a sure sign the pivot is going the wrong way for that
+    geometry).
+    """
+    raw = (os.environ.get("NINA_HOVER_IMU_CORR_INVERT_SIGN") or "").strip().lower()
+    return raw in ("1", "true", "yes", "y", "on")
+
+
 def _imu_corr_poll_hz() -> float:
     """How often the pulse hold samples yaw drift. Lower = calmer / fewer pivots."""
     try:
@@ -472,6 +492,7 @@ class HoverboardAxisDrive:
         self._imu_corr_pivot_max_sec: float = _imu_corr_pivot_max_sec()
         self._imu_corr_settle_sec: float = _imu_corr_settle_sec()
         self._imu_corr_cooldown_sec: float = _imu_corr_cooldown_sec()
+        self._imu_corr_invert_sign: bool = _imu_corr_invert_sign()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
         # Earliest monotonic time at which the next IMU sample is allowed.
         # Set by every pivot to ``now + cooldown_sec`` so back-to-back
@@ -526,13 +547,15 @@ class HoverboardAxisDrive:
         self._imu_corr_pivot_max_sec = _imu_corr_pivot_max_sec()
         self._imu_corr_settle_sec = _imu_corr_settle_sec()
         self._imu_corr_cooldown_sec = _imu_corr_cooldown_sec()
+        self._imu_corr_invert_sign = _imu_corr_invert_sign()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
         # Allow the first sample of the next straight leg to fire immediately.
         self._imu_corr_next_sample_at = 0.0
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg pivot=%s%% max=%.2fs "
-            "settle=%.2fs cooldown=%.2fs poll=%.2fHz (discrete pause-pivot-resume)",
+            "settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
+            "(discrete pause-pivot-resume)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
             "set" if end_straight_fn else "off",
@@ -544,6 +567,7 @@ class HoverboardAxisDrive:
             self._imu_corr_settle_sec,
             self._imu_corr_cooldown_sec,
             _imu_corr_poll_hz(),
+            self._imu_corr_invert_sign,
         )
 
     def _imu_sample_drift_deg(self) -> Optional[float]:
@@ -641,18 +665,27 @@ class HoverboardAxisDrive:
         soon as ``|drift| <= deadband`` (or after ``pivot_max_sec`` as a safety
         cap). Returns ``True`` if the pulse halt event fires during the routine.
 
-        Sign convention: positive *drift_deg* = bot drifted right → pivot left
-        (``set_wheels(F, B)`` lean geometry). Negative drift → pivot right.
+        Sign convention (before ``NINA_HOVER_IMU_CORR_INVERT_SIGN``): positive
+        *drift_deg* = bot drifted right → pivot left (``set_wheels(F, B)`` lean
+        geometry). Negative drift → pivot right. When the env flag is set we
+        flip ``drift_deg`` before choosing direction and re-flip it for the
+        over-correction guard, so the routine self-consistently chases zero
+        regardless of which sign the IMU mount reports.
         """
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
-        pivot_left = drift_deg > 0.0
+        invert = bool(self._imu_corr_invert_sign)
+        effective_drift = -drift_deg if invert else drift_deg
+        pivot_left = effective_drift > 0.0
         log.info(
-            "hover IMU correction: drift=%+.2f deg >= %.2f deg threshold "
-            "-> pause + pivot %s (blend=%s%%, max=%.2fs, deadband=%.2f deg)",
+            "hover IMU correction: drift=%+.2f deg (effective=%+.2f, invert=%s) "
+            ">= %.2f deg threshold -> pause + pivot %s "
+            "(blend=%s%%, max=%.2fs, deadband=%.2f deg)",
             drift_deg,
+            effective_drift,
+            invert,
             self._imu_corr_threshold_deg,
             "left" if pivot_left else "right",
             self._imu_corr_pivot_blend_pct,
@@ -712,6 +745,21 @@ class HoverboardAxisDrive:
                 # If drift sign flipped strongly, the bot over-corrected — bail
                 # immediately so we don't pivot back-and-forth chasing zero.
                 if drift_deg * yaw_now < 0 and abs(yaw_now) >= deadband:
+                    break
+                # Drift is *growing* past the starting magnitude → the pivot
+                # is going the wrong way for this chassis (almost always a
+                # sign mismatch; toggle ``NINA_HOVER_IMU_CORR_INVERT_SIGN``).
+                # Bail immediately so we don't add the full pivot cap of bad
+                # rotation to whatever drift we already had.
+                if abs(yaw_now) > abs(drift_deg) + deadband:
+                    log.warning(
+                        "hover IMU correction: drift growing during pivot "
+                        "(|%+.2f| > |%+.2f| + %.2f) — bailing. Try toggling "
+                        "NINA_HOVER_IMU_CORR_INVERT_SIGN on this chassis.",
+                        yaw_now,
+                        drift_deg,
+                        deadband,
+                    )
                     break
             try:
                 self._apply_goals(pivot_goals)
