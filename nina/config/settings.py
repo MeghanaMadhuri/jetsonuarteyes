@@ -166,7 +166,7 @@ class HoverboardAxisSettings:
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI pivots match this mount;
     set ``NINA_HOVER_SWAP_TURN_LR=0`` if yaw sense is reversed.
-    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``tilt_deg`` remains for any legacy
+    ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
     **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
@@ -505,7 +505,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2028),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
         turn_push_ticks=max(
-            0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 20))
+            0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 100))
         ),
         tilt_deg=float(os.environ.get("NINA_HOVER_TILT_DEG", "5")),
         moving_speed=max(0, min(1023, _env_int("NINA_HOVER_MOVING_SPEED", 0))),

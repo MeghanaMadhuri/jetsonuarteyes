@@ -15,7 +15,7 @@ Two input modes are supported:
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
   FWD/REV, but no straight-line prime first). Duration ``NINA_DRIVE_TURN_90_SEC`` /
   ``NINA_NAV_TURN_SEC``; speed ``NINA_DRIVE_TURN_90_PCT``. Extra lean vs brake:
-  ``NINA_HOVER_TURN_PUSH_TICKS`` (default 20). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
+  ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
   left/right pivots feel reversed.
 * D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
 * Keyboard — W/A/S/D forward / left / back / right while held,
