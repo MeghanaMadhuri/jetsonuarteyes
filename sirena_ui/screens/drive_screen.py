@@ -13,7 +13,7 @@ Two input modes are supported:
   configured brake pose).
 * **Turn left / Turn right** — timed in-place pivots using opposite
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
-  FWD/REV, but no straight-line prime first). Turn buttons: **0.2 s** hold by default
+  FWD/REV, but no straight-line prime first). Turn buttons: **1.5 s** hold by default
   (``NINA_NAV_TURN_SEC``); Motion-cal timed duration does **not** apply to these buttons.
   Override: ``NINA_DRIVE_TURN_90_SEC`` /
   ``NINA_NAV_TURN_SEC``; pivot angle ``NINA_DRIVE_TURN_PIVOT_DEG`` (default **5**° of 90°).
@@ -506,7 +506,7 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed yaw (~0.2 s hold, ~5° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
+            "Timed yaw (~1.5 s hold, ~5° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend from brake; "
             "left (e.g. ID 12) toward FWD, right (e.g. 13) toward REV. "
             "Held D-pad left uses full asymmetric pivot duties. "
@@ -520,7 +520,7 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "Timed yaw (~0.2 s hold, ~5° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
+            "Timed yaw (~1.5 s hold, ~5° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend; right toward FWD, left toward REV. "
             "Held D-pad right uses full asymmetric pivot duties. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad right matches."
