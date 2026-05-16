@@ -94,6 +94,11 @@ Environment=NINA_LIDAR_UDP_PORT=8089
 # Straight D-pad forward/back: ``NINA_HOVER_FWD_POS_*`` / ``NINA_HOVER_REV_POS_*``
 # (see load_settings); override in /etc/nina-link/navigation.env per robot.
 
+# IMU (MPU-6050/9250 @ 0x68): header pins 3 SDA + 5 SCL → ``/dev/i2c-7`` (``i2cdetect -y 7``).
+Environment=NINA_IMU_MPU9250_ENABLE=1
+Environment=NINA_IMU_I2C_BUS=7
+Environment=NINA_IMU_I2C_ADDR=0x68
+
 ExecStart=__EXEC__
 
 # Restart on transient failure so a one-off Qt / camera hiccup doesn't

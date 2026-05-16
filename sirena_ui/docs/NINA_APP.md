@@ -605,7 +605,7 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 # MPU-9250 IMU (I2C): gyro-integrated yaw drift on Drive "Straight" / "Straight back".
 # Enable on the Jetson after wiring 3.3 V / GND / SDA / SCL (same bus as other I2C ok).
 # export NINA_IMU_MPU9250_ENABLE=1
-# export NINA_IMU_I2C_BUS=1
+# export NINA_IMU_I2C_BUS=7
 # export NINA_IMU_I2C_ADDR=0x68
 # export NINA_IMU_POLL_HZ=100
 # export NINA_IMU_CALIB_SEC=0.4

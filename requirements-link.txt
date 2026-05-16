@@ -12,6 +12,8 @@ uvicorn[standard]>=0.27.0
 pydantic>=2.0
 # Dynamixel / action & record bridges (build_app → DynamixelManager)
 pyserial>=3.5
+# Drive IMU drift HUD (MPU-6050/9250 on ``/dev/i2c-7``, header pins 3+5)
+smbus2>=0.4.0
 
 # Optional (Jetson): vision + gTTS + YOLO + same stack as Sirena (without PyQt5):
 #   pip install -r sirena_ui/requirements-headless.txt

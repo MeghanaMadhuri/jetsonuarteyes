@@ -8,7 +8,7 @@ Environment
 ------------
 * ``NINA_IMU_MPU9250_ENABLE`` — ``1`` / ``true`` / ``on`` to start the monitor at
   app init (default off so dev laptops without I²C do not error).
-* ``NINA_IMU_I2C_BUS`` — default ``1`` (``/dev/i2c-1``).
+* ``NINA_IMU_I2C_BUS`` — default ``7`` (``/dev/i2c-7``; Orin Nano header pins **3** SDA / **5** SCL).
 * ``NINA_IMU_I2C_ADDR`` — default ``0x68``.
 * ``NINA_IMU_POLL_HZ`` — sample rate (default ``100``).
 * ``NINA_IMU_CALIB_SEC`` — seconds of gyro bias capture at startup (default ``0.4``).
@@ -42,6 +42,11 @@ _REG_PWR_MGMT_2 = 0x6C
 _REG_WHO_AM_I = 0x75
 
 _WHO_AM_I_MPU9250 = 0x71
+_WHO_AM_I_MPU6050 = 0x68
+_ACCEPTED_WHO_AM_I = (_WHO_AM_I_MPU6050, _WHO_AM_I_MPU9250)
+
+# Jetson Orin Nano: IMU on 40-pin header pins 3 (SDA) + 5 (SCL) → ``i2cdetect -y 7``.
+DEFAULT_IMU_I2C_BUS = 7
 
 # Gyro ±250 °/s → 131 LSB/(°/s)
 _GYRO_LSB_PER_DPS = 131.0
@@ -81,7 +86,7 @@ def is_imu_monitor_enabled() -> bool:
 
 def is_mpu9250_available(bus_num: Optional[int] = None) -> Tuple[bool, str]:
     if bus_num is None:
-        bus_num = _env_int("NINA_IMU_I2C_BUS", 1)
+        bus_num = _env_int("NINA_IMU_I2C_BUS", DEFAULT_IMU_I2C_BUS)
     try:
         import smbus2  # noqa: F401
     except Exception as exc:
@@ -125,6 +130,7 @@ class MPU9250:
         self._bus_num = int(bus_num)
         self._addr = int(address) & 0x7F
         self._bus = None
+        self._chip_label = "IMU"
 
     def open(self) -> None:
         import smbus2  # type: ignore
@@ -143,10 +149,12 @@ class MPU9250:
         if self._bus is None:
             raise RuntimeError("MPU9250 not opened")
         v = self._bus.read_byte_data(self._addr, _REG_WHO_AM_I)
-        if v != _WHO_AM_I_MPU9250:
+        if v not in _ACCEPTED_WHO_AM_I:
             raise RuntimeError(
-                f"WHO_AM_I = 0x{v:02X}, expected 0x{_WHO_AM_I_MPU9250:02X} (MPU-9250)"
+                f"WHO_AM_I = 0x{v:02X}, expected MPU-6050 (0x{_WHO_AM_I_MPU6050:02X}) "
+                f"or MPU-9250 (0x{_WHO_AM_I_MPU9250:02X})"
             )
+        self._chip_label = "MPU-6050" if v == _WHO_AM_I_MPU6050 else "MPU-9250"
 
     def configure(self) -> None:
         if self._bus is None:
@@ -176,7 +184,7 @@ class Mpu9250DriftMonitor:
     """Background sampling + straight-test yaw drift integration."""
 
     def __init__(self) -> None:
-        self._bus_num = _env_int("NINA_IMU_I2C_BUS", 1)
+        self._bus_num = _env_int("NINA_IMU_I2C_BUS", DEFAULT_IMU_I2C_BUS)
         self._addr = _env_int("NINA_IMU_I2C_ADDR", 0x68)
         self._poll_hz = max(20.0, min(250.0, _env_float("NINA_IMU_POLL_HZ", 100.0)))
         self._calib_sec = max(0.0, min(3.0, _env_float("NINA_IMU_CALIB_SEC", 0.4)))
@@ -215,8 +223,10 @@ class Mpu9250DriftMonitor:
             target=self._run, name="Mpu9250DriftMonitor", daemon=True
         )
         self._thread.start()
+        chip = getattr(imu, "_chip_label", "IMU")
         log.info(
-            "MPU-9250 drift monitor started (i2c-%s 0x%02X, %.0f Hz)",
+            "%s drift monitor started (i2c-%s 0x%02X, %.0f Hz)",
+            chip,
             self._bus_num,
             self._addr,
             self._poll_hz,
