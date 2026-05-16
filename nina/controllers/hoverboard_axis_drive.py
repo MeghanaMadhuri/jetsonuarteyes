@@ -122,7 +122,7 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 # Pivot only (L/R yaw): extra nudge away from each side's brake (after
 # ``turn_push_ticks``). Must use directional nudge — a raw +Δ on both goals
 # can land on brake and wipe blended timed-turn motion for that axis.
-_TURN_PIVOT_GOAL_OFFSET_TICKS = 20
+_TURN_PIVOT_GOAL_OFFSET_TICKS = 50
 
 
 def _straight_prime_goal_ticks() -> int:
