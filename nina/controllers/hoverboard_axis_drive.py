@@ -43,14 +43,20 @@ stack at the neutral pose, and only then **resumes the primed forward / back
 pulse**. The asymmetric-bias-while-moving approach is intentionally not used —
 biasing mid-pulse felt like uncommanded fast turns to the operator.
 
-Tuning env vars (defaults safe):
+Tuning env vars (defaults err on the calm / subtle side; bump them up only
+if the bot can't keep heading):
+
   ``NINA_HOVER_IMU_CORR_ENABLE``           default 1
-  ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``    default 3.0 (trigger pivot at this drift)
-  ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``     default 1.0 (stop pivot when drift returns inside this)
-  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``  default 20  (same scale as timed Turn left/right)
-  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``    default 0.4 (cap each pivot duration)
-  ``NINA_HOVER_IMU_CORR_SETTLE_SEC``       default 0.10 (brake settle before / after pivot)
-  ``NINA_HOVER_IMU_CORR_POLL_HZ``          default 20  (drift sample rate in pulse holds)
+  ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``    default 6.0   (only fire when drift gets noticeable)
+  ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``     default 1.5   (stop pivot when drift returns inside this)
+  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``  default 8     (much gentler than the timed Turn buttons)
+  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``    default 0.12  (hard cap on each pivot)
+  ``NINA_HOVER_IMU_CORR_SETTLE_SEC``       default 0.25  (brake settle before AND after pivot)
+  ``NINA_HOVER_IMU_CORR_COOLDOWN_SEC``     default 1.0   (rest period after each correction before
+                                                          the next IMU sample; persists across
+                                                          pulse cycles so corrections don't fire
+                                                          back-to-back)
+  ``NINA_HOVER_IMU_CORR_POLL_HZ``          default 5     (drift sample rate inside pulse holds)
 """
 
 from __future__ import annotations
@@ -246,14 +252,14 @@ def _imu_corr_enabled() -> bool:
 
 
 def _imu_corr_threshold_deg() -> float:
-    """At/above this |drift|, pause and pivot-correct."""
+    """At/above this |drift|, pause and pivot-correct. Higher = less twitchy."""
     try:
         return max(
             0.1,
-            min(45.0, float(os.environ.get("NINA_HOVER_IMU_CORR_THRESHOLD_DEG", "3.0"))),
+            min(45.0, float(os.environ.get("NINA_HOVER_IMU_CORR_THRESHOLD_DEG", "6.0"))),
         )
     except ValueError:
-        return 3.0
+        return 6.0
 
 
 def _imu_corr_deadband_deg() -> float:
@@ -261,30 +267,32 @@ def _imu_corr_deadband_deg() -> float:
     try:
         return max(
             0.0,
-            min(10.0, float(os.environ.get("NINA_HOVER_IMU_CORR_DEADBAND_DEG", "1.0"))),
+            min(10.0, float(os.environ.get("NINA_HOVER_IMU_CORR_DEADBAND_DEG", "1.5"))),
         )
     except ValueError:
-        return 1.0
+        return 1.5
 
 
 def _imu_corr_pivot_blend_pct() -> int:
+    """Pivot lean blend %. Lower = gentler / slower yaw correction."""
     try:
         return max(
             1,
-            min(100, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT", "20")))),
+            min(100, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT", "8")))),
         )
     except ValueError:
-        return 20
+        return 8
 
 
 def _imu_corr_pivot_max_sec() -> float:
+    """Cap on each pivot's duration. Shorter = smaller correction per event."""
     try:
         return max(
             0.02,
-            min(3.0, float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC", "0.4"))),
+            min(3.0, float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC", "0.12"))),
         )
     except ValueError:
-        return 0.4
+        return 0.12
 
 
 def _imu_corr_settle_sec() -> float:
@@ -292,20 +300,38 @@ def _imu_corr_settle_sec() -> float:
     try:
         return max(
             0.0,
-            min(1.0, float(os.environ.get("NINA_HOVER_IMU_CORR_SETTLE_SEC", "0.10"))),
+            min(2.0, float(os.environ.get("NINA_HOVER_IMU_CORR_SETTLE_SEC", "0.25"))),
         )
     except ValueError:
-        return 0.10
+        return 0.25
+
+
+def _imu_corr_cooldown_sec() -> float:
+    """Mandatory primed-forward rest after each correction before sampling again.
+
+    Persists across pulse cycles via ``self._imu_corr_next_sample_at`` so two
+    corrections never fire back-to-back. The bot must spend at least this long
+    actually moving forward (or backward) primed before the next pivot can be
+    triggered.
+    """
+    try:
+        return max(
+            0.0,
+            min(10.0, float(os.environ.get("NINA_HOVER_IMU_CORR_COOLDOWN_SEC", "1.0"))),
+        )
+    except ValueError:
+        return 1.0
 
 
 def _imu_corr_poll_hz() -> float:
+    """How often the pulse hold samples yaw drift. Lower = calmer / fewer pivots."""
     try:
         return max(
-            2.0,
-            min(60.0, float(os.environ.get("NINA_HOVER_IMU_CORR_POLL_HZ", "20.0"))),
+            1.0,
+            min(60.0, float(os.environ.get("NINA_HOVER_IMU_CORR_POLL_HZ", "5.0"))),
         )
     except ValueError:
-        return 20.0
+        return 5.0
 
 
 def _hover_turn_slow_wheel_pct() -> int:
@@ -435,16 +461,22 @@ class HoverboardAxisDrive:
         self._imu_begin_fn: Optional[ImuStraightHook] = None
         self._imu_end_fn: Optional[ImuStraightHook] = None
         # Cached tunables: re-loaded by ``set_imu_hooks`` so unit tests / runtime
-        # env changes are picked up without rebuilding the drive. All four
-        # control the discrete pause-pivot-resume correction inside the pulse
-        # holds (no continuous bias mid-pulse).
+        # env changes are picked up without rebuilding the drive. All control
+        # the discrete pause-pivot-resume correction inside the pulse holds (no
+        # continuous bias mid-pulse).
         self._imu_corr_enabled_static: bool = _imu_corr_enabled()
         self._imu_corr_threshold_deg: float = _imu_corr_threshold_deg()
         self._imu_corr_deadband_deg: float = _imu_corr_deadband_deg()
         self._imu_corr_pivot_blend_pct: int = _imu_corr_pivot_blend_pct()
         self._imu_corr_pivot_max_sec: float = _imu_corr_pivot_max_sec()
         self._imu_corr_settle_sec: float = _imu_corr_settle_sec()
+        self._imu_corr_cooldown_sec: float = _imu_corr_cooldown_sec()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
+        # Earliest monotonic time at which the next IMU sample is allowed.
+        # Set by every pivot to ``now + cooldown_sec`` so back-to-back
+        # corrections can't fire. Reset to 0 by ``_imu_begin_straight`` so a
+        # fresh straight leg can sample immediately.
+        self._imu_corr_next_sample_at: float = 0.0
 
     # ------------------------------------------------------------------
     def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
@@ -492,11 +524,14 @@ class HoverboardAxisDrive:
         self._imu_corr_pivot_blend_pct = _imu_corr_pivot_blend_pct()
         self._imu_corr_pivot_max_sec = _imu_corr_pivot_max_sec()
         self._imu_corr_settle_sec = _imu_corr_settle_sec()
+        self._imu_corr_cooldown_sec = _imu_corr_cooldown_sec()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
+        # Allow the first sample of the next straight leg to fire immediately.
+        self._imu_corr_next_sample_at = 0.0
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg pivot=%s%% max=%.2fs "
-            "settle=%.2fs poll=%.2fHz (discrete pause-pivot-resume)",
+            "settle=%.2fs cooldown=%.2fs poll=%.2fHz (discrete pause-pivot-resume)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
             "set" if end_straight_fn else "off",
@@ -506,6 +541,7 @@ class HoverboardAxisDrive:
             self._imu_corr_pivot_blend_pct,
             self._imu_corr_pivot_max_sec,
             self._imu_corr_settle_sec,
+            self._imu_corr_cooldown_sec,
             _imu_corr_poll_hz(),
         )
 
@@ -537,6 +573,12 @@ class HoverboardAxisDrive:
         for the remainder of *duration_sec*. Returns ``True`` if *halt* fires
         during the hold so the pulse loop can break out cleanly.
 
+        After each correction the next IMU sample is suppressed for
+        ``cooldown_sec`` seconds (instance-level, so it persists across pulse
+        cycles). That guarantees the bot spends at least that long actually
+        moving forward/back primed before another correction can fire — without
+        it the corrections stack up and feel like uncommanded turns.
+
         Falls back to a plain ``halt.wait`` when no IMU sampler is wired, so
         non-IMU bots behave exactly like before.
         """
@@ -559,17 +601,27 @@ class HoverboardAxisDrive:
                 self._apply_goals(base_goals)
             except Exception:
                 pass
-            yaw = self._imu_sample_drift_deg()
-            if yaw is not None and abs(yaw) >= threshold:
-                # Drift exceeded — pause the primed motion, pivot-correct, re-prime, resume.
-                if self._perform_pivot_correction(yaw, halt):
-                    return True
-                # Resume primed motion at base_goals (the pulse loop will continue
-                # to its ramp-down / coast on the next iteration).
-                try:
-                    self._apply_goals(base_goals)
-                except Exception:
-                    pass
+            # Only sample IMU once the cooldown from the previous correction
+            # has elapsed. During the cooldown we just keep base_goals applied
+            # so the bot is doing primed forward/back motion only.
+            if now >= self._imu_corr_next_sample_at:
+                yaw = self._imu_sample_drift_deg()
+                if yaw is not None and abs(yaw) >= threshold:
+                    # Drift exceeded — pause the primed motion, pivot-correct,
+                    # re-prime, then enforce the cooldown before next sample.
+                    if self._perform_pivot_correction(yaw, halt):
+                        return True
+                    try:
+                        self._apply_goals(base_goals)
+                    except Exception:
+                        pass
+                    self._imu_corr_next_sample_at = (
+                        time.monotonic() + self._imu_corr_cooldown_sec
+                    )
+                    log.info(
+                        "hover IMU correction: cooldown %.2fs (primed-only motion)",
+                        self._imu_corr_cooldown_sec,
+                    )
             remaining = end - time.monotonic()
             if remaining <= 0.0:
                 return False
@@ -694,6 +746,11 @@ class HoverboardAxisDrive:
         return False
 
     def _imu_begin_straight(self) -> None:
+        # Reset the correction cooldown so a fresh straight leg can sample IMU
+        # immediately on its first hold tick (otherwise the user would wait up
+        # to cooldown_sec after each new bench-button press before the first
+        # correction could fire).
+        self._imu_corr_next_sample_at = 0.0
         fn = self._imu_begin_fn
         if fn is None:
             return

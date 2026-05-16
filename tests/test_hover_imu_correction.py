@@ -102,13 +102,19 @@ def _cfg() -> SimpleNamespace:
 
 
 def _fast_correction_env(**extras: str) -> dict[str, str]:
-    """Tunables that make the discrete pivot fast and easy to observe in tests."""
+    """Tunables that make the discrete pivot fast and easy to observe in tests.
+
+    ``COOLDOWN_SEC`` is pinned to ``0`` so a single test can observe multiple
+    pivots back-to-back where it needs to. Tests that exercise the cooldown
+    itself override this to a positive value.
+    """
     env = {
         "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "3.0",
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.0",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.08",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
     }
     env.update(extras)
@@ -564,3 +570,136 @@ def test_yaw_drift_none_falls_back_to_plain_wait() -> None:
         f"None-drift must not trigger any pivot lean; saw {after}"
     )
     assert sampler_calls, "sampler should still be consulted"
+
+
+# ----------------------------------------------------------------------
+# Cooldown: corrections must not fire back-to-back
+# ----------------------------------------------------------------------
+
+def test_cooldown_suppresses_back_to_back_pivots_in_single_hold() -> None:
+    """One hold with stuck-high drift + long cooldown should pivot ONCE only."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_COOLDOWN_SEC="1.0",
+            NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.05",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)  # stuck high
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    pre = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.40, halt, is_forward=True)
+    after = dxl.goal_writes[pre:]
+    pivot_left = _pivot_left_goals_20pct()
+    # Closed-loop never exits via deadband (drift stays at 10), so each pivot
+    # writes pivot_left multiple times. Detect distinct correction events by
+    # counting transitions base->pivot in the goal stream.
+    pivots = 0
+    in_pivot = False
+    for w in after:
+        if w == pivot_left:
+            if not in_pivot:
+                pivots += 1
+                in_pivot = True
+        else:
+            in_pivot = False
+    assert pivots == 1, (
+        f"expected exactly one correction with 1.0s cooldown; saw {pivots} "
+        f"(writes={after!r})"
+    )
+
+
+def test_cooldown_persists_across_pulse_cycles() -> None:
+    """Cooldown is instance-level → second pulse cycle inherits it."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_COOLDOWN_SEC="0.5",
+            NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.04",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+
+    # First hold triggers a pivot, then suppresses any more.
+    drv._imu_corrective_hold(base, 0.15, halt, is_forward=True)
+    pre_second = len(dxl.goal_writes)
+    # Second hold starts immediately (no _imu_begin_straight in between) →
+    # cooldown from the first pivot is still active and should suppress.
+    drv._imu_corrective_hold(base, 0.10, halt, is_forward=True)
+    after = dxl.goal_writes[pre_second:]
+    pivot_left = _pivot_left_goals_20pct()
+    assert all(w != pivot_left for w in after), (
+        "cooldown from previous hold must carry into the next hold; "
+        f"saw {after}"
+    )
+
+
+def test_imu_begin_straight_resets_cooldown() -> None:
+    """A new straight leg must allow the first sample to fire immediately."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_COOLDOWN_SEC="10.0",
+            NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.04",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+
+    drv._imu_corrective_hold(base, 0.15, halt, is_forward=True)
+    pre_second = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.05, halt, is_forward=True)
+    after_before_reset = dxl.goal_writes[pre_second:]
+    pivot_left = _pivot_left_goals_20pct()
+    assert all(w != pivot_left for w in after_before_reset), (
+        "before reset, cooldown should still block correction"
+    )
+
+    drv._imu_begin_straight()  # simulates entering a fresh straight leg
+
+    pre_third = len(dxl.goal_writes)
+    drv._imu_corrective_hold(base, 0.15, halt, is_forward=True)
+    after_reset = dxl.goal_writes[pre_third:]
+    assert any(w == pivot_left for w in after_reset), (
+        f"after _imu_begin_straight, the first sample must fire immediately "
+        f"and trigger a pivot; saw {after_reset}"
+    )
+
+
+def test_default_tunables_are_conservative() -> None:
+    """Smoke-test that the production defaults match the calmer profile."""
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    for var in (
+        "NINA_HOVER_IMU_CORR_THRESHOLD_DEG",
+        "NINA_HOVER_IMU_CORR_DEADBAND_DEG",
+        "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT",
+        "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC",
+        "NINA_HOVER_IMU_CORR_SETTLE_SEC",
+        "NINA_HOVER_IMU_CORR_COOLDOWN_SEC",
+        "NINA_HOVER_IMU_CORR_POLL_HZ",
+    ):
+        os.environ.pop(var, None)
+    drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    assert drv._imu_corr_threshold_deg >= 5.0, "threshold should be calm by default"
+    assert drv._imu_corr_pivot_blend_pct <= 10, "pivot blend should be gentle by default"
+    assert drv._imu_corr_pivot_max_sec <= 0.20, "pivot cap should be short by default"
+    assert drv._imu_corr_settle_sec >= 0.20, "brake settle should be long by default"
+    assert drv._imu_corr_cooldown_sec >= 0.5, "cooldown should be substantial by default"
+    assert drv._imu_corr_poll_sec >= 1.0 / 10.0, "poll rate should be slow by default"
