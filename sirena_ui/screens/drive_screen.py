@@ -186,6 +186,11 @@ class DriveScreen(QWidget):
         self._straight_seq_index: int = -1
         self._straight_seq_fwd_dir: str = "forward"
         self._straight_run_backward = False
+        self._imu_straight_started = False
+
+        self._imu_poll_timer = QTimer(self)
+        self._imu_poll_timer.setInterval(50)
+        self._imu_poll_timer.timeout.connect(self._refresh_imu_hud)
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -358,7 +363,14 @@ class DriveScreen(QWidget):
         self._hud_heading = self._make_hud("Heading", "0\u00b0")
         self._hud_distance = self._make_hud("Distance", "0.0 m")
         self._hud_battery = self._make_hud("Battery", "n/a")
-        for w in (self._hud_speed, self._hud_heading, self._hud_distance, self._hud_battery):
+        self._hud_imu = self._make_hud("IMU drift", "\u2014")
+        for w in (
+            self._hud_speed,
+            self._hud_heading,
+            self._hud_distance,
+            self._hud_battery,
+            self._hud_imu,
+        ):
             hud.addWidget(w, stretch=1)
 
         return card
@@ -620,6 +632,7 @@ class DriveScreen(QWidget):
             return
         self._drive.ensure_hardware()
         self._straight_run_backward = backward
+        self._imu_straight_started = False
         self._straight_test_btn.setEnabled(False)
         self._straight_back_test_btn.setEnabled(False)
         self._dpad.set_enabled(False)
@@ -694,6 +707,11 @@ class DriveScreen(QWidget):
         pct_fwd = _straight_test_speed_pct()
         d = self._straight_seq_fwd_dir
         self._straight_seq_index = index
+        if not self._imu_straight_started:
+            self._service.imu_straight_begin()
+            if not self._imu_poll_timer.isActive():
+                self._imu_poll_timer.start()
+            self._imu_straight_started = True
         self._straight_test_timer.start(ms)
         if d == "forward" and self._drive.supports_forward_pulse():
             self._drive.start_forward_pulse_bench(pct_fwd)
@@ -701,6 +719,43 @@ class DriveScreen(QWidget):
             self._drive.start_backward_pulse_bench(pct_fwd)
         else:
             self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
+
+    def _set_imu_hud_idle(self) -> None:
+        try:
+            self._hud_imu._value_label.setText("\u2014")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def _refresh_imu_hud(self) -> None:
+        if not self._straight_test_timer.isActive():
+            self._imu_poll_timer.stop()
+            self._set_imu_hud_idle()
+            return
+        try:
+            lbl = self._hud_imu._value_label  # type: ignore[attr-defined]
+        except Exception:
+            return
+        mon = self._service.imu_monitor
+        if mon is None:
+            lbl.setText("IMU off")
+            return
+        s = mon.snapshot()
+        if not s.ok:
+            msg = (s.message or "\u2026").replace("\n", " ")
+            if len(msg) > 22:
+                msg = msg[:19] + "\u2026"
+            lbl.setText(msg)
+            return
+        if s.drift_side == "n/a":
+            lbl.setText("\u2014")
+            return
+        if s.drift_side == "left":
+            sym = "\u2190"
+        elif s.drift_side == "right":
+            sym = "\u2192"
+        else:
+            sym = "\u00b7"
+        lbl.setText(f"{s.yaw_drift_deg:+.1f}\u00b0 {sym}")
 
     def _on_straight_sequence_timer(self) -> None:
         self._straight_test_timer.stop()
@@ -720,6 +775,10 @@ class DriveScreen(QWidget):
 
     def _restore_after_straight_test(self) -> None:
         self._straight_test_timer.stop()
+        self._imu_poll_timer.stop()
+        self._service.imu_straight_end()
+        self._imu_straight_started = False
+        self._set_imu_hud_idle()
         self._straight_sequence_spec = []
         self._straight_seq_index = -1
         self._straight_pending = False
@@ -837,6 +896,10 @@ class DriveScreen(QWidget):
             return
         self._drive.ensure_hardware()
         self._on_autonomy_enabled(self._autonomy_ctrl().is_enabled())
+        try:
+            self._service.start_mpu9250_imu_monitor()
+        except Exception:
+            pass
         if not _DRIVE_CAMERA_LIVE:
             return
         if not self._vision_acquired:
@@ -863,6 +926,8 @@ class DriveScreen(QWidget):
     def on_leave(self) -> None:
         if self._defer_heavy_timer.isActive():
             self._defer_heavy_timer.stop()
+        self._imu_poll_timer.stop()
+        self._service.imu_straight_end()
         self._state_coalesce_timer.stop()
         self._pending_state = None
         self._disconnect_vision_frame_preview()

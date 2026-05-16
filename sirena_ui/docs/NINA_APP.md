@@ -599,6 +599,16 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
 # export NINA_STRAIGHT_TEST_MS=15000
 # export NINA_STRAIGHT_SEQ_FWD1_MS=15000   # legacy alias for duration only
+#
+# MPU-9250 IMU (I2C): gyro-integrated yaw drift on Drive "Straight" / "Straight back".
+# Enable on the Jetson after wiring 3.3 V / GND / SDA / SCL (same bus as other I2C ok).
+# export NINA_IMU_MPU9250_ENABLE=1
+# export NINA_IMU_I2C_BUS=1
+# export NINA_IMU_I2C_ADDR=0x68
+# export NINA_IMU_POLL_HZ=100
+# export NINA_IMU_CALIB_SEC=0.4
+# export NINA_IMU_YAW_DISPLAY_SIGN=1       # -1 if HUD left/right feels inverted
+# export NINA_IMU_DRIFT_DEADBAND_DEG=0.5
 
 # Drive / BLDC: espeak-ng alerts on init failure or drive ignored (backend not ready).
 # NINA_BLDC_ALERT_SPEECH=0           # disable spoken BLDC errors

@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
             self._apply_bus_footer_from_health({})
         self._service.start_obstacle_stop_monitor()
         self._service.start_battery_ads1115_monitor()
+        self._service.start_mpu9250_imu_monitor()
 
     def _on_bus_init_failed(self, message: str) -> None:
         self._bus_init_thread = None

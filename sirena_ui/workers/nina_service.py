@@ -30,6 +30,7 @@ from nina.controllers.hoverboard_axis_drive import (
     apply_hoverboard_brake_positions,
 )
 from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
+from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.obstacle_stop_monitor import ObstacleStopMonitor
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
@@ -73,6 +74,7 @@ class NinaService:
         self._autonomy: Optional[AutonomyController] = None
         self._obstacle_monitor: Optional[ObstacleStopMonitor] = None
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
+        self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
 
     @property
     def expected_motor_count(self) -> int:
@@ -225,6 +227,31 @@ class NinaService:
         except Exception as exc:
             log.warning("Battery ADS1115 monitor did not start: %s", exc)
 
+    def start_mpu9250_imu_monitor(self) -> None:
+        """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set."""
+        if not is_imu_monitor_enabled():
+            return
+        if self._imu_monitor is not None:
+            return
+        try:
+            mon = Mpu9250DriftMonitor()
+            mon.start()
+            self._imu_monitor = mon
+        except Exception as exc:
+            log.warning("MPU-9250 IMU monitor did not start: %s", exc)
+
+    @property
+    def imu_monitor(self) -> Optional[Mpu9250DriftMonitor]:
+        return self._imu_monitor
+
+    def imu_straight_begin(self) -> None:
+        if self._imu_monitor is not None:
+            self._imu_monitor.begin_straight_leg()
+
+    def imu_straight_end(self) -> None:
+        if self._imu_monitor is not None:
+            self._imu_monitor.end_straight_leg()
+
     def run_low_battery_reaction(self) -> None:
         """JYQD stop, neutral action, lean IDs to ``lean_goal`` (default 2048), gTTS."""
         try:
@@ -367,6 +394,12 @@ class NinaService:
         return self._autonomy
 
     def shutdown(self) -> None:
+        if self._imu_monitor is not None:
+            try:
+                self._imu_monitor.stop()
+            except Exception:
+                pass
+            self._imu_monitor = None
         if self._battery_monitor is not None:
             try:
                 self._battery_monitor.stop()
