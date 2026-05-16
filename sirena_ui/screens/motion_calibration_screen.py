@@ -27,8 +27,8 @@ _PreviewMode = Literal["fwd", "back", "tl", "tr"]
 
 _POS_MIN = 0
 _POS_MAX = 4095
-_TURN_DUR_MIN = 1.0
-_TURN_DUR_MAX = 5.0
+_TURN_DUR_MIN = 0.1
+_TURN_DUR_MAX = 1.0
 
 
 class MotionCalibrationScreen(QWidget):
@@ -266,7 +266,7 @@ class MotionCalibrationScreen(QWidget):
         card.add(
             MutedLabel(
                 "Hold time for Drive \u201cTurn left / right\u201d and timed pivots "
-                f"({_TURN_DUR_MIN:.0f}\u2013{_TURN_DUR_MAX:.0f} s). Saved to the same JSON as lean goals."
+                f"({_TURN_DUR_MIN:.1f}\u2013{_TURN_DUR_MAX:.1f} s). Saved to the same JSON as lean goals."
             )
         )
         row = QHBoxLayout()

@@ -81,7 +81,7 @@ private const val DRIVE_REPEAT_GAP_MS = 140L
 /** Brief gap between chained straight pulses so two 5 s requests approximate desktop “10 s”. */
 private const val STRAIGHT_PULSE_GAP_MS = 80L
 
-private const val TURN_DURATION_MS = 3000
+private const val TURN_DURATION_MS = 200
 private const val TURN_SPEED_PERCENT = 20
 
 private fun effectiveHorizonDriveDir(requested: String, reverseOn: Boolean): String =
