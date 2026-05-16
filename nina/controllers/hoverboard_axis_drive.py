@@ -10,6 +10,14 @@ both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up
 use this prime—they go straight to pivot ``set_wheels`` from the current pose.
 D-pad pivots also skip the explicit prime.
 
+After a pivot the brake pose is **already** at the prime ticks, so the prime
+returns immediately and can look like it was skipped to the operator. Set
+``NINA_HOVER_POST_TURN_SETTLE_SEC`` (default 0.0) to add a visible pause inside
+``start_pulse_straight_forward`` / ``start_pulse_straight_backward`` after the
+prime so the lean stack truly relaxes before the next pulse series fires—useful
+when "Straight back" right after "Turn left/right" felt like it jumped straight
+into the back stroke without slowing down.
+
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
 lean. **Timed** ``turn_left`` / ``turn_right`` use a partial pivot blend (default
@@ -22,6 +30,17 @@ lean. **Timed** ``turn_left`` / ``turn_right`` use a partial pivot blend (defaul
 series (separate parameters for forward vs backward hold, coast dwell, coast blend, and return ramps).
 Both use ``pulse_series_max`` then full brake.
 Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
+
+**IMU yaw correction (straight legs only):** call :meth:`set_imu_hooks` once at
+construction with a yaw-drift sampler and optional begin/end straight callbacks
+(the ``NinaService`` wires :class:`Mpu9250DriftMonitor` here). During the main
+and coast holds of both pulse series the controller polls the yaw integrator at
+~20 Hz and biases the lean goals asymmetrically so the bot self-corrects toward
+straight. Tuning env vars (read once per process; see :func:`_imu_corr_kp_ticks_per_deg`
+and friends): ``NINA_HOVER_IMU_CORR_ENABLE`` (default 1),
+``NINA_HOVER_IMU_CORR_KP_TICKS_PER_DEG`` (default 6.0), ``NINA_HOVER_IMU_CORR_MAX_TICKS``
+(default 80), ``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (default 0.5),
+``NINA_HOVER_IMU_CORR_POLL_HZ`` (default 20).
 """
 
 from __future__ import annotations
@@ -31,12 +50,18 @@ import math
 import os
 import threading
 import time
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
 
 log = logging.getLogger("nina.hoverboard_axis")
+
+# Yaw drift sampler — returns signed degrees ``+`` = bot drifted right, ``-`` = left,
+# or ``None`` when the integrator is paused / calibrating / unavailable.
+ImuYawDriftFn = Callable[[], Optional[float]]
+# Optional begin/end hooks called when the drive enters / leaves a straight leg.
+ImuStraightHook = Callable[[], None]
 
 _POS_SPAN_DEG = 300.0
 
@@ -185,6 +210,71 @@ def _straight_prime_tol_ticks() -> int:
         return 32
 
 
+def _post_turn_settle_sec() -> float:
+    """Extra dwell after the straight prime inside ``start_pulse_straight_*``.
+
+    When ``stop()`` from a pivot leaves the lean stack at the brake pose AND the
+    prime goal equals brake, ``_prime_straight_neutral`` returns immediately on
+    the first present-position read—so the operator can't see priming happen
+    before the next pulse series fires. Setting this >0 inserts a visible pause
+    (logged) after the prime, before the back / forward pulse begins.
+    """
+    raw = (os.environ.get("NINA_HOVER_POST_TURN_SETTLE_SEC") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, min(2.0, float(raw)))
+    except ValueError:
+        return 0.0
+
+
+def _imu_corr_enabled() -> bool:
+    raw = (os.environ.get("NINA_HOVER_IMU_CORR_ENABLE") or "").strip().lower()
+    if raw == "":
+        return True  # default ON when hooks are wired
+    return raw in ("1", "true", "yes", "y", "on")
+
+
+def _imu_corr_kp_ticks_per_deg() -> float:
+    try:
+        return max(
+            0.0,
+            min(50.0, float(os.environ.get("NINA_HOVER_IMU_CORR_KP_TICKS_PER_DEG", "6.0"))),
+        )
+    except ValueError:
+        return 6.0
+
+
+def _imu_corr_max_ticks() -> int:
+    try:
+        return max(
+            0,
+            min(400, int(os.environ.get("NINA_HOVER_IMU_CORR_MAX_TICKS", "80"))),
+        )
+    except ValueError:
+        return 80
+
+
+def _imu_corr_deadband_deg() -> float:
+    try:
+        return max(
+            0.0,
+            min(10.0, float(os.environ.get("NINA_HOVER_IMU_CORR_DEADBAND_DEG", "0.5"))),
+        )
+    except ValueError:
+        return 0.5
+
+
+def _imu_corr_poll_hz() -> float:
+    try:
+        return max(
+            2.0,
+            min(60.0, float(os.environ.get("NINA_HOVER_IMU_CORR_POLL_HZ", "20.0"))),
+        )
+    except ValueError:
+        return 20.0
+
+
 def _hover_turn_slow_wheel_pct() -> int:
     """Backward-side lean for held D-pad pivots (1–100, default 8)."""
     try:
@@ -306,6 +396,19 @@ class HoverboardAxisDrive:
         self._pulse_halt = threading.Event()
         self._last_straight_key: Optional[str] = None
 
+        # IMU yaw-correction hooks (wired from NinaService when the MPU-9250
+        # monitor is enabled). All three may be None on dev hosts without IMU.
+        self._imu_yaw_drift_fn: Optional[ImuYawDriftFn] = None
+        self._imu_begin_fn: Optional[ImuStraightHook] = None
+        self._imu_end_fn: Optional[ImuStraightHook] = None
+        # Cached tunables: re-read each call site so unit tests / runtime env
+        # changes are picked up without rebuilding the drive.
+        self._imu_corr_enabled_static: bool = _imu_corr_enabled()
+        self._imu_corr_kp: float = _imu_corr_kp_ticks_per_deg()
+        self._imu_corr_max_ticks: int = _imu_corr_max_ticks()
+        self._imu_corr_deadband_deg: float = _imu_corr_deadband_deg()
+        self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
+
     # ------------------------------------------------------------------
     def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
         """Refresh FWD/REV / pivot goals after motion calibration save."""
@@ -316,6 +419,153 @@ class HoverboardAxisDrive:
         self.config = nav_cfg
         self._invert_left = bool(getattr(nav_cfg, "invert_left_dir", False))
         self._invert_right = bool(getattr(nav_cfg, "invert_right_dir", False))
+
+    # ------------------------------------------------------------------
+    # IMU yaw-correction hooks
+    # ------------------------------------------------------------------
+    def set_imu_hooks(
+        self,
+        *,
+        yaw_drift_fn: Optional[ImuYawDriftFn],
+        begin_straight_fn: Optional[ImuStraightHook] = None,
+        end_straight_fn: Optional[ImuStraightHook] = None,
+    ) -> None:
+        """Wire the MPU-9250 (or any) yaw drift sampler into the straight pulses.
+
+        *yaw_drift_fn* should return signed degrees (positive = bot drifted to the
+        right) or ``None`` while the integrator is paused / calibrating. The
+        optional begin / end hooks are invoked when the drive enters / leaves a
+        straight leg (forward or backward pulse series, plus symmetric straight
+        ``set_wheels``) so the integrator can be reset and stopped without UI
+        plumbing.
+        """
+        self._imu_yaw_drift_fn = yaw_drift_fn
+        self._imu_begin_fn = begin_straight_fn
+        self._imu_end_fn = end_straight_fn
+        # Refresh static-ish knobs in case env changed since construction.
+        self._imu_corr_enabled_static = _imu_corr_enabled()
+        self._imu_corr_kp = _imu_corr_kp_ticks_per_deg()
+        self._imu_corr_max_ticks = _imu_corr_max_ticks()
+        self._imu_corr_deadband_deg = _imu_corr_deadband_deg()
+        self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
+        log.info(
+            "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
+            "kp=%.2f ticks/deg max=%s ticks deadband=%.2f deg poll=%.2fHz",
+            "set" if yaw_drift_fn else "off",
+            "set" if begin_straight_fn else "off",
+            "set" if end_straight_fn else "off",
+            self._imu_corr_enabled_static,
+            self._imu_corr_kp,
+            self._imu_corr_max_ticks,
+            self._imu_corr_deadband_deg,
+            _imu_corr_poll_hz(),
+        )
+
+    def _imu_correction_ticks(self) -> int:
+        """Return signed correction (+ = bot drifting right; correct by yawing left)."""
+        if not self._imu_corr_enabled_static:
+            return 0
+        fn = self._imu_yaw_drift_fn
+        if fn is None:
+            return 0
+        try:
+            yaw = fn()
+        except Exception:  # pragma: no cover - sampler bugs must not crash drive
+            return 0
+        if yaw is None:
+            return 0
+        if abs(yaw) <= self._imu_corr_deadband_deg:
+            return 0
+        corr = int(round(self._imu_corr_kp * float(yaw)))
+        if corr > self._imu_corr_max_ticks:
+            corr = self._imu_corr_max_ticks
+        elif corr < -self._imu_corr_max_ticks:
+            corr = -self._imu_corr_max_ticks
+        return corr
+
+    def _imu_corrected_goals(
+        self,
+        base_goals: Dict[int, int],
+        *,
+        is_forward: bool,
+    ) -> Dict[int, int]:
+        """Bias *base_goals* by current IMU correction (no-op when no drift / no hook).
+
+        Positive drift (drifted right) yaws the bot left: slow the LEFT wheel
+        (less travel from brake) and speed the RIGHT wheel (more travel from
+        brake). Direction sign is folded in via ``speed_sign`` so a single
+        formula works for forward and backward pulses.
+        """
+        corr = self._imu_correction_ticks()
+        if corr == 0:
+            return base_goals
+        sl = self._eff_sign_left()
+        sr = self._eff_sign_right()
+        speed_sign = 1 if is_forward else -1
+        lid = self._left_id
+        rid = self._right_id
+        lg = int(base_goals[lid]) - int(sl) * speed_sign * corr
+        rg = int(base_goals[rid]) + int(sr) * speed_sign * corr
+        return {
+            lid: self._dxl._clamp_pos(lg),
+            rid: self._dxl._clamp_pos(rg),
+        }
+
+    def _imu_corrected_hold(
+        self,
+        base_goals: Dict[int, int],
+        duration_sec: float,
+        halt: threading.Event,
+        *,
+        is_forward: bool,
+    ) -> bool:
+        """Hold *base_goals* for *duration_sec*, re-applying IMU correction.
+
+        Falls back to ``halt.wait`` when no yaw sampler is wired (so non-IMU
+        bots behave exactly like before). Returns ``True`` when *halt* fires
+        during the hold; the caller should ``break`` immediately.
+        """
+        if duration_sec <= 0.0:
+            return False
+        fn = self._imu_yaw_drift_fn
+        if fn is None or not self._imu_corr_enabled_static:
+            return halt.wait(timeout=duration_sec)
+        step = max(0.01, float(self._imu_corr_poll_sec))
+        end = time.monotonic() + duration_sec
+        while True:
+            if halt.is_set():
+                return True
+            now = time.monotonic()
+            if now >= end:
+                return False
+            try:
+                g = self._imu_corrected_goals(base_goals, is_forward=is_forward)
+                self._apply_goals(g)
+            except Exception:
+                # MX bus hiccups must not break the pulse cadence; the next
+                # tick will re-apply the goals.
+                pass
+            remaining = end - now
+            if halt.wait(timeout=min(step, remaining)):
+                return True
+
+    def _imu_begin_straight(self) -> None:
+        fn = self._imu_begin_fn
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:  # pragma: no cover - integrator bugs must not crash drive
+            log.debug("imu begin_straight hook raised", exc_info=True)
+
+    def _imu_end_straight(self) -> None:
+        fn = self._imu_end_fn
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:  # pragma: no cover
+            log.debug("imu end_straight hook raised", exc_info=True)
 
     def initialize(self) -> None:
         if self._is_initialized:
@@ -440,7 +690,13 @@ class HoverboardAxisDrive:
             return
         sp = max(0, min(100, int(speed_percent)))
         self._halt_pulse_series(wait=True)
+        log.info(
+            "hover forward pulse: priming (goal=%s, lean before back/forward) ...",
+            _straight_prime_goal_ticks(),
+        )
         self._prime_straight_neutral()
+        self._post_prime_settle("fwd")
+        self._imu_begin_straight()
         self._last_straight_key = "fwd"
         thr = threading.Thread(
             target=self._forward_pulse_loop,
@@ -467,7 +723,13 @@ class HoverboardAxisDrive:
             return
         sp = max(0, min(100, int(speed_percent)))
         self._halt_pulse_series(wait=True)
+        log.info(
+            "hover backward pulse: priming (goal=%s, lean before back/forward) ...",
+            _straight_prime_goal_ticks(),
+        )
         self._prime_straight_neutral()
+        self._post_prime_settle("back")
+        self._imu_begin_straight()
         self._last_straight_key = "back"
         thr = threading.Thread(
             target=self._backward_pulse_loop,
@@ -477,6 +739,26 @@ class HoverboardAxisDrive:
         )
         self._pulse_series_thread = thr
         thr.start()
+
+    def _post_prime_settle(self, leg: str) -> None:
+        """Optional visible dwell after the straight prime (see ``_post_turn_settle_sec``)."""
+        dwell = _post_turn_settle_sec()
+        if dwell <= 0.0:
+            return
+        log.info(
+            "hover %s pulse: post-prime settle %.2fs (NINA_HOVER_POST_TURN_SETTLE_SEC) ...",
+            leg,
+            dwell,
+        )
+        # Apply brake goals again so the lean stack is held at neutral while we wait.
+        try:
+            self._apply_goals(
+                {self._left_id: self._brake_left, self._right_id: self._brake_right}
+            )
+        except Exception:
+            pass
+        # Use the halt event so a fast stop() during settle still bails out quickly.
+        self._pulse_halt.wait(timeout=dwell)
 
     def _forward_pulse_loop(self, speed_pct: int) -> None:
         """Forward-only pulse series: brake→coast blend→…→full brake (see module doc)."""
@@ -561,20 +843,25 @@ class HoverboardAxisDrive:
                 )
                 if halt.is_set():
                     break
-                if main_hold > 0.0 and halt.wait(timeout=main_hold):
+                if self._imu_corrected_hold(
+                    goals, main_hold, halt, is_forward=True
+                ):
                     break
                 self._pulse_ramp_goals_between(
                     goals, coast_goals, eff_ramp, halt
                 )
                 if halt.is_set():
                     break
-                if coast_dwell > 0.0 and halt.wait(timeout=coast_dwell):
+                if self._imu_corrected_hold(
+                    coast_goals, coast_dwell, halt, is_forward=True
+                ):
                     break
                 prev_coast = dict(coast_goals)
 
             if not halt.is_set():
                 self._apply_goals(brake_goals)
         finally:
+            self._imu_end_straight()
             self._sync_pulse_moving_speed()
 
     def _backward_pulse_loop(self, speed_pct: int) -> None:
@@ -660,20 +947,25 @@ class HoverboardAxisDrive:
                 )
                 if halt.is_set():
                     break
-                if main_hold > 0.0 and halt.wait(timeout=main_hold):
+                if self._imu_corrected_hold(
+                    goals, main_hold, halt, is_forward=False
+                ):
                     break
                 self._pulse_ramp_goals_between(
                     goals, coast_goals, eff_ramp, halt
                 )
                 if halt.is_set():
                     break
-                if coast_dwell > 0.0 and halt.wait(timeout=coast_dwell):
+                if self._imu_corrected_hold(
+                    coast_goals, coast_dwell, halt, is_forward=False
+                ):
                     break
                 prev_coast = dict(coast_goals)
 
             if not halt.is_set():
                 self._apply_goals(brake_goals)
         finally:
+            self._imu_end_straight()
             self._sync_pulse_moving_speed()
 
     def _pulse_coast_goals(
@@ -958,6 +1250,8 @@ class HoverboardAxisDrive:
         )
         if settle:
             time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
+        if self._last_straight_key is not None:
+            self._imu_end_straight()
         self._last_straight_key = None
 
     def emergency_stop(self, *, routine_shutdown: bool = False) -> None:
@@ -1150,8 +1444,12 @@ class HoverboardAxisDrive:
         if sk is not None:
             if sk != self._last_straight_key:
                 self._prime_straight_neutral()
+                # Reset the integrator each time we enter a fresh straight leg.
+                self._imu_begin_straight()
             self._last_straight_key = sk
         else:
+            if self._last_straight_key is not None:
+                self._imu_end_straight()
             self._last_straight_key = None
         goals = self._goals_for_wheels(
             left_dir=left_dir,
@@ -1159,6 +1457,12 @@ class HoverboardAxisDrive:
             right_dir=right_dir,
             right_speed=right_speed,
         )
+        # Hand symmetric straight set_wheels its IMU correction too, so manual D-pad
+        # forward / back gets the same drift compensation as the bench pulse series.
+        if sk is not None:
+            goals = self._imu_corrected_goals(
+                goals, is_forward=(sk == "fwd")
+            )
         self._apply_goals(goals)
 
     def drive_continuous(

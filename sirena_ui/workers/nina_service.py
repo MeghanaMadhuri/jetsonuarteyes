@@ -335,7 +335,12 @@ class NinaService:
             log.exception("Touch alert playback failed")
 
     def start_mpu9250_imu_monitor(self) -> None:
-        """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set."""
+        """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set.
+
+        Once the sampler is running we also wire its yaw drift + begin/end
+        straight-leg hooks into the hoverboard drive so straight-line pulses
+        self-correct toward zero yaw without any extra UI plumbing.
+        """
         if not is_imu_monitor_enabled():
             return
         if self._imu_monitor is not None:
@@ -346,6 +351,8 @@ class NinaService:
             self._imu_monitor = mon
         except Exception as exc:
             log.warning("MPU-9250 IMU monitor did not start: %s", exc)
+            return
+        self._apply_imu_hooks_to_drive()
 
     @property
     def imu_monitor(self) -> Optional[Mpu9250DriftMonitor]:
@@ -358,6 +365,33 @@ class NinaService:
     def imu_straight_end(self) -> None:
         if self._imu_monitor is not None:
             self._imu_monitor.end_straight_leg()
+
+    def _imu_yaw_drift_deg(self) -> Optional[float]:
+        """Sampler the drive layer calls during straight holds (None when idle)."""
+        mon = self._imu_monitor
+        if mon is None:
+            return None
+        try:
+            s = mon.snapshot()
+        except Exception:
+            return None
+        if not s.ok or s.drift_side == "n/a":
+            return None
+        return float(s.yaw_drift_deg)
+
+    def _apply_imu_hooks_to_drive(self) -> None:
+        """Push IMU hooks into the drive layer (no-op when drive isn't built yet)."""
+        drv = self._drive
+        if drv is None:
+            return
+        nav = drv.nav_manager() if hasattr(drv, "nav_manager") else None
+        if nav is None or not hasattr(nav, "set_imu_hooks"):
+            return
+        nav.set_imu_hooks(
+            yaw_drift_fn=self._imu_yaw_drift_deg,
+            begin_straight_fn=self.imu_straight_begin,
+            end_straight_fn=self.imu_straight_end,
+        )
 
     def is_battery_low_latched(self) -> bool:
         return is_battery_motion_blocked()
@@ -400,6 +434,17 @@ class NinaService:
                 self.settings.hoverboard_axis,
                 nav_settings,
             )
+            # If the IMU monitor is already running, wire its drift sampler /
+            # begin-end hooks straight into the new nav layer so the first
+            # straight pulse benefits without waiting for another bring-up tick.
+            if self._imu_monitor is not None and hasattr(
+                nav_manager, "set_imu_hooks"
+            ):
+                nav_manager.set_imu_hooks(
+                    yaw_drift_fn=self._imu_yaw_drift_deg,
+                    begin_straight_fn=self.imu_straight_begin,
+                    end_straight_fn=self.imu_straight_end,
+                )
             # Manual drive duty is fixed in DriveController (no slider); do not
             # seed the GUI state from nav_settings.default_speed_percent.
             self._drive = DriveController(

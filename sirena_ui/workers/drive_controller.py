@@ -476,6 +476,14 @@ class DriveController(QObject):
         if nav is not None and hasattr(nav, "update_axis_config"):
             nav.update_axis_config(axis_cfg)
 
+    def nav_manager(self) -> Optional[NavigationManagerLike]:
+        """Return the underlying navigation backend (live or injected pre-init).
+
+        Used by ``NinaService`` to wire late-arriving IMU hooks into
+        ``HoverboardAxisDrive`` without poking private attributes.
+        """
+        return self._nav if self._nav is not None else self._injected_nav
+
     def update_navigation_settings(self, nav_cfg: object) -> None:
         """Apply navigation tunables (e.g. timed turn duration) without rebuilding."""
         nav = self._nav if self._nav is not None else self._injected_nav
