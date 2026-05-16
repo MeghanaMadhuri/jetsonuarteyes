@@ -13,7 +13,7 @@ D-pad pivots also skip the explicit prime.
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
 lean. **Timed** ``turn_left`` / ``turn_right`` use a partial pivot blend (default
-~5° of nominal 90° via ``NINA_DRIVE_TURN_PIVOT_DEG`` / ``NINA_HOVER_TURN_PIVOT_BLEND_PCT``).
+~15° of nominal 90° via ``NINA_DRIVE_TURN_PIVOT_DEG`` / ``NINA_HOVER_TURN_PIVOT_BLEND_PCT``).
 **Held** D-pad pivots use ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer
 ``speed_percent`` when the UI applies asymmetric duties. **Turn right** is the mirror.
 
@@ -196,10 +196,10 @@ def _hover_turn_slow_wheel_pct() -> int:
 def _timed_turn_pivot_blend_pct() -> int:
     """How far timed Turn left/right lean toward full pivot (1–100).
 
-    Default ~5° of nominal 90°: ``NINA_DRIVE_TURN_PIVOT_DEG=5`` → 6%% blend.
+    Default ~15° of nominal 90°: ``NINA_DRIVE_TURN_PIVOT_DEG=15`` → 17%% blend.
     Override directly with ``NINA_HOVER_TURN_PIVOT_BLEND_PCT``.
     """
-    deg_raw = (os.environ.get("NINA_DRIVE_TURN_PIVOT_DEG") or "5").strip()
+    deg_raw = (os.environ.get("NINA_DRIVE_TURN_PIVOT_DEG") or "15").strip()
     if deg_raw:
         try:
             deg = max(1.0, min(90.0, float(deg_raw)))
@@ -209,10 +209,10 @@ def _timed_turn_pivot_blend_pct() -> int:
     try:
         return max(
             1,
-            min(100, int(os.environ.get("NINA_HOVER_TURN_PIVOT_BLEND_PCT", "6"))),
+            min(100, int(os.environ.get("NINA_HOVER_TURN_PIVOT_BLEND_PCT", "17"))),
         )
     except ValueError:
-        return 6
+        return 17
 
 
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
@@ -1061,7 +1061,7 @@ class HoverboardAxisDrive:
             return {self._left_id: bl, self._right_id: br}
 
         # Pivot: opposite leans. **Equal speeds at 100** ⇒ full calibrated pivot.
-        # **Equal speeds below 100** ⇒ same blend on both axes (timed ~5° buttons).
+        # **Equal speeds below 100** ⇒ same blend on both axes (timed ~15° buttons).
         # **Unequal speeds** ⇒ per-axis blend (held D-pad: outer vs slow wheel).
         if left_speed > 0 and right_speed > 0 and lf != rf:
             turn_left_geom = bool(lf and not rf)
@@ -1196,7 +1196,7 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: partial pivot lean (~5° default), hold, then brake.
+        """Timed yaw: partial pivot lean (~15° default), hold, then brake.
 
         Blend toward calibrated pivot goals via ``_timed_turn_pivot_blend_pct``
         (not full 90° lean). Held D-pad pivots use asymmetric duties separately.
