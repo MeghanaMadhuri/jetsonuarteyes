@@ -14,7 +14,8 @@ Two input modes are supported:
 * **Turn left / Turn right** — timed in-place pivots using opposite
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
   FWD/REV, but no straight-line prime first). Default duration ``NINA_NAV_TURN_SEC`` ( **0.01** s); Motion calibration **0.01–1** s. Overrides: ``NINA_DRIVE_TURN_90_SEC`` /
-  ``NINA_NAV_TURN_SEC``; speed ``NINA_DRIVE_TURN_90_PCT``. Extra lean vs brake:
+  ``NINA_NAV_TURN_SEC``; pivot angle ``NINA_DRIVE_TURN_PIVOT_DEG`` (default **30**° of 90°).
+  Extra lean vs brake:
   ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
   left/right pivots feel reversed.
 * D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
@@ -503,10 +504,10 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed yaw (~0.01 s default: NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC; Motion cal 0.01–1 s): "
-            "no straight-line prime—pivot from current pose; "
-            "left lean axis (e.g. ID 12) toward FWD, right (e.g. 13) toward REV "
-            "at NINA_HOVER_TURN_SLOW_WHEEL_PCT vs outer speed (NINA_DRIVE_TURN_90_PCT). "
+            "Timed yaw (~0.01 s, ~30° lean default: NINA_DRIVE_TURN_PIVOT_DEG / NINA_NAV_TURN_SEC): "
+            "no straight-line prime—partial pivot blend from brake; "
+            "left (e.g. ID 12) toward FWD, right (e.g. 13) toward REV. "
+            "Held D-pad left uses full asymmetric pivot duties. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad left matches."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
@@ -517,9 +518,9 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "Timed yaw (~0.01 s default: NINA_DRIVE_TURN_90_SEC / NINA_NAV_TURN_SEC; Motion cal 0.01–1 s): "
-            "no straight-line prime—pivot from current pose; right lean "
-            "toward FWD and left toward REV (weaker side: NINA_HOVER_TURN_SLOW_WHEEL_PCT). "
+            "Timed yaw (~0.01 s, ~30° lean default: NINA_DRIVE_TURN_PIVOT_DEG / NINA_NAV_TURN_SEC): "
+            "no straight-line prime—partial pivot blend; right toward FWD, left toward REV. "
+            "Held D-pad right uses full asymmetric pivot duties. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply. D-pad right matches."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))

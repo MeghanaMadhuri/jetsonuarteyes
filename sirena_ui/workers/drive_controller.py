@@ -12,7 +12,7 @@ replacement:
   set_brake(on)
   set_reverse(on)
   drive(direction)     direction in {forward, back, left, right}
-  turn_90(which)       \"left\" or \"right\" — one timed ~90° in-place pivot
+  turn_90(which)       \"left\" or \"right\" — timed partial in-place pivot (~30° default)
   stop()
 
 Hardware-touching operations (init, brake, drive, stop, shutdown) are
@@ -22,7 +22,7 @@ serialised onto a dedicated worker thread via a command queue so:
     goto, ArUco follow, face follow, Android HTTP momentary FWD/BACK when
     wired through ``DriveController``) runs the same hoverboard primitives:
     straight pulse series + kick/cruise fallbacks, timed ``turn_left`` /
-    ``turn_right`` for 90° buttons, and asymmetric pivot duties
+    ``turn_right`` for Turn left/right buttons (~30° lean default), and asymmetric pivot duties
     (``NINA_HOVER_TURN_SLOW_WHEEL_PCT``) for held L/R and in-loop pivots.
   * `forward`/`backward` calls (which include a 0.1s settle sleep)
     don't stall the GUI.
