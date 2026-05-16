@@ -7,7 +7,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
-from nina.sensors.ads1115 import ADS1115, is_available
+from nina.sensors.ads1115 import ADS1115, is_available, pack_voltage_from_ain_volts
 
 if TYPE_CHECKING:
     from sirena_ui.workers.nina_service import NinaService
@@ -43,6 +43,8 @@ class BatteryAds1115Monitor:
         self._cooldown_sec = float(s.cooldown_sec)
         self._poll_sec = float(s.poll_interval_sec)
         self._divider = float(s.divider_ratio)
+        self._cal_scale = float(s.cal_scale)
+        self._cal_offset_v = float(s.cal_offset_v)
         self._channel = int(s.channel)
         self._adc = ADS1115(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
@@ -88,7 +90,12 @@ class BatteryAds1115Monitor:
         while not self._stop.is_set():
             try:
                 v_pin = self._adc.read_single_ended_volts(self._channel)
-                pack_v = v_pin * self._divider
+                pack_v = pack_voltage_from_ain_volts(
+                    v_pin,
+                    divider_ratio=self._divider,
+                    cal_scale=self._cal_scale,
+                    cal_offset_v=self._cal_offset_v,
+                )
             except Exception:
                 log.debug("ADS1115 read failed", exc_info=True)
                 time.sleep(max(self._poll_sec, 0.5))

@@ -32,6 +32,12 @@ from typing import Optional, Sequence, Tuple
 # Orin NX 40-pin: pins 3 (SDA) + 5 (SCL) → /dev/i2c-7 on this bot (verified).
 DEFAULT_BATTERY_I2C_BUS = 7
 DEFAULT_BATTERY_I2C_ADDR = 0x48
+
+# Divider: BAT+ ── R1 ── AIN0 ── R2 ── GND  →  V_ain = V_pack * R2/(R1+R2)
+DEFAULT_BATTERY_R1_OHM = 218_000.0
+DEFAULT_BATTERY_R2_OHM = 33_000.0
+# One-point DMM trim (26.3 V vs ~24.24 V uncorrected on bench); override with env.
+DEFAULT_BATTERY_CAL_SCALE = 26.3 / (3.197 * (251.0 / 33.0))
 # Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
 _BATTERY_PROBE_BUSES: Tuple[int, ...] = (7, 1, 2, 8, 0)
 
@@ -44,6 +50,27 @@ _REG_CONFIG = 0x01
 # Single-shot, MUX = AINn vs GND, PGA ±4.096 V, 128 SPS, comparator off
 # OS=1 start; MUX 100+ch; PGA 001; MODE=1; DR=100; COMP_* = 11
 _BASE_CONFIG = 0x8000 | 0x0200 | 0x0100 | (4 << 5) | 0x0003
+
+
+def divider_ratio_from_resistors(r1_ohm: float, r2_ohm: float) -> float:
+    """``V_pack = V_ain * (R1+R2)/R2`` for BAT+→R1→AIN→R2→GND."""
+    r2 = float(r2_ohm)
+    if r2 <= 0.0:
+        return 1.0
+    return (float(r1_ohm) + r2) / r2
+
+
+def pack_voltage_from_ain_volts(
+    v_ain: float,
+    *,
+    divider_ratio: float,
+    cal_scale: float = 1.0,
+    cal_offset_v: float = 0.0,
+) -> float:
+    """Pack voltage from AIN pin reading and divider + optional linear trim."""
+    return (
+        float(v_ain) * float(divider_ratio) * float(cal_scale) + float(cal_offset_v)
+    )
 
 
 def default_battery_i2c_bus() -> int:

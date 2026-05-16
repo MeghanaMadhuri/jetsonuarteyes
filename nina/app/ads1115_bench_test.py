@@ -34,19 +34,16 @@ import time
 
 from nina.sensors.ads1115 import (
     ADS1115,
+    DEFAULT_BATTERY_CAL_SCALE,
     DEFAULT_BATTERY_I2C_ADDR,
     DEFAULT_BATTERY_I2C_BUS,
+    DEFAULT_BATTERY_R1_OHM,
+    DEFAULT_BATTERY_R2_OHM,
+    divider_ratio_from_resistors,
     is_available,
+    pack_voltage_from_ain_volts,
     resolve_battery_i2c_bus,
 )
-
-DIVIDER_R_TOP_OHM = 218_000.0
-DIVIDER_R_BOT_OHM = 33_000.0
-DEFAULT_DIVIDER_RATIO = (DIVIDER_R_TOP_OHM + DIVIDER_R_BOT_OHM) / DIVIDER_R_BOT_OHM
-
-
-def _pack_volts_nina(v_pin: float, ratio: float, cal_scale: float, cal_offset: float) -> float:
-    return v_pin * ratio * cal_scale + cal_offset
 
 
 def _read_averaged(
@@ -95,16 +92,28 @@ def main(argv: list[str] | None = None) -> int:
         help="AIN channel 0..3 (default 0)",
     )
     parser.add_argument(
+        "--r1-ohm",
+        type=float,
+        default=float(os.environ.get("NINA_BATTERY_R1_OHM", str(DEFAULT_BATTERY_R1_OHM))),
+        help="R1 ohms BAT+ to AIN0 (default 218000)",
+    )
+    parser.add_argument(
+        "--r2-ohm",
+        type=float,
+        default=float(os.environ.get("NINA_BATTERY_R2_OHM", str(DEFAULT_BATTERY_R2_OHM))),
+        help="R2 ohms AIN0 to GND (default 33000)",
+    )
+    parser.add_argument(
         "--divider-ratio",
         type=float,
-        default=float(os.environ.get("NINA_BATTERY_DIVIDER_RATIO", str(DEFAULT_DIVIDER_RATIO))),
-        help=f"V_pack = V_ain * ratio (default {DEFAULT_DIVIDER_RATIO:g} = 218k+33k)",
+        default=None,
+        help="Override (R1+R2)/R2; default from --r1-ohm and --r2-ohm",
     )
     parser.add_argument(
         "--cal-scale",
         type=float,
-        default=float(os.environ.get("NINA_BATTERY_CAL_SCALE", "1")),
-        help="Multiply pack voltage after divider (DMM trim)",
+        default=float(os.environ.get("NINA_BATTERY_CAL_SCALE", str(DEFAULT_BATTERY_CAL_SCALE))),
+        help="DMM trim scale after divider (default ~1.082)",
     )
     parser.add_argument(
         "--cal-offset",
@@ -164,11 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Bus:     /dev/i2c-{bus}  (expect 0x48: sudo i2cdetect -y -r {bus})")
     print(f"  Addr:    0x{args.addr:02X}   AIN{ch}")
     print(
-        f"  Divider: {DIVIDER_R_TOP_OHM/1000:g} kΩ (BAT+→AIN) + "
-        f"{DIVIDER_R_BOT_OHM/1000:g} kΩ (AIN→GND)  ratio={args.divider_ratio:.4f}"
+        f"  Divider: R1={args.r1_ohm/1000:g} kΩ (BAT+→AIN0)  "
+        f"R2={args.r2_ohm/1000:g} kΩ (AIN0→GND)  ratio={ratio:.4f}"
+    )
+    print(
+        f"  Formula: V_pack = V_ain * (R1+R2)/R2 * cal_scale + offset"
     )
     if args.cal_scale != 1.0 or args.cal_offset != 0.0:
-        print(f"  Cal:     V_pack = V_ain*ratio*{args.cal_scale:g} + ({args.cal_offset:g})")
+        print(f"  Cal:     scale={args.cal_scale:.4f}  offset={args.cal_offset:g} V")
     print(f"  Average: {args.avg} sample(s), discard first {args.discard}")
     print("  Compare V_pack with a DMM; tune --cal-scale / --cal-offset.\n")
 
@@ -179,11 +191,11 @@ def main(argv: list[str] | None = None) -> int:
                 raw, v_pin = _read_averaged(
                     adc, ch, avg=args.avg, discard=args.discard
                 )
-                v_pack = _pack_volts_nina(
+                v_pack = pack_voltage_from_ain_volts(
                     v_pin,
-                    args.divider_ratio,
-                    args.cal_scale,
-                    args.cal_offset,
+                    divider_ratio=ratio,
+                    cal_scale=args.cal_scale,
+                    cal_offset_v=args.cal_offset,
                 )
             except Exception as exc:
                 print(f"read error: {exc}")

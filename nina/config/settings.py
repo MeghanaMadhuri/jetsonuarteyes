@@ -236,9 +236,10 @@ class BatteryAds1115Settings:
     Enable with ``NINA_BATTERY_ADS1115_ENABLE=1``. ADS1115 on header pins **3**
     SDA + **5** SCL → default ``NINA_BATTERY_I2C_BUS=7`` (``i2cdetect -y -r 7``
     → **0x48**). MPU-9250 may share the same bus at **0x68**.
-    Tune ``NINA_BATTERY_DIVIDER_RATIO`` so ``V_pack ≈ V_ain * ratio`` matches a DMM
-    (default **251/33** for **218 kΩ** BAT+→AIN, **33 kΩ** AIN→GND).
-    ``clear_voltage_v`` must
+    Divider: **R1** BAT+→AIN (default **218 kΩ**), **R2** AIN→GND (default **33 kΩ**).
+    ``V_pack = V_ain * (R1+R2)/R2 * cal_scale + cal_offset_v``. Default
+    ``NINA_BATTERY_CAL_SCALE`` (~**1.082**) trims ADS1115 + resistor tolerance to a DMM.
+  Override ``NINA_BATTERY_DIVIDER_RATIO`` to set ratio directly. ``clear_voltage_v`` must
     stay **above** ``low_voltage_v`` to avoid alert chatter while the pack recovers.
     """
 
@@ -246,7 +247,11 @@ class BatteryAds1115Settings:
     i2c_bus: int
     i2c_address: int
     channel: int
+    divider_r1_ohm: float
+    divider_r2_ohm: float
     divider_ratio: float
+    cal_scale: float
+    cal_offset_v: float
     low_voltage_v: float
     clear_voltage_v: float
     debounce_reads: int
@@ -780,12 +785,24 @@ def load_settings(repo_root: Path) -> NinaSettings:
     if clear_v <= low_v:
         clear_v = low_v + 0.5
 
+    batt_r1 = max(1.0, _env_float("NINA_BATTERY_R1_OHM", 218_000.0))
+    batt_r2 = max(1.0, _env_float("NINA_BATTERY_R2_OHM", 33_000.0))
+    batt_ratio_raw = (os.environ.get("NINA_BATTERY_DIVIDER_RATIO") or "").strip()
+    if batt_ratio_raw:
+        batt_divider_ratio = max(1.0, float(batt_ratio_raw))
+    else:
+        batt_divider_ratio = (batt_r1 + batt_r2) / batt_r2
+
     battery_ads1115 = BatteryAds1115Settings(
         enabled=_env_bool("NINA_BATTERY_ADS1115_ENABLE", False),
         i2c_bus=_env_int("NINA_BATTERY_I2C_BUS", 7),
         i2c_address=_env_int("NINA_BATTERY_I2C_ADDR", 0x48),
         channel=max(0, min(3, _env_int("NINA_BATTERY_ADS1115_CHANNEL", 0))),
-        divider_ratio=max(1.0, _env_float("NINA_BATTERY_DIVIDER_RATIO", 251.0 / 33.0)),
+        divider_r1_ohm=batt_r1,
+        divider_r2_ohm=batt_r2,
+        divider_ratio=batt_divider_ratio,
+        cal_scale=max(0.01, _env_float("NINA_BATTERY_CAL_SCALE", 26.3 / (3.197 * (251.0 / 33.0)))),
+        cal_offset_v=_env_float("NINA_BATTERY_CAL_OFFSET_V", 0.0),
         low_voltage_v=low_v,
         clear_voltage_v=clear_v,
         debounce_reads=max(1, min(30, _env_int("NINA_BATTERY_DEBOUNCE", 3))),
