@@ -442,7 +442,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
         default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "8")),
-        turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "0.01")),
+        turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "0.3")),
         # Flip if a wheel spins opposite of what the GUI expects (the
         # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
