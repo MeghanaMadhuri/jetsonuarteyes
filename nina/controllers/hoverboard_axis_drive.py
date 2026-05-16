@@ -6,8 +6,9 @@ matches ``NavigationManager`` as used by ``DriveController``, autonomy, and goto
 
 **Straight-line prime:** before each new symmetric straight FWD/BACK ``set_wheels``,
 both lean servos move to ``NINA_HOVER_STRAIGHT_PRIME_POS`` (default 2048) for up to
-``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). **Timed Turn left/right** (Drive
-GUI) call the same prime before starting. D-pad pivots skip that explicit prime.
+``NINA_HOVER_STRAIGHT_PRIME_SEC`` (default 2 s). **Timed Turn left/right** do **not**
+use this prime—they go straight to pivot ``set_wheels`` from the current pose.
+D-pad pivots also skip the explicit prime.
 
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
@@ -1125,8 +1126,9 @@ class HoverboardAxisDrive:
     ) -> None:
         """Timed yaw: left lean (``id_left``) forward, right lean backward (weaker).
 
-        Runs straight-line :meth:`_prime_straight_neutral` first (same family as
-        symmetric straight). Outer lean uses *speed_percent*; inner uses
+        Does not run :meth:`_prime_straight_neutral`; pivot goals apply from the
+        current pose (``set_wheels`` still cancels any straight pulse series).
+        Outer lean uses *speed_percent*; inner uses
         ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` (default 8).
         """
         outer = self._resolve_speed(speed_percent)
@@ -1135,10 +1137,8 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 5.0)
+            else getattr(self.config, "turn_duration_sec", 3.0)
         )
-        self._prime_straight_neutral()
-        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self.set_wheels(
             left_dir=self.DIR_FORWARD,
             left_speed=outer,
@@ -1160,10 +1160,8 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 5.0)
+            else getattr(self.config, "turn_duration_sec", 3.0)
         )
-        self._prime_straight_neutral()
-        time.sleep(float(getattr(self.config, "settle_delay_sec", 0.1)))
         self.set_wheels(
             left_dir=self.DIR_BACKWARD,
             left_speed=slow,
