@@ -1181,7 +1181,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 0.15)
+            else getattr(self.config, "turn_duration_sec", 0.08)
         )
         self.set_wheels(
             left_dir=self.DIR_FORWARD,
@@ -1204,7 +1204,7 @@ class HoverboardAxisDrive:
         dur = float(
             duration
             if duration is not None
-            else getattr(self.config, "turn_duration_sec", 0.15)
+            else getattr(self.config, "turn_duration_sec", 0.08)
         )
         self.set_wheels(
             left_dir=self.DIR_BACKWARD,
