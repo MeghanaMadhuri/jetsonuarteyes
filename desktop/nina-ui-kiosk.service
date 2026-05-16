@@ -99,9 +99,9 @@ Environment=NINA_IMU_MPU9250_ENABLE=1
 Environment=NINA_IMU_I2C_BUS=7
 Environment=NINA_IMU_I2C_ADDR=0x68
 
-# Pack voltage ADS1115 @ 0x48: I2C2 on header pins 27 SDA + 28 SCL → ``/dev/i2c-1`` (jetson-io).
+# Pack voltage ADS1115 @ 0x48: header pins 3 SDA + 5 SCL → ``/dev/i2c-7`` (shared with IMU ok).
 # Environment=NINA_BATTERY_ADS1115_ENABLE=1
-# Environment=NINA_BATTERY_I2C_BUS=1
+# Environment=NINA_BATTERY_I2C_BUS=7
 # Environment=NINA_BATTERY_DIVIDER_RATIO=7.606
 
 ExecStart=__EXEC__

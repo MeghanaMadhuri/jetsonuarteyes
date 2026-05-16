@@ -3,18 +3,18 @@
 Used for scaled pack voltage: hardware must divide the battery down so the
 AIN pin stays **below the ADS1115 VDD** (typically 3.3 V on the Jetson header).
 
-Connections (Nina / Orin NX — battery on **I2C2**, IMU on pins 3+5)
---------------------------------------------------------------------
-* **IMU (MPU-9250)** — header pins **3** (SDA) + **5** (SCL) → ``/dev/i2c-7``
-  (``NINA_IMU_I2C_BUS=7``). Do **not** wire the ADS1115 here.
-* **ADS1115 (pack voltage)** — enable **i2c2** on pins **27** (SDA) + **28** (SCL)
-  via ``jetson-io.py`` → **Save and reboot** (persists across boots). On Orin NX
-  this is usually ``/dev/i2c-1`` (run ``sudo i2cdetect -y 1`` → **0x48**).
+Connections (Nina / Orin NX — header pins **3** SDA + **5** SCL)
+----------------------------------------------------------------
+* **Default bus** ``/dev/i2c-7`` (``NINA_BATTERY_I2C_BUS=7``). Confirm with
+  ``sudo i2cdetect -y -r 7`` → **0x48** for ADS1115 (ADDR→GND).
+* **IMU (MPU-9250 @ 0x68)** and **ADS1115 (@ 0x48)** may share the same SDA/SCL
+  on pins **3** and **5** (different I²C addresses).
 * **ADS1115 VDD** → **3.3 V**; **GND** → GND; **ADDR** → GND (**0x48**).
 * **AIN0** → divider centre: **218 kΩ** BAT+→AIN0, **33 kΩ** AIN0→GND
   (``V_pack = V_ain * 251/33``).
 
-One-time header setup (or ``scripts/jetson-enable-battery-i2c2.sh``).
+Alternate: pins **27**/**28** (jetson-io **i2c2**) — often ``/dev/i2c-1`` on paper,
+but on this carrier **pins 3/5 → bus 7** is the working header I²C.
 
 Register map matches TI datasheet. Default gain is **±4.096 V** full-scale
 (PGA = 001); single-ended readings are interpreted as 0..+4.096 V at the pin.
@@ -29,11 +29,11 @@ import os
 import time
 from typing import Optional, Sequence, Tuple
 
-# Orin NX 40-pin: jetson-io label **i2c2** on physical pins 27/28 → usually i2c-1.
-DEFAULT_BATTERY_I2C_BUS = 1
+# Orin NX 40-pin: pins 3 (SDA) + 5 (SCL) → /dev/i2c-7 on this bot (verified).
+DEFAULT_BATTERY_I2C_BUS = 7
 DEFAULT_BATTERY_I2C_ADDR = 0x48
-# IMU bus 7 is intentionally last in auto-probe order.
-_BATTERY_PROBE_BUSES: Tuple[int, ...] = (1, 2, 8, 0, 7)
+# Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
+_BATTERY_PROBE_BUSES: Tuple[int, ...] = (7, 1, 2, 8, 0)
 
 log = logging.getLogger("nina.sensors.ads1115")
 

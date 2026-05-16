@@ -27,6 +27,6 @@ def test_discover_prefers_prefer_bus(monkeypatch) -> None:
 
 
 def test_default_divider_ratio() -> None:
-    assert abs(m.DEFAULT_BATTERY_I2C_BUS - 1) < 1e-9
+    assert m.DEFAULT_BATTERY_I2C_BUS == 7
     ratio = (218_000.0 + 33_000.0) / 33_000.0
     assert abs(ratio - 7.606060606) < 0.001

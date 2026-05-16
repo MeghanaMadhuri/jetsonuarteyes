@@ -1,31 +1,27 @@
-"""Bench test: ADS1115 pack voltage on Jetson I2C2 (header pins 27/28).
+"""Bench test: ADS1115 pack voltage on Jetson header pins **3** (SDA) + **5** (SCL).
 
-Reads raw ADC code, voltage at AIN0, and pack voltage using the **218 kΩ / 33 kΩ**
-divider (``V_pack = V_ain * 251/33``).
+Default ``/dev/i2c-7`` (``sudo i2cdetect -y -r 7`` → **0x48**). Reads raw code,
+V at AIN0, and pack V with **218 kΩ / 33 kΩ** divider (``V_pack = V_ain * 251/33``).
 
-**Wiring (Orin NX — separate from IMU on pins 3+5)**
+**Wiring (Orin NX — verified on this carrier)**
 
 | ADS1115 | Jetson 40-pin |
 |---------|----------------|
 | VDD | 3.3 V (pin 1 or 17) |
 | GND | GND |
-| SDA | **Pin 27** (I2C2 — enable in jetson-io) |
-| SCL | **Pin 28** (I2C2) |
+| SDA | **Pin 3** |
+| SCL | **Pin 5** |
 | ADDR | GND → **0x48** |
 | AIN0 | 218 kΩ from BAT+; 33 kΩ from AIN0 to GND |
 
-**One-time (persists after reboot):**
-
-    sudo bash scripts/jetson-enable-battery-i2c2.sh
-    # then jetson-io → Save and reboot
+MPU-9250 (0x68) can share pins 3/5 when reconnected.
 
 **Run on Jetson:**
 
+    cd ~/BLDC_HARI/Nvidia-jetson-platform
+    export PYTHONPATH=.
     python3 -m nina.app.ads1115_bench_test
     python3 -m nina.app.ads1115_bench_test --samples 20 --avg 5
-    python3 scripts/test_ads1115.py --cal-scale 1.02   # after DMM trim
-
-Default bus: ``/dev/i2c-1`` for I2C2 @ pins 27/28 (auto-probes if unset).
 """
 
 from __future__ import annotations
@@ -39,6 +35,7 @@ import time
 from nina.sensors.ads1115 import (
     ADS1115,
     DEFAULT_BATTERY_I2C_ADDR,
+    DEFAULT_BATTERY_I2C_BUS,
     is_available,
     resolve_battery_i2c_bus,
 )
@@ -72,13 +69,13 @@ def _read_averaged(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="ADS1115 battery voltage bench (I2C2 pins 27/28 on Orin NX)."
+        description="ADS1115 battery bench (header pins 3 SDA, 5 SCL → i2c-7)."
     )
     parser.add_argument(
         "--bus",
         type=int,
         default=None,
-        help="I2C bus /dev/i2c-N (default: env, else auto-probe, else 1)",
+        help=f"I2C bus /dev/i2c-N (default: env or {DEFAULT_BATTERY_I2C_BUS})",
     )
     parser.add_argument(
         "--no-auto",
@@ -149,8 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     if not ok:
         print(f"ADS1115 not available on bus {bus}: {msg}", file=sys.stderr)
         print(
-            "Enable I2C2 on pins 27/28: sudo bash scripts/jetson-enable-battery-i2c2.sh\n"
-            "Then jetson-io → Save and reboot. Verify: sudo i2cdetect -y 1",
+            "Wire SDA→pin 3, SCL→pin 5, ADDR→GND. Then: sudo i2cdetect -y -r 7",
             file=sys.stderr,
         )
         return 1
@@ -164,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ch = max(0, min(3, int(args.channel)))
     print("=== ADS1115 battery bench ===")
-    print(f"  Bus:     /dev/i2c-{bus}  (I2C2 → header pins 27 SDA, 28 SCL)")
+    print(f"  Header:  pin 3 = SDA, pin 5 = SCL  (Orin NX)")
+    print(f"  Bus:     /dev/i2c-{bus}  (expect 0x48: sudo i2cdetect -y -r {bus})")
     print(f"  Addr:    0x{args.addr:02X}   AIN{ch}")
     print(
         f"  Divider: {DIVIDER_R_TOP_OHM/1000:g} kΩ (BAT+→AIN) + "
@@ -173,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cal_scale != 1.0 or args.cal_offset != 0.0:
         print(f"  Cal:     V_pack = V_ain*ratio*{args.cal_scale:g} + ({args.cal_offset:g})")
     print(f"  Average: {args.avg} sample(s), discard first {args.discard}")
-    print("  Compare V_pack with a DMM; tune --cal-scale / --cal-offset or env.\n")
+    print("  Compare V_pack with a DMM; tune --cal-scale / --cal-offset.\n")
 
     n = 0
     try:
