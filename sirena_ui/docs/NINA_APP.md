@@ -210,11 +210,11 @@ Save the JSON file (or env + restart); the next boot will reuse it.
 | `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward — boot-time default when no `drive_polarity.json` yet; once the JSON exists, its value wins. |
 | `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward — same as `NINA_NAV_INVERT_LEFT`. |
 | `NINA_DRIVE_PIVOT_PCT`         | (app **20**)      | D-pad left/right from rest: kick+cruise duty (pivot only; 8–100). |
-| `NINA_NAV_TURN_SEC`            | **0.3** (Drive buttons) | Software hold for **Turn left/right** only (`NINA_DRIVE_TURN_90_SEC` overrides). Motion-cal **Timed turn duration** does **not** apply to those buttons. |
+| `NINA_NAV_TURN_SEC`            | **0.2** (Drive buttons) | Software hold for **Turn left/right** only (`NINA_DRIVE_TURN_90_SEC` overrides). Motion-cal **Timed turn duration** does **not** apply to those buttons. |
 | `NINA_DRIVE_TURN_90_SEC`      | (uses **NINA_NAV_TURN_SEC**) | Drive screen Turn left/right hold override. |
 | *(Motion cal `turn_duration_sec`)* | 0.01–1 s saved in JSON | CLI / `nav-left` when duration not passed; **ignored** by Drive Turn left/right. |
-| `NINA_DRIVE_TURN_PIVOT_DEG`   | **30**             | Timed pivot lean angle vs nominal 90° (hoverboard): blend = deg/90 → default **33%** of full FWD/REV pivot goals. |
-| `NINA_HOVER_TURN_PIVOT_BLEND_PCT` | **33**        | Direct 1–100 blend to pivot goals if `NINA_DRIVE_TURN_PIVOT_DEG` unset. |
+| `NINA_DRIVE_TURN_PIVOT_DEG`   | **5**              | Timed pivot lean angle vs nominal 90° (hoverboard): blend = deg/90 → default **6%** of full FWD/REV pivot goals. |
+| `NINA_HOVER_TURN_PIVOT_BLEND_PCT` | **6**         | Direct 1–100 blend to pivot goals if `NINA_DRIVE_TURN_PIVOT_DEG` unset. |
 | `NINA_DRIVE_TURN_90_PCT`       | (app **20**)      | Legacy name; timed hoverboard turns use pivot **angle** blend above, not this duty. D-pad L/R still uses pivot duty + `NINA_HOVER_TURN_SLOW_WHEEL_PCT`. |
 | `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi (`pi_motor_bridge` bench only) |
 | `NINA_BRIDGE_BAUD` (on the Pi) | `115200`           | Pi-side baud                                       |

@@ -12,7 +12,7 @@ replacement:
   set_brake(on)
   set_reverse(on)
   drive(direction)     direction in {forward, back, left, right}
-  turn_90(which)       \"left\" or \"right\" — timed partial in-place pivot (~30° default)
+  turn_90(which)       \"left\" or \"right\" — timed partial in-place pivot (~5° default)
   stop()
 
 Hardware-touching operations (init, brake, drive, stop, shutdown) are
@@ -22,7 +22,7 @@ serialised onto a dedicated worker thread via a command queue so:
     goto, ArUco follow, face follow, Android HTTP momentary FWD/BACK when
     wired through ``DriveController``) runs the same hoverboard primitives:
     straight pulse series + kick/cruise fallbacks, timed ``turn_left`` /
-    ``turn_right`` for Turn left/right buttons (~30° lean default), and asymmetric pivot duties
+    ``turn_right`` for Turn left/right buttons (~5° lean default), and asymmetric pivot duties
     (``NINA_HOVER_TURN_SLOW_WHEEL_PCT``) for held L/R and in-loop pivots.
   * `forward`/`backward` calls (which include a 0.1s settle sleep)
     don't stall the GUI.
@@ -148,7 +148,7 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     Does **not** use Motion-cal / ``hover_calibration.json`` ``turn_duration_sec``
     on ``nav.config`` (that value was forcing long holds). Env only:
 
-    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.3** s).
+    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.2** s).
     """
     _ = nav
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
@@ -158,9 +158,9 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
         except ValueError:
             pass
     try:
-        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.3"))))
+        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.2"))))
     except ValueError:
-        return 0.3
+        return 0.2
 
 
 def _left_fwd_extra_pp() -> int:
