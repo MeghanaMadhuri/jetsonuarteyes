@@ -65,7 +65,9 @@ from nina.controllers.navigation_manager import (
     NavigationConfig,
     NavigationManager,
 )
+from nina.sensors.ads1115 import is_battery_motion_blocked
 from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
+from nina.services.sensor_alert_audio import maybe_speak_low_battery
 
 # `nav_manager` may be any object with the navigation surface (tests use fakes).
 NavigationManagerLike = object
@@ -556,6 +558,8 @@ class DriveController(QObject):
         self._enqueue(lambda: self._do_start_backward_pulse_bench(sp))
 
     def _do_start_forward_pulse_bench(self, speed_pct: int) -> None:
+        if self._refuse_if_battery_low("bench forward pulse"):
+            return
         if self._nav is None or not self.supports_forward_pulse():
             return
         self._nav.start_pulse_straight_forward(int(speed_pct))
@@ -564,6 +568,8 @@ class DriveController(QObject):
             self._hover_straight_pulse_next = False
 
     def _do_start_backward_pulse_bench(self, speed_pct: int) -> None:
+        if self._refuse_if_battery_low("bench backward pulse"):
+            return
         if self._nav is None or not self.supports_forward_pulse():
             return
         self._nav.start_pulse_straight_backward(int(speed_pct))
@@ -899,6 +905,37 @@ class DriveController(QObject):
     # Hardware ops (run on the worker thread)
     # ------------------------------------------------------------------
 
+    def _refuse_if_battery_low(self, action_label: str) -> bool:
+        """Refuse a motion command when the battery pack is latched low.
+
+        Returns ``True`` if the caller should abort. Speaks the canonical
+        low-battery alert via the bldc espeak path (deduplicated by the
+        :envvar:`NINA_BLDC_ALERT_COOLDOWN_SEC` cooldown, so mashing the
+        D-pad cannot spam the speaker) and emits a single WARNING log so
+        the operator can grep ``launch.log`` for refused commands.
+
+        Gates all user-issued motion entry points:
+        :meth:`_do_drive`, :meth:`_do_drive_wheels` (non-zero speed),
+        :meth:`_do_turn_90`, :meth:`_do_start_forward_pulse_bench`, and
+        :meth:`_do_start_backward_pulse_bench`. ``emergency_stop``,
+        brake on/off, and shutdown are intentionally NOT gated — those
+        either stop motion or change non-moving state, and must keep
+        working while the latch is held so the operator can safely
+        bring the chassis to rest.
+        """
+        if not is_battery_motion_blocked():
+            return False
+        log.warning(
+            "DriveController: %s blocked — battery latched low (motion will "
+            "remain disabled until the pack recovers to the clear voltage)",
+            action_label,
+        )
+        try:
+            maybe_speak_low_battery()
+        except Exception:
+            log.exception("Low battery speak alert failed")
+        return True
+
     def _do_init(self) -> None:
         if self._init_attempted:
             return
@@ -999,6 +1036,8 @@ class DriveController(QObject):
             log.exception("release_brake failed: %s", exc)
 
     def _do_drive(self, direction: str, speed_pct: int) -> None:
+        if self._refuse_if_battery_low(f"drive({direction})"):
+            return
         if self._nav is None:
             log.warning(
                 "Drive dropped (%s): BLDC backend not ready yet — wait for green "
@@ -1102,6 +1141,8 @@ class DriveController(QObject):
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
 
     def _do_turn_90(self, which: str) -> None:
+        if self._refuse_if_battery_low(f"turn_90({which})"):
+            return
         if self._nav is None:
             log.warning(
                 "turn_90(%s) dropped: BLDC backend not ready yet", which
@@ -1246,6 +1287,12 @@ class DriveController(QObject):
         right_dir: str,
         right_speed: int,
     ) -> None:
+        # Only block when the operator is actually asking for motion;
+        # an all-zeros set_wheels is a stop and must always be honoured.
+        if (int(left_speed) > 0 or int(right_speed) > 0) and self._refuse_if_battery_low(
+            f"drive_wheels({left_dir},{left_speed}/{right_dir},{right_speed})"
+        ):
+            return
         if self._nav is None:
             log.warning(
                 "drive_wheels dropped: BLDC backend not ready yet "

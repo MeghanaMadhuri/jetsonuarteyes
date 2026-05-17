@@ -15,6 +15,7 @@ from nina.sensors.ads1115 import LOW_BATTERY_TTS
 from nina.sensors.at42qt2120 import DEFAULT_TOUCH_TTS
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
+from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 
 log = logging.getLogger("nina.services.sensor_alert_audio")
 
@@ -70,6 +71,36 @@ def play_low_battery_alert(*, phrase: str | None = None) -> None:
         phrase=(phrase or "").strip() or LOW_BATTERY_TTS,
         temp_basename="nina_low_battery_alert.mp3",
     )
+
+
+def maybe_speak_low_battery(phrase: str | None = None) -> None:
+    """Speak the canonical low-battery warning via the bldc espeak path.
+
+    This is the single TTS entry-point shared by:
+
+    * :class:`nina.sensors.battery_ads1115_monitor.BatteryAds1115Monitor`
+      for the initial latch announcement and the periodic 0.2 V repeat
+      warnings — phrasing comes from
+      :data:`nina.sensors.ads1115.LOW_BATTERY_TTS`,
+    * :class:`sirena_ui.workers.drive_controller.DriveController` (and the
+      Playback / Record workers) when a user-initiated motion command is
+      refused because the pack is latched low.
+
+    Routing every warning through :func:`maybe_speak_bldc_alert` means:
+
+    1. all three paths share the same voice, so the operator hears a
+       consistent message regardless of which subsystem refused them,
+    2. the bldc-speech-alerts per-message cooldown
+       (:envvar:`NINA_BLDC_ALERT_COOLDOWN_SEC`, default 12 s) naturally
+       suppresses chatter when the operator mashes the D-pad while
+       latched, and
+    3. there is no MP3 asset to keep in sync with the new short phrase.
+    """
+    text = (phrase or "").strip() or LOW_BATTERY_TTS
+    try:
+        maybe_speak_bldc_alert(text)
+    except Exception:
+        log.exception("Low battery espeak alert failed")
 
 
 def play_touch_alert(*, phrase: str | None = None) -> None:

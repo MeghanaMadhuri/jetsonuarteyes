@@ -16,6 +16,7 @@ from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from nina.sensors.ads1115 import is_battery_motion_blocked
+from nina.services.sensor_alert_audio import maybe_speak_low_battery
 from sirena_ui.workers.error_hints import explain_error
 from sirena_ui.workers.nina_service import NinaService
 
@@ -52,6 +53,10 @@ class RecordWorker(QThread):
 
     def run(self) -> None:
         if is_battery_motion_blocked():
+            try:
+                maybe_speak_low_battery()
+            except Exception:
+                pass
             self.failed.emit(
                 "Low battery — recording blocked. Please charge the pack."
             )

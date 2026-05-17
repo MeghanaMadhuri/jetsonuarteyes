@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from nina.config.settings import load_settings
 from nina.sensors import ads1115 as ads1115_consts
-from nina.sensors.battery_ads1115_monitor import battery_low_debounce_step
+from nina.sensors.battery_ads1115_monitor import (
+    DEFAULT_REPEAT_STEP_V,
+    _env_repeat_step_v,
+    battery_low_debounce_step,
+    decide_low_battery_repeat,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -83,6 +88,114 @@ class BatteryThresholdDefaultsTests(unittest.TestCase):
         self.assertAlmostEqual(
             ads1115_consts.DEFAULT_CLEAR_BATTERY_V, 26.1, places=3
         )
+
+    def test_low_battery_phrase_matches_operator_wording(self) -> None:
+        """Operator chose the short ``I'm low on battery`` phrase. Pinning it
+        here means a future copy-tweak can't silently drift the warning the
+        bot speaks every 0.2 V on the way down.
+        """
+        self.assertEqual(ads1115_consts.LOW_BATTERY_TTS, "I'm low on battery")
+
+
+class LowBatteryRepeatDecisionTests(unittest.TestCase):
+    """``decide_low_battery_repeat`` is the pure rule behind the every-0.2 V
+    repeat warning. The monitor thread is a thin wrapper around it; if these
+    pass the wiring is just bookkeeping.
+    """
+
+    def test_default_repeat_step_is_0_2_v(self) -> None:
+        """The operator-locked baseline step is 0.2 V."""
+        self.assertAlmostEqual(DEFAULT_REPEAT_STEP_V, 0.2, places=3)
+
+    def test_env_override_clamps_to_safe_range(self) -> None:
+        with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "0.5"}, clear=False):
+            self.assertAlmostEqual(_env_repeat_step_v(), 0.5, places=3)
+        # Negative -> clamped to 0 (disables the repeat).
+        with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "-1"}, clear=False):
+            self.assertEqual(_env_repeat_step_v(), 0.0)
+        # Absurdly large -> clamped to 5 V upper bound.
+        with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "999"}, clear=False):
+            self.assertEqual(_env_repeat_step_v(), 5.0)
+        # Invalid -> falls back to default.
+        with patch.dict(
+            os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "bogus"}, clear=False
+        ):
+            self.assertAlmostEqual(_env_repeat_step_v(), 0.2, places=3)
+
+    def test_first_call_anchors_without_speaking(self) -> None:
+        """First call (``last_announced_v=None``) just sets the anchor.
+
+        We don't speak on the very first poll because the initial latch
+        reaction already announced — the anchor must catch the post-anchor
+        sag, not the trigger itself.
+        """
+        should_speak, anchor = decide_low_battery_repeat(
+            25.5, last_announced_v=None, step_v=0.2
+        )
+        self.assertFalse(should_speak)
+        self.assertAlmostEqual(anchor, 25.5, places=3)
+
+    def test_drop_of_exactly_step_fires_warning(self) -> None:
+        """A drop equal to ``step_v`` must fire (uses ``<=`` so the boundary
+        case is the trigger, not the gap)."""
+        should_speak, anchor = decide_low_battery_repeat(
+            25.3, last_announced_v=25.5, step_v=0.2
+        )
+        self.assertTrue(should_speak)
+        self.assertAlmostEqual(anchor, 25.3, places=3)
+
+    def test_drop_smaller_than_step_holds_anchor(self) -> None:
+        """A sub-step sag (e.g. 25.4 with anchor 25.5) must NOT fire. This is
+        the case that would cause speaker chatter under load if the rule
+        used ``<`` against the raw anchor.
+        """
+        should_speak, anchor = decide_low_battery_repeat(
+            25.4, last_announced_v=25.5, step_v=0.2
+        )
+        self.assertFalse(should_speak)
+        self.assertAlmostEqual(anchor, 25.5, places=3)
+
+    def test_rising_voltage_does_not_fire(self) -> None:
+        """Voltage recovering above the anchor must NOT fire (the recovery
+        path is owned by the latch-clear logic in ``_run``).
+        """
+        should_speak, anchor = decide_low_battery_repeat(
+            25.7, last_announced_v=25.5, step_v=0.2
+        )
+        self.assertFalse(should_speak)
+        self.assertAlmostEqual(anchor, 25.5, places=3)
+
+    def test_steep_drop_re_anchors_at_current_pack_v(self) -> None:
+        """If the pack collapses across multiple steps in one poll, fire
+        once and re-anchor at the current pack_v. The next 0.2 V sag is
+        measured from the new floor, not from the pre-collapse anchor.
+        """
+        should_speak, anchor = decide_low_battery_repeat(
+            24.0, last_announced_v=25.5, step_v=0.2
+        )
+        self.assertTrue(should_speak)
+        # Re-anchor at 24.0; next fire requires <= 23.8.
+        self.assertAlmostEqual(anchor, 24.0, places=3)
+        should_speak_2, anchor_2 = decide_low_battery_repeat(
+            23.9, last_announced_v=anchor, step_v=0.2
+        )
+        self.assertFalse(should_speak_2)
+        self.assertAlmostEqual(anchor_2, 24.0, places=3)
+        should_speak_3, anchor_3 = decide_low_battery_repeat(
+            23.8, last_announced_v=anchor, step_v=0.2
+        )
+        self.assertTrue(should_speak_3)
+        self.assertAlmostEqual(anchor_3, 23.8, places=3)
+
+    def test_step_zero_disables_repeat_entirely(self) -> None:
+        """``step_v=0`` is the operator opt-out: no repeats ever fire, anchor
+        is left untouched (preserving caller bookkeeping).
+        """
+        should_speak, anchor = decide_low_battery_repeat(
+            10.0, last_announced_v=25.5, step_v=0.0
+        )
+        self.assertFalse(should_speak)
+        self.assertAlmostEqual(anchor, 25.5, places=3)
 
 
 if __name__ == "__main__":

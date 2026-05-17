@@ -48,7 +48,16 @@ DEFAULT_BATTERY_CAL_SCALE = 26.3 / (3.197 * (251.0 / 33.0))
 # from ``BatteryAds1115Settings``).
 DEFAULT_LOW_BATTERY_V = 25.5
 DEFAULT_CLEAR_BATTERY_V = 26.1
-LOW_BATTERY_TTS = "I am low on battery , Please put me on charge"
+# Short, operator-validated phrase reused by:
+#  * the initial low-battery latch reaction,
+#  * the periodic 0.2 V repeat warnings (see
+#    ``nina.sensors.battery_ads1115_monitor.decide_low_battery_repeat``), and
+#  * the "you tried to drive while battery is latched" alert spoken by
+#    ``DriveController`` / ``PlaybackWorker`` / ``RecordWorker``.
+# Kept short so the espeak-ng pipeline (via
+# ``nina.services.sensor_alert_audio.maybe_speak_low_battery``) completes
+# inside one D-pad press window without overlapping the next alert.
+LOW_BATTERY_TTS = "I'm low on battery"
 NEUTRAL_MOTOR_GOAL = 2048
 # Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
 _BATTERY_PROBE_BUSES: Tuple[int, ...] = (7, 1, 2, 8, 0)

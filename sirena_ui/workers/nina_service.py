@@ -40,7 +40,7 @@ from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.ir_obstacle_stop_monitor import IrObstacleStopMonitor
 from nina.services.sensor_alert_audio import (
-    play_low_battery_alert,
+    maybe_speak_low_battery,
     play_obstacle_alert,
     play_touch_alert,
 )
@@ -408,7 +408,15 @@ class NinaService:
         return format_pack_voltage(get_battery_snapshot())
 
     def run_low_battery_reaction(self) -> None:
-        """Stop drive, park motors 1–13 at neutral (2048), speak low-battery TTS."""
+        """Stop drive, park motors 1–13 at neutral (2048), speak low-battery TTS.
+
+        Motion stays blocked (``is_battery_motion_blocked()`` returns True)
+        until the pack recovers to ``clear_voltage_v`` — the monitor thread
+        unlatches on its own once the voltage rises. The same espeak helper
+        (:func:`nina.services.sensor_alert_audio.maybe_speak_low_battery`)
+        is used here, in the per-0.2 V repeat warning, and in the worker
+        refusals so the operator always hears the same phrase.
+        """
         set_battery_latched_low(True)
         try:
             if self._face_follow is not None:
@@ -424,7 +432,7 @@ class NinaService:
         self._park_all_motors_at_goal(goal)
 
         try:
-            play_low_battery_alert(
+            maybe_speak_low_battery(
                 phrase=(self.settings.battery_ads1115.tts_text or "").strip()
             )
         except Exception:
