@@ -322,8 +322,8 @@ def hover_computed_turn_pivot_goals(
 ) -> tuple[int, int]:
     """Full pivot (id_left, id_right) raw goals from FWD/REV + push ticks + pivot offset.
 
-    Used by motion calibration UI defaults and :meth:`HoverboardAxisDrive._goals_for_wheels`
-    when optional per-turn overrides are unset.
+    Used by :meth:`HoverboardAxisDrive._goals_for_wheels` when optional
+    per-turn overrides are unset.
     """
     def _cg(t: int) -> int:
         return max(0, min(4095, int(t)))
@@ -1176,17 +1176,6 @@ class HoverboardAxisDrive:
         # corrections can't fire. Reset to 0 by ``_imu_begin_straight`` so a
         # fresh straight leg can sample immediately.
         self._imu_corr_next_sample_at: float = 0.0
-
-    # ------------------------------------------------------------------
-    def update_axis_config(self, axis_cfg: HoverboardAxisSettings) -> None:
-        """Refresh FWD/REV / pivot goals after motion calibration save."""
-        self._axis = axis_cfg
-
-    def update_navigation_settings(self, nav_cfg) -> None:
-        """Refresh navigation knobs (e.g. ``turn_duration_sec``) after calibration save."""
-        self.config = nav_cfg
-        self._invert_left = bool(getattr(nav_cfg, "invert_left_dir", False))
-        self._invert_right = bool(getattr(nav_cfg, "invert_right_dir", False))
 
     # ------------------------------------------------------------------
     # IMU yaw-correction hooks

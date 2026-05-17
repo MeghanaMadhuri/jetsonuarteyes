@@ -146,7 +146,7 @@ def _drive_pivot_speed_pct() -> int:
 def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     """Hold time for Drive **Turn left/right** buttons only.
 
-    Does **not** use Motion-cal / ``hover_calibration.json`` ``turn_duration_sec``
+    Does **not** use ``NavigationSettings.turn_duration_sec``
     on ``nav.config`` (that value was forcing long holds). Env only:
 
     ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.3** s).
@@ -493,12 +493,6 @@ class DriveController(QObject):
                 pass
         return False
 
-    def update_hoverboard_axis(self, axis_cfg: object) -> None:
-        """Apply new lean goal ticks without rebuilding this controller."""
-        nav = self._nav if self._nav is not None else self._injected_nav
-        if nav is not None and hasattr(nav, "update_axis_config"):
-            nav.update_axis_config(axis_cfg)
-
     def nav_manager(self) -> Optional[NavigationManagerLike]:
         """Return the underlying navigation backend (live or injected pre-init).
 
@@ -506,12 +500,6 @@ class DriveController(QObject):
         ``HoverboardAxisDrive`` without poking private attributes.
         """
         return self._nav if self._nav is not None else self._injected_nav
-
-    def update_navigation_settings(self, nav_cfg: object) -> None:
-        """Apply navigation tunables (e.g. timed turn duration) without rebuilding."""
-        nav = self._nav if self._nav is not None else self._injected_nav
-        if nav is not None and hasattr(nav, "update_navigation_settings"):
-            nav.update_navigation_settings(nav_cfg)
 
     def _should_start_straight_pulse(self, direction: str) -> bool:
         """Whether the next FWD/BACK command should run the hoverboard pulse series.
@@ -1180,8 +1168,7 @@ class DriveController(QObject):
                 log.info(
                     "turn_90(%s): backend lacks pulse_turn_90 — timed "
                     "fallback %.3fs (NINA_DRIVE_TURN_90_SEC / "
-                    "NINA_NAV_TURN_SEC; ignores Motion-cal "
-                    "turn_duration_sec)",
+                    "NINA_NAV_TURN_SEC)",
                     label,
                     duration,
                 )

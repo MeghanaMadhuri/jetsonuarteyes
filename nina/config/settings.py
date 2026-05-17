@@ -169,11 +169,13 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
-    Optional per-pivot goals (Motion calibration UI / ``hover_calibration.json``):
-    ``turn_left_pos_left`` / ``turn_left_pos_right`` and
-    ``turn_right_pos_left`` / ``turn_right_pos_right``. When all of a pair are
-    set, timed and D-pad pivots use them instead of deriving from FWD/REV +
-    push/offset.
+    Optional per-pivot goal overrides: ``turn_left_pos_left`` /
+    ``turn_left_pos_right`` and ``turn_right_pos_left`` /
+    ``turn_right_pos_right``. When all of a pair are set, timed and
+    D-pad pivots use them instead of deriving from FWD/REV +
+    push/offset. There is no runtime tuning UI nor a persisted JSON
+    file — overrides must be wired in code or as ``NINA_HOVER_*`` env
+    vars in ``/etc/nina-link/navigation.env``.
 
     **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
     ``start_pulse_straight_forward`` runs ``pulse_series_max`` cycles: forward hold
@@ -537,8 +539,13 @@ def load_settings(repo_root: Path) -> NinaSettings:
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
             else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 2048)
         ),
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2020),
-        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2083),
+        # Defaults reflect the operator-validated tune from the previous
+        # calibration sessions; override via ``NINA_HOVER_FWD_POS_*`` /
+        # ``NINA_HOVER_REV_POS_*`` in ``/etc/nina-link/navigation.env``.
+        # There is no longer a Motion-cal UI nor a persisted JSON file —
+        # this is the single source of truth for lean goals.
+        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2022),
+        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2080),
         backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2068),
         backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2028),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
@@ -619,14 +626,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         turn_right_pos_left=None,
         turn_right_pos_right=None,
     )
-
-    from nina.config.hover_calibration import (  # noqa: PLC0415 — after HoverboardAxisSettings
-        merge_hover_calibration_into_axis,
-        merge_hover_calibration_into_navigation,
-    )
-
-    navigation = merge_hover_calibration_into_navigation(navigation)
-    hoverboard_axis = merge_hover_calibration_into_axis(hoverboard_axis)
 
     autonomy = AutonomySettings(
         # 8 Hz (was 5 Hz) so the pilot reacts every 125 ms instead of

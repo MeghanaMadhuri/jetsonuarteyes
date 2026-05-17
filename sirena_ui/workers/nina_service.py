@@ -12,15 +12,11 @@ from __future__ import annotations
 import logging
 import tempfile
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import Qt
 
-from nina.config.hover_calibration import (
-    save_hover_calibration_partial,
-)
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
@@ -119,78 +115,6 @@ class NinaService:
                     rid: self.dxl._clamp_pos(int(right)),
                 }
             )
-
-    def persist_hover_lean_calibration(
-        self,
-        *,
-        forward_pos_left: Optional[int] = None,
-        forward_pos_right: Optional[int] = None,
-        backward_pos_left: Optional[int] = None,
-        backward_pos_right: Optional[int] = None,
-        turn_left_pos_left: Optional[int] = None,
-        turn_left_pos_right: Optional[int] = None,
-        turn_right_pos_left: Optional[int] = None,
-        turn_right_pos_right: Optional[int] = None,
-        turn_duration_sec: Optional[float] = None,
-    ) -> None:
-        """Append to JSON on disk and refresh in-memory lean + navigation (no drive rebuild)."""
-        updates: Dict[str, Any] = {}
-        for key, val in (
-            ("forward_pos_left", forward_pos_left),
-            ("forward_pos_right", forward_pos_right),
-            ("backward_pos_left", backward_pos_left),
-            ("backward_pos_right", backward_pos_right),
-            ("turn_left_pos_left", turn_left_pos_left),
-            ("turn_left_pos_right", turn_left_pos_right),
-            ("turn_right_pos_left", turn_right_pos_left),
-            ("turn_right_pos_right", turn_right_pos_right),
-        ):
-            if val is None:
-                continue
-            updates[key] = max(0, min(4095, int(val)))
-        if turn_duration_sec is not None:
-            updates["turn_duration_sec"] = max(0.01, min(1.0, float(turn_duration_sec)))
-        if not updates:
-            return
-        save_hover_calibration_partial(updates)
-
-        next_settings = self.settings
-        axis_kw = {
-            k: int(updates[k])
-            for k in (
-                "forward_pos_left",
-                "forward_pos_right",
-                "backward_pos_left",
-                "backward_pos_right",
-                "turn_left_pos_left",
-                "turn_left_pos_right",
-                "turn_right_pos_left",
-                "turn_right_pos_right",
-            )
-            if k in updates
-        }
-        if axis_kw:
-            next_settings = replace(
-                next_settings,
-                hoverboard_axis=replace(next_settings.hoverboard_axis, **axis_kw),
-            )
-
-        if "turn_duration_sec" in updates:
-            next_settings = replace(
-                next_settings,
-                navigation=replace(
-                    next_settings.navigation,
-                    turn_duration_sec=float(updates["turn_duration_sec"]),
-                ),
-            )
-
-        self.settings = next_settings
-
-        if self._drive is not None:
-            if axis_kw:
-                self._drive.update_hoverboard_axis(next_settings.hoverboard_axis)
-            if "turn_duration_sec" in updates:
-                self._drive.update_navigation_settings(next_settings.navigation)
 
     def ensure_bus(self) -> Dict[str, object]:
         """Initialize the bus once, run a non-fatal health check, enable torque."""

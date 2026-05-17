@@ -14,7 +14,7 @@ Two input modes are supported:
 * **Turn left / Turn right** — timed in-place pivots using opposite
   ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
   FWD/REV, but no straight-line prime first). Turn buttons: **0.3 s** hold by default
-  (``NINA_NAV_TURN_SEC``); Motion-cal timed duration does **not** apply to these buttons.
+  (``NINA_NAV_TURN_SEC``).
   Override: ``NINA_DRIVE_TURN_90_SEC`` /
   ``NINA_NAV_TURN_SEC``; pivot angle ``NINA_DRIVE_TURN_PIVOT_DEG`` (default **15**° of 90°).
   Extra lean vs brake:
@@ -46,7 +46,7 @@ from nina.controllers.hoverboard_axis_drive import (
 if TYPE_CHECKING:
     from sirena_ui.workers.autonomy_controller import AutonomyController
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
@@ -154,8 +154,6 @@ def _straight_back_sequence_spec(
 
 
 class DriveScreen(QWidget):
-    calibration_requested = pyqtSignal()
-
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
@@ -482,23 +480,6 @@ class DriveScreen(QWidget):
         self._straight_back_test_btn.clicked.connect(self._on_straight_back_clicked)
         straight_row.addWidget(self._straight_back_test_btn, stretch=1)
         card.add_layout(straight_row)
-
-        cal_row = QHBoxLayout()
-        cal_row.setContentsMargins(0, 0, 0, 0)
-        cal_row.setSpacing(6)
-        self._motion_cal_btn = QPushButton("Motion calibration")
-        self._motion_cal_btn.setObjectName("secondaryButton")
-        self._motion_cal_btn.setCursor(Qt.PointingHandCursor)
-        self._motion_cal_btn.setFocusPolicy(Qt.NoFocus)
-        self._motion_cal_btn.setMinimumHeight(32)
-        self._motion_cal_btn.setToolTip(
-            "Tune hoverboard lean goals for forward, backward, turn left/right pivots, "
-            "and timed turn duration (0.1–1 s), saved to ~/.config/sirena/hover_calibration.json."
-        )
-        self._motion_cal_btn.clicked.connect(self.calibration_requested.emit)
-        cal_row.addWidget(self._motion_cal_btn, stretch=1)
-        cal_row.addStretch(1)
-        card.add_layout(cal_row)
 
         # Row freed from per-wheel Flip L/R toggles: full width for timed pivots.
         turn_row = QHBoxLayout()
