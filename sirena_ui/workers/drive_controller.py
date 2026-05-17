@@ -66,7 +66,6 @@ from nina.controllers.navigation_manager import (
     NavigationManager,
 )
 from nina.sensors.ads1115 import is_battery_motion_blocked
-from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 from nina.services.sensor_alert_audio import maybe_speak_low_battery
 
 # `nav_manager` may be any object with the navigation surface (tests use fakes).
@@ -979,7 +978,12 @@ class DriveController(QObject):
                 "DriveController init failed (%s) - running without motors",
                 exc,
             )
-            maybe_speak_bldc_alert(f"BLDC init failed. {exc}")
+            # Intentionally silent — the BLDC status pill in the
+            # status bar already shows "BLDC not connected" with the
+            # driver_message, and the operator complained that the
+            # espeak male voice announcing "BLDC init failed ..." on
+            # every reboot (often mentioning Dynamixel / servo wiring
+            # in the exception text) was noisy.
         self._emit_state()
 
     def _apply_polarity_to_nav(self) -> None:
@@ -1044,10 +1048,8 @@ class DriveController(QObject):
                 "pill or fix init (see driver_message). Brake must be OFF.",
                 direction,
             )
-            maybe_speak_bldc_alert(
-                "Drive ignored. Motors not ready yet, or still connecting. "
-                "Wait for green status, brake off, try again."
-            )
+            # Silent on purpose — see _do_init for rationale. The drive
+            # screen's BLDC pill already surfaces the readiness state.
             return
         try:
             ldir, rdir = self._wheel_dirs_for(direction)
@@ -1147,9 +1149,7 @@ class DriveController(QObject):
             log.warning(
                 "turn_90(%s) dropped: BLDC backend not ready yet", which
             )
-            maybe_speak_bldc_alert(
-                "Turn ignored. Motors not ready. Wait for green status."
-            )
+            # Silent on purpose — see _do_init for rationale.
             return
         try:
             with self._lock:
@@ -1298,10 +1298,7 @@ class DriveController(QObject):
                 "drive_wheels dropped: BLDC backend not ready yet "
                 "(init still running or failed — check pill / driver_message)"
             )
-            maybe_speak_bldc_alert(
-                "Straight or drive ignored. Motors not ready. "
-                "Wait for green status."
-            )
+            # Silent on purpose — see _do_init for rationale.
             return
         try:
             ldir = (
