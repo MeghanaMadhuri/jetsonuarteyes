@@ -26,8 +26,10 @@ _ALERTS_DIR = Path(__file__).resolve().parents[1] / "audio" / "alerts"
 LOW_BATTERY_ALERT_MP3 = _ALERTS_DIR / "low_battery.mp3"
 TOUCH_ALERT_MP3 = _ALERTS_DIR / "touch.mp3"
 OBSTACLE_ALERT_MP3 = _ALERTS_DIR / "obstacle.mp3"
+CANT_MOVE_ALERT_MP3 = _ALERTS_DIR / "cant_move.mp3"
 
 DEFAULT_OBSTACLE_TTS = "There is an obstacle in my way"
+CANT_MOVE_TTS = "I can't move steadily any further, stopping now."
 
 
 def low_battery_alert_path() -> Path:
@@ -40,6 +42,10 @@ def touch_alert_path() -> Path:
 
 def obstacle_alert_path() -> Path:
     return OBSTACLE_ALERT_MP3
+
+
+def cant_move_alert_path() -> Path:
+    return CANT_MOVE_ALERT_MP3
 
 
 def play_bundled_or_gtts(
@@ -176,3 +182,26 @@ def play_obstacle_alert(*, phrase: str | None = None) -> None:
         phrase=(phrase or "").strip() or DEFAULT_OBSTACLE_TTS,
         temp_basename="nina_obstacle_alert.mp3",
     )
+
+
+def play_cant_move_alert(*, phrase: str | None = None) -> None:
+    """Drift-abort safety stop (bundled US English gTTS clip)."""
+    play_bundled_or_gtts(
+        cant_move_alert_path(),
+        phrase=(phrase or "").strip() or CANT_MOVE_TTS,
+        temp_basename="nina_cant_move_alert.mp3",
+    )
+
+
+def maybe_speak_cant_move_alert() -> None:
+    """Play :func:`play_cant_move_alert` on a daemon thread (non-blocking)."""
+
+    def _run() -> None:
+        try:
+            play_cant_move_alert()
+        except Exception:
+            log.exception("Can't-move alert playback failed")
+
+    threading.Thread(
+        target=_run, daemon=True, name="cant-move-alert"
+    ).start()

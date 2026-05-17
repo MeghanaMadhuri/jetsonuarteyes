@@ -1987,17 +1987,13 @@ def test_drift_abort_fires_for_forward_and_invokes_tts(
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
     with patch(
-        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_cant_move_alert"
     ) as speak:
         ret = drv._imu_corrective_hold(base, 0.20, halt, is_forward=True)
     assert ret is True, "abort must return True so the pulse loop bails"
     assert halt.is_set(), "abort must set the pulse halt event"
     assert speak.call_count == 1, (
         f"abort must speak exactly once, saw {speak.call_count} calls"
-    )
-    (msg,), _ = speak.call_args
-    assert msg == "I can't move steadily any further, stopping now.", (
-        f"abort phrase must match the operator-facing wording; saw {msg!r}"
     )
     log_text = _imu_corr_log_records.text
     assert "hover IMU correction (forward):" in log_text
@@ -2024,7 +2020,7 @@ def test_drift_abort_fires_for_backward(
     halt = threading.Event()
     base = {12: 1986, 13: 1986}  # primed backward
     with patch(
-        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_cant_move_alert"
     ) as speak:
         ret = drv._imu_corrective_hold(base, 0.20, halt, is_forward=False)
     assert ret is True
@@ -2051,7 +2047,7 @@ def test_drift_abort_does_not_fire_below_threshold(
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
     with patch(
-        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_cant_move_alert"
     ) as speak:
         drv._imu_corrective_hold(base, 0.20, halt, is_forward=True)
     assert speak.call_count == 0, (
@@ -2082,7 +2078,7 @@ def test_drift_abort_disabled_when_zero(
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
     with patch(
-        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_cant_move_alert"
     ) as speak:
         # Bounded duration so the test ends even if abort is disabled and
         # the legacy realign keeps running.

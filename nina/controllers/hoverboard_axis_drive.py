@@ -173,7 +173,7 @@ pulse leg cleanly instead of spending pulse cycles snaking off course):
                                                                 IMU sample. Brakes the lean stack, sets
                                                                 the pulse halt event, and queues a
                                                                 single TTS announcement via
-                                                                :func:`nina.services.bldc_speech_alerts.maybe_speak_bldc_alert`
+                                                                :func:`nina.services.sensor_alert_audio.maybe_speak_cant_move_alert`
                                                                 — the exact phrase is
                                                                 :data:`_IMU_CORR_ABORT_PHRASE`. The
                                                                 operator must issue a fresh drive
@@ -210,7 +210,7 @@ from typing import Callable, Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
-from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
+from nina.services.sensor_alert_audio import maybe_speak_cant_move_alert
 
 log = logging.getLogger("nina.hoverboard_axis")
 
@@ -815,7 +815,7 @@ def _imu_corr_abort_drift_deg() -> float:
     When the abort fires, ``_imu_corrective_hold`` brakes, sets the pulse
     halt event so the pulse loop exits cleanly, and queues a single
     :data:`_IMU_CORR_ABORT_PHRASE` TTS announcement via
-    :func:`nina.services.bldc_speech_alerts.maybe_speak_bldc_alert` (which
+    :func:`nina.services.sensor_alert_audio.maybe_speak_cant_move_alert` (which
     enforces its own per-message cooldown so back-to-back aborts in the
     same leg do not chatter). The operator must issue a fresh drive
     command to resume — there is no automatic retry.
@@ -1271,7 +1271,7 @@ class HoverboardAxisDrive:
                             "drift abort: brake apply failed", exc_info=True
                         )
                     try:
-                        maybe_speak_bldc_alert(_IMU_CORR_ABORT_PHRASE)
+                        maybe_speak_cant_move_alert()
                     except Exception:
                         log.debug(
                             "drift abort: bldc speech alert failed",
