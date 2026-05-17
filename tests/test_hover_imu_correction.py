@@ -15,6 +15,7 @@ the priming pause visible right after a Turn left/right → Straight sequence
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -22,6 +23,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import patch
+
+import pytest
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
@@ -624,9 +627,14 @@ def test_cooldown_suppresses_back_to_back_pivots_in_single_hold() -> None:
     calls: list[float] = []
     original_pivot = drv._perform_pivot_correction
 
-    def counting_pivot(drift: float, halt_ev: threading.Event) -> bool:
+    def counting_pivot(
+        drift: float,
+        halt_ev: threading.Event,
+        *,
+        is_forward: bool = True,
+    ) -> bool:
         calls.append(drift)
-        return original_pivot(drift, halt_ev)
+        return original_pivot(drift, halt_ev, is_forward=is_forward)
 
     with patch.object(drv, "_perform_pivot_correction", side_effect=counting_pivot):
         drv._imu_corrective_hold(base, 0.40, halt, is_forward=True)
@@ -1307,4 +1315,86 @@ def test_proportional_step_honours_min_sec_floor() -> None:
     # MIN_SEC=0.08 must be honoured even though 1/10000 ≈ 0s.
     assert elapsed > 0.06, (
         f"step duration must be clamped to STEP_MIN_SEC; elapsed={elapsed:.3f}s"
+    )
+
+
+# ----------------------------------------------------------------------
+# Direction tagging: confirm forward vs backward shows up in logs.
+# Operator was unable to tell from a grep whether IMU corrections were
+# firing for the backward pulse loop at all; the (forward)/(backward)
+# tag now makes the call site visible in every IMU log line emitted by
+# the realign routine.
+# ----------------------------------------------------------------------
+
+@pytest.fixture
+def _imu_corr_log_records(
+    caplog: pytest.LogCaptureFixture,
+) -> pytest.LogCaptureFixture:
+    """Capture nina.hoverboard_axis INFO/WARNING during a single test."""
+    caplog.set_level(logging.INFO, logger="nina.hoverboard_axis")
+    return caplog
+
+
+def test_pivot_correction_tags_forward_in_log(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """``is_forward=True`` (or default) emits ``hover IMU correction (forward):``."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    drv._perform_pivot_correction(5.0, threading.Event(), is_forward=True)
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (forward):" in log_text, (
+        f"realign log lines must be tagged (forward); saw:\n{log_text}"
+    )
+    assert "hover IMU correction (backward):" not in log_text, (
+        f"forward realign must NOT emit (backward) tag; saw:\n{log_text}"
+    )
+
+
+def test_pivot_correction_tags_backward_in_log(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """``is_forward=False`` emits ``hover IMU correction (backward):`` so the
+    operator can confirm via ``grep`` that backward corrections actually
+    fire (the original complaint was "changes don't apply for backward").
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _fast_correction_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    drv._perform_pivot_correction(5.0, threading.Event(), is_forward=False)
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (backward):" in log_text, (
+        f"realign log lines must be tagged (backward); saw:\n{log_text}"
+    )
+    assert "hover IMU correction (forward):" not in log_text, (
+        f"backward realign must NOT emit (forward) tag; saw:\n{log_text}"
+    )
+
+
+def test_corrective_hold_tags_cooldown_with_direction(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """The cooldown log line must also carry the direction tag so consecutive
+    backward holds are distinguishable from forward holds in a tail -f.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(NINA_HOVER_IMU_CORR_COOLDOWN_SEC="0.05"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    drv._imu_corrective_hold(base, 0.30, halt, is_forward=False)
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (backward): cooldown" in log_text, (
+        f"cooldown log line must include the (backward) tag; saw:\n{log_text}"
     )

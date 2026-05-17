@@ -121,6 +121,17 @@ hoverboard chassis; lower them only if the realign is over-shooting):
                                                                 after warmup the realign still grows
                                                                 drift past ``BAIL_MARGIN_DEG``. Set to
                                                                 ``1`` then.)
+
+Logging convention: every IMU-correction log line emitted from inside the
+pulse hold (``hover IMU correction (forward): ...`` or
+``hover IMU correction (backward): ...``) carries the direction tag of the
+pulse loop that triggered it. The correction geometry is identical for
+both directions (the pivot command is decided from the SIGN of the world-
+frame drift sample, not from the chassis motion direction), but tagging
+lets the operator confirm via ``grep`` that the backward pulse loop is
+actually firing corrections — and at what rate / magnitude relative to
+forward — without needing to cross-reference timestamps against the
+``hover backward pulse series`` banner.
 """
 
 from __future__ import annotations
@@ -840,7 +851,13 @@ class HoverboardAxisDrive:
         Falls back to a plain ``halt.wait`` when no IMU sampler is wired, so
         non-IMU bots behave exactly like before.
         """
-        _ = is_forward  # pivot direction is the SIGN of drift; motion direction is irrelevant
+        # ``is_forward`` is not used to alter pivot geometry (pivot direction
+        # comes from the SIGN of the drift sample, which is in the world frame
+        # and therefore the same regardless of whether the chassis was moving
+        # forward or backward). It is only used to tag log lines so the
+        # operator can tell from a single ``grep`` whether a given correction
+        # fired during forward-primed or backward-primed motion.
+        direction_tag = "forward" if is_forward else "backward"
         if duration_sec <= 0.0:
             return False
         if self._imu_yaw_drift_fn is None or not self._imu_corr_enabled_static:
@@ -867,7 +884,9 @@ class HoverboardAxisDrive:
                 if yaw is not None and abs(yaw) >= threshold:
                     # Drift exceeded — pause the primed motion, pivot-correct,
                     # re-prime, then enforce the cooldown before next sample.
-                    if self._perform_pivot_correction(yaw, halt):
+                    if self._perform_pivot_correction(
+                        yaw, halt, is_forward=is_forward
+                    ):
                         return True
                     try:
                         self._apply_goals(base_goals)
@@ -877,7 +896,9 @@ class HoverboardAxisDrive:
                         time.monotonic() + self._imu_corr_cooldown_sec
                     )
                     log.info(
-                        "hover IMU correction: cooldown %.2fs (primed-only motion)",
+                        "hover IMU correction (%s): cooldown %.2fs "
+                        "(primed-only motion)",
+                        direction_tag,
                         self._imu_corr_cooldown_sec,
                     )
             remaining = end - time.monotonic()
@@ -890,6 +911,8 @@ class HoverboardAxisDrive:
         self,
         drift_deg: float,
         halt: threading.Event,
+        *,
+        is_forward: bool = True,
     ) -> bool:
         """Brake → iterative PROPORTIONAL micro-step realign → brake → re-prime.
 
@@ -925,7 +948,17 @@ class HoverboardAxisDrive:
         Sign convention is unchanged: positive *drift_deg* = bot drifted
         right under the default (``NINA_HOVER_IMU_CORR_INVERT_SIGN=0``)
         convention, negate drift before direction lookup when set to 1.
+
+        ``is_forward`` is informational only — it does NOT change the pivot
+        geometry (drift is measured in the world frame, so the correction
+        command is identical for forward-primed and backward-primed motion).
+        It is threaded through purely so every log line emitted by this
+        routine is tagged ``(forward)`` or ``(backward)``, letting the
+        operator confirm via ``grep`` that backward corrections actually
+        fire (and how often) without having to cross-reference timestamps
+        against the pulse-series banner.
         """
+        direction_tag = "forward" if is_forward else "backward"
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
@@ -945,12 +978,13 @@ class HoverboardAxisDrive:
         progress_min_deg = max(0.0, float(self._imu_corr_progress_min_deg))
 
         log.info(
-            "hover IMU correction: drift=%+.2f deg (invert=%s) >= %.2f deg "
-            "threshold -> brake + iterative realign "
+            "hover IMU correction (%s): drift=%+.2f deg (invert=%s) >= "
+            "%.2f deg threshold -> brake + iterative realign "
             "(step_blend=%s%%, step_dur_cap=%.2fs, step_min=%.2fs, "
             "step_rate=%.1fdps, step_settle=%.2fs, "
             "max_steps=%d, progress_check=%d, progress_min=%.2f, "
             "bail_warmup=%d, bail_margin=%.2f, deadband=%.2f deg)",
+            direction_tag,
             drift_deg,
             invert,
             self._imu_corr_threshold_deg,
@@ -1033,12 +1067,13 @@ class HoverboardAxisDrive:
                         growing_streak += 1
                         if growing_streak >= 2:
                             log.warning(
-                                "hover IMU correction: drift grew by >%.2f deg "
-                                "across 2 post-warmup samples with the same "
-                                "sign as the initial drift "
+                                "hover IMU correction (%s): drift grew by "
+                                ">%.2f deg across 2 post-warmup samples with "
+                                "the same sign as the initial drift "
                                 "(|%+.2f| > |%+.2f| + %.2f) — bailing. Try "
                                 "toggling NINA_HOVER_IMU_CORR_INVERT_SIGN on "
                                 "this chassis.",
+                                direction_tag,
                                 bail_margin,
                                 yaw_now,
                                 yaw_after_warmup,
@@ -1063,11 +1098,12 @@ class HoverboardAxisDrive:
                     improvement = abs(drift_deg) - abs(yaw_now)
                     if improvement < progress_min_deg:
                         log.info(
-                            "hover IMU correction: realign making no "
+                            "hover IMU correction (%s): realign making no "
                             "progress (start=%+.2f, now=%+.2f, "
                             "improvement=%+.2f deg after %d steps, "
                             "threshold=%.2f deg) — exiting to let the next "
                             "event try fresh",
+                            direction_tag,
                             drift_deg,
                             yaw_now,
                             improvement,
@@ -1123,8 +1159,9 @@ class HoverboardAxisDrive:
                 return True
 
         log.info(
-            "hover IMU correction: realign complete after %d micro-step%s "
-            "(drift now %+.2f deg, exited via %s)",
+            "hover IMU correction (%s): realign complete after %d "
+            "micro-step%s (drift now %+.2f deg, exited via %s)",
+            direction_tag,
             steps_taken,
             "" if steps_taken == 1 else "s",
             last_yaw,
