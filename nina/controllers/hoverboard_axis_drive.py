@@ -52,16 +52,23 @@ correction time scale with the magnitude of the drift instead of being
 decided up-front.
 
 Bail behaviour (defends against an un-flipped ``INVERT_SIGN`` on a new
-chassis without false-tripping on momentum):
+chassis without false-tripping on momentum or correct-direction overshoot):
 - The first ``NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS`` samples are ignored
   for the bail — the bot is still bleeding off angular momentum from the
   pre-brake forward lean, so drift growth during this window does not
   imply a wrong pivot direction.
-- After warmup, the bail records ``yaw_after_warmup`` and only fires once
+- The bail only fires when drift is **still in the same sign as the
+  original drift**. If the realign over-corrects past zero, the
+  ``overshoot guard`` handles it (cleanly exits with reason "over-shot
+  zero"); the wrong-direction bail does not fire on opposite-sign growth
+  (that would mis-attribute a too-strong-but-correct pivot as a wrong
+  direction).
+- Past warmup, with same-sign drift, the bail pins ``yaw_after_warmup``
+  on the first qualifying sample and only fires once
   ``|drift| > |yaw_after_warmup| + NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG``
-  for two consecutive samples. Margin defaults to 5° so a single noisy
-  read or minor momentum overshoot can't kill an otherwise-correct
-  realign.
+  for two consecutive same-sign samples. Margin defaults to 5° so a
+  single noisy read or minor momentum overshoot can't kill an otherwise
+  correct realign.
 
 Tuning env vars (defaults make each step visibly authoritative on the
 hoverboard chassis; lower them only if the realign is over-shooting):
@@ -882,8 +889,19 @@ class HoverboardAxisDrive:
                     # Still bleeding off pre-brake momentum — don't allow the
                     # bail to fire on this sample.
                     growing_streak = 0
+                elif drift_deg * yaw_now <= 0.0:
+                    # Drift has crossed zero (or sits exactly on it). That's
+                    # over-correction, not wrong-direction — the overshoot
+                    # guard above handles the "past deadband" case; here we
+                    # just reset the streak so a clean overshoot+settle
+                    # sequence can't trip the wrong-direction bail.
+                    growing_streak = 0
                 else:
-                    # Pin the baseline on the first post-warmup sample.
+                    # Same sign as the original drift → still in the original
+                    # direction. Pin the baseline on the first post-warmup
+                    # SAME-SIGN sample, then watch for monotonic growth past
+                    # the margin (two consecutive samples) to call it a wrong
+                    # pivot direction.
                     if yaw_after_warmup is None:
                         yaw_after_warmup = yaw_now
                     elif (
@@ -894,7 +912,8 @@ class HoverboardAxisDrive:
                         if growing_streak >= 2:
                             log.warning(
                                 "hover IMU correction: drift grew by >%.2f deg "
-                                "across 2 post-warmup samples "
+                                "across 2 post-warmup samples with the same "
+                                "sign as the initial drift "
                                 "(|%+.2f| > |%+.2f| + %.2f) — bailing. Try "
                                 "toggling NINA_HOVER_IMU_CORR_INVERT_SIGN on "
                                 "this chassis.",

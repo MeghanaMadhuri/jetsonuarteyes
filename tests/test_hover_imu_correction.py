@@ -985,6 +985,56 @@ def test_warmup_grace_period_absorbs_pre_brake_momentum() -> None:
     )
 
 
+def test_overcorrection_past_zero_exits_via_overshoot_not_wrong_direction_bail() -> None:
+    """A correct-direction realign that overshoots zero must exit via the
+    overshoot guard, NOT the wrong-direction bail.
+
+    Regression: an earlier version of the bail compared ``|yaw_now|`` to
+    ``|baseline| + margin``, which falsely fired when a correct pivot
+    over-rotated the bot past zero (the magnitude grows after the sign
+    flip, even though the pivot is doing exactly what it should). The fix
+    is to require ``drift_deg * yaw_now > 0`` (same sign as the initial
+    drift) before considering the bail.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # Initial drift +4. The realign aggressively rotates the bot: first
+    # warmup sample crosses zero (+1 still inside warmup), then magnitudes
+    # grow on the OPPOSITE sign (-5, -10, -15...). With the bail bug this
+    # would trigger "wrong-direction bail"; with the fix it exits via
+    # "over-shot zero" on the first negative sample past deadband.
+    yaws = [1.0, -5.0, -10.0, -15.0, -20.0]
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else -20.0
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="10",
+        NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS="0",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="1.0",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(4.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    # Should exit on sample -5 (first sample whose sign differs from +4
+    # and whose magnitude exceeds the 1° deadband). Only one micro-step
+    # actuates before the next sample triggers the overshoot exit.
+    pivot_writes = [
+        w for w in after
+        if w in (_pivot_left_goals_20pct(), _pivot_right_goals_20pct())
+    ]
+    assert len(pivot_writes) <= 2, (
+        f"over-shoot past zero must exit promptly via the overshoot guard, "
+        f"not run until the wrong-direction bail; saw {len(pivot_writes)} "
+        f"pivot writes"
+    )
+
+
 def test_bail_margin_must_be_exceeded_before_bail_fires() -> None:
     """A single noisy sample over the margin must NOT trigger the bail
     (needs two consecutive growths past the margin).
