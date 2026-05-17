@@ -450,7 +450,9 @@ def test_backward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
 
     def fake_drift() -> float:
         samples["calls"] += 1
-        return 5.0  # constant above-threshold drift
+        # 7.0 is above both the forward 3.0 threshold (from _fast_correction_env)
+        # and the new backward 6.0 default threshold.
+        return 7.0
 
     with patch.dict(os.environ, _fast_correction_env(), clear=False):
         drv.set_imu_hooks(yaw_drift_fn=fake_drift)
@@ -1390,7 +1392,8 @@ def test_corrective_hold_tags_cooldown_with_direction(
         _fast_correction_env(NINA_HOVER_IMU_CORR_COOLDOWN_SEC="0.05"),
         clear=False,
     ):
-        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+        # Drift 7.0 exceeds the new backward threshold default (6.0).
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 7.0)
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
     drv._imu_corrective_hold(base, 0.30, halt, is_forward=False)
@@ -1407,14 +1410,20 @@ def test_corrective_hold_tags_cooldown_with_direction(
 # 1-2 orders of magnitude higher than while going forward, so the forward
 # cooldown / threshold / step-rate calibration produces a visible "snake"
 # pattern on the backward leg. The NINA_HOVER_IMU_CORR_BACK_* env vars
-# let backward be tuned more aggressively without disturbing forward; when
-# unset, backward must inherit the forward value verbatim (so no chassis
-# regresses just because the override knobs exist).
+# let backward be tuned more aggressively without disturbing forward.
+#
+# THRESHOLD and STEP_RATE ship with their own backward-optimised defaults
+# (6.0 deg and 60.0 dps respectively, baked in after field testing on the
+# hoverboard chassis — see "Option B" in the module docstring). COOLDOWN
+# still inherits from forward because the forward 1.0 s default works for
+# both directions in field testing.
 # ----------------------------------------------------------------------
 
-def test_back_overrides_default_to_forward_value_when_unset() -> None:
-    """Unset BACK_* env vars must cache the forward value, so backward
-    behaves identically to forward on chassis that haven't opted in.
+def test_back_overrides_use_backward_optimised_defaults_when_unset() -> None:
+    """Unset BACK_* env vars must populate backward attrs with their
+    backward-optimised defaults (THRESHOLD=6.0, STEP_RATE=60.0) rather
+    than blindly inheriting from forward. COOLDOWN still inherits from
+    forward because the forward 1.0 s also works for backward.
     """
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -1429,9 +1438,23 @@ def test_back_overrides_default_to_forward_value_when_unset() -> None:
         clear=False,
     ):
         drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
-    assert drv._imu_corr_back_threshold_deg == drv._imu_corr_threshold_deg == 4.0
+    # Forward unchanged
+    assert drv._imu_corr_threshold_deg == 4.0
+    assert drv._imu_corr_cooldown_sec == 1.0
+    assert drv._imu_corr_step_rate_dps == 30.0
+    # Backward defaults: THRESHOLD and STEP_RATE diverge from forward;
+    # COOLDOWN still inherits.
+    assert drv._imu_corr_back_threshold_deg == 6.0, (
+        "BACK_THRESHOLD default must be 6.0 (backward-optimised), not the "
+        "forward 4.0 — the forward value fires spuriously on the chassis "
+        "natural ~+8 deg backward rest pose"
+    )
     assert drv._imu_corr_back_cooldown_sec == drv._imu_corr_cooldown_sec == 1.0
-    assert drv._imu_corr_back_step_rate_dps == drv._imu_corr_step_rate_dps == 30.0
+    assert drv._imu_corr_back_step_rate_dps == 60.0, (
+        "BACK_STEP_RATE default must be 60.0 (backward-optimised), not the "
+        "forward 30.0 — backward pivots on this chassis are physically "
+        "more authoritative and the forward calibration over-shoots"
+    )
 
 
 def test_back_overrides_load_explicit_env_values() -> None:
@@ -1463,9 +1486,14 @@ def test_back_overrides_load_explicit_env_values() -> None:
     assert drv._imu_corr_back_step_rate_dps == 60.0
 
 
-def test_back_overrides_invalid_env_falls_back_to_forward() -> None:
+def test_back_overrides_invalid_env_falls_back_to_helper_default() -> None:
     """Garbage BACK_* values must NOT crash the controller — they fall back
-    to the forward value so the bot still operates.
+    to the value the call site passed to each helper.
+
+    For THRESHOLD and STEP_RATE the call site passes the backward-optimised
+    constants (6.0 and 60.0); for COOLDOWN it still passes the forward
+    cooldown value. The fallback for "" (empty) and unparseable strings
+    is the same as for "unset".
     """
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -1482,9 +1510,11 @@ def test_back_overrides_invalid_env_falls_back_to_forward() -> None:
         clear=False,
     ):
         drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
-    assert drv._imu_corr_back_threshold_deg == 4.0
+    # THRESHOLD and STEP_RATE fall back to backward-optimised defaults.
+    assert drv._imu_corr_back_threshold_deg == 6.0
+    assert drv._imu_corr_back_step_rate_dps == 60.0
+    # COOLDOWN still inherits from forward.
     assert drv._imu_corr_back_cooldown_sec == 1.0
-    assert drv._imu_corr_back_step_rate_dps == 30.0
 
 
 def test_corrective_hold_uses_back_threshold_for_backward() -> None:
@@ -1550,7 +1580,9 @@ def test_corrective_hold_applies_back_cooldown_separately(
         ),
         clear=False,
     ):
-        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+        # Drift 7.0 exceeds both the forward (3.0) and the new backward
+        # (6.0) default thresholds so the realign actually fires.
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 7.0)
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
     drv._imu_corrective_hold(base, 0.10, halt, is_forward=False)
