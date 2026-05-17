@@ -8,14 +8,17 @@ Clips live under ``nina/audio/alerts/``. Regenerate with::
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
+import threading
+import time
 from pathlib import Path
+from typing import Optional
 
 from nina.sensors.ads1115 import LOW_BATTERY_TTS
 from nina.sensors.at42qt2120 import DEFAULT_TOUCH_TTS
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
-from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 
 log = logging.getLogger("nina.services.sensor_alert_audio")
 
@@ -73,34 +76,90 @@ def play_low_battery_alert(*, phrase: str | None = None) -> None:
     )
 
 
-def maybe_speak_low_battery(phrase: str | None = None) -> None:
-    """Speak the canonical low-battery warning via the bldc espeak path.
+# Cooldown for the spoken low-battery alert. Prevents:
+#   * D-pad mashing while latched from spawning a new mpg123 every press
+#     (two mpg123 processes on the same ALSA device collide / overlap),
+#   * the every-0.2 V repeat warning from firing twice in the same poll
+#     window when the pack drops sharply,
+#   * the worker-refusal alerts from chattering on top of the initial
+#     latch announcement.
+# Default 8 s — slightly longer than the bundled MP3 itself (~3-4 s) so
+# playback never overlaps, short enough to still announce per-0.2 V
+# drops under heavy drain. ``0`` disables the cooldown entirely.
+DEFAULT_LOW_BATTERY_COOLDOWN_SEC = 8.0
 
-    This is the single TTS entry-point shared by:
+
+def _low_battery_cooldown_sec() -> float:
+    raw = (os.environ.get("NINA_BATTERY_ALERT_COOLDOWN_SEC") or "").strip()
+    if not raw:
+        return DEFAULT_LOW_BATTERY_COOLDOWN_SEC
+    try:
+        return max(0.0, min(600.0, float(raw)))
+    except ValueError:
+        return DEFAULT_LOW_BATTERY_COOLDOWN_SEC
+
+
+_low_batt_lock = threading.Lock()
+# ``None`` = no previous alert in this process. Using a sentinel rather
+# than ``0.0`` matters because ``time.monotonic()`` is small inside a
+# freshly-started process (its reference point is undefined per the docs)
+# — a ``0.0`` baseline would incorrectly suppress the very first alert
+# fired in the first few seconds after the monitor thread starts.
+_low_batt_last_at: Optional[float] = None
+
+
+def _reset_low_battery_cooldown_for_tests() -> None:
+    """Clear the spoken-alert cooldown timestamp. Test-only seam."""
+    global _low_batt_last_at
+    with _low_batt_lock:
+        _low_batt_last_at = None
+
+
+def maybe_speak_low_battery(phrase: Optional[str] = None) -> None:
+    """Play the canonical low-battery alert MP3 (with gTTS fallback).
+
+    Single TTS entry-point shared by:
 
     * :class:`nina.sensors.battery_ads1115_monitor.BatteryAds1115Monitor`
       for the initial latch announcement and the periodic 0.2 V repeat
-      warnings — phrasing comes from
-      :data:`nina.sensors.ads1115.LOW_BATTERY_TTS`,
+      warnings.
     * :class:`sirena_ui.workers.drive_controller.DriveController` (and the
       Playback / Record workers) when a user-initiated motion command is
       refused because the pack is latched low.
 
-    Routing every warning through :func:`maybe_speak_bldc_alert` means:
+    Routes through :func:`play_low_battery_alert` so the bundled
+    ``nina/audio/alerts/low_battery.mp3`` is the actual voice the
+    operator hears (the natural gTTS-rendered phrase Sirena ships with).
+    Falls back to a one-shot gTTS render of the ``phrase`` argument
+    (default :data:`nina.sensors.ads1115.LOW_BATTERY_TTS`) only when the
+    bundled MP3 is missing — e.g. a dev workstation that hasn't run
+    ``scripts/generate-sensor-alert-audio.py``.
 
-    1. all three paths share the same voice, so the operator hears a
-       consistent message regardless of which subsystem refused them,
-    2. the bldc-speech-alerts per-message cooldown
-       (:envvar:`NINA_BLDC_ALERT_COOLDOWN_SEC`, default 12 s) naturally
-       suppresses chatter when the operator mashes the D-pad while
-       latched, and
-    3. there is no MP3 asset to keep in sync with the new short phrase.
+    Playback is dispatched onto a daemon thread so the calling context
+    (battery monitor poll loop, Qt drive worker, etc.) is never blocked.
+    A module-level cooldown (:envvar:`NINA_BATTERY_ALERT_COOLDOWN_SEC`,
+    default 8 s) suppresses overlapping playback when the same alert
+    would fire multiple times in quick succession.
     """
-    text = (phrase or "").strip() or LOW_BATTERY_TTS
-    try:
-        maybe_speak_bldc_alert(text)
-    except Exception:
-        log.exception("Low battery espeak alert failed")
+    cooldown = _low_battery_cooldown_sec()
+    now = time.monotonic()
+    global _low_batt_last_at
+    with _low_batt_lock:
+        if (
+            cooldown > 0
+            and _low_batt_last_at is not None
+            and now - _low_batt_last_at < cooldown
+        ):
+            return
+        _low_batt_last_at = now
+
+    def _run() -> None:
+        try:
+            play_low_battery_alert(phrase=phrase)
+        except Exception:
+            log.exception("Low battery alert playback failed")
+
+    threading.Thread(target=_run, daemon=True, name="low-batt-alert").start()
 
 
 def play_touch_alert(*, phrase: str | None = None) -> None:
