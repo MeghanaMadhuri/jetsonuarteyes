@@ -1645,3 +1645,241 @@ def test_perform_pivot_correction_still_uses_forward_step_rate_for_forward(
     assert "step_rate=90.0dps" not in joined, (
         f"forward realign must NOT log the backward step_rate; saw:\n{joined}"
     )
+
+
+# ----------------------------------------------------------------------
+# Stuck-detector tests
+#
+# When the pivot lean can't rotate the chassis (typically because the
+# bot is stationary and friction is holding the wheels), the realign
+# exits as "no progress" and the regular 0.3-1.0 s cooldown immediately
+# fires another, equally-doomed realign. The detector counts consecutive
+# no-progress exits and swaps in a much longer cooldown so the pulse
+# loop gets an uninterrupted window to drive the wheels and break the
+# chassis free. Any non-no-progress exit resets the streak.
+# ----------------------------------------------------------------------
+
+def _stuck_env(
+    streak: str = "2",
+    stuck_cooldown: str = "0.40",
+    regular_cooldown: str = "0.05",
+    **extras: str,
+) -> dict[str, str]:
+    """Test-friendly env: low streak threshold + short cooldowns + fast
+    realign settings so the detector can be exercised in milliseconds.
+    """
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_COOLDOWN_SEC=regular_cooldown,
+        NINA_HOVER_IMU_CORR_STUCK_STREAK=streak,
+        NINA_HOVER_IMU_CORR_STUCK_COOLDOWN_SEC=stuck_cooldown,
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="6",
+        # progress check fires fast so "no progress" exit is reachable
+        NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS="2",
+        NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG="100.0",
+        # Disable wrong-direction bail so a stuck-drift sampler exits
+        # via "no progress" rather than the bail.
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="100.0",
+    )
+    env.update(extras)
+    return env
+
+
+def test_stuck_streak_increments_on_no_progress_exit() -> None:
+    """A realign that exits as ``no progress`` must increment the streak."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _stuck_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)  # stuck drift
+    assert drv._imu_corr_no_progress_streak == 0
+    drv._perform_pivot_correction(4.0, threading.Event())
+    assert drv._imu_corr_no_progress_streak == 1, (
+        "no-progress exit must bump the streak by 1"
+    )
+    drv._perform_pivot_correction(4.0, threading.Event())
+    assert drv._imu_corr_no_progress_streak == 2, (
+        "second consecutive no-progress must bump the streak again"
+    )
+
+
+def test_stuck_streak_resets_on_deadband_exit() -> None:
+    """Any non-no-progress exit (deadband / overshoot / bail / max-cap)
+    must reset the streak to 0 so a single successful realign clears
+    a prior stuck state.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _stuck_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)
+    # Manually inflate the streak.
+    drv._imu_corr_no_progress_streak = 5
+    # Switch sampler to one that returns 0.5 — well below deadband, so the
+    # very first sample triggers a "deadband reached" exit.
+    drv._imu_yaw_drift_fn = lambda: 0.5
+    drv._perform_pivot_correction(4.0, threading.Event())
+    assert drv._imu_corr_no_progress_streak == 0, (
+        "deadband exit must reset the streak to 0"
+    )
+
+
+def test_stuck_streak_resets_on_overshoot_exit() -> None:
+    """An overshoot-past-zero exit must reset the streak (same reason as
+    deadband: the pivots ARE producing rotation, just slightly too much).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _stuck_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: -4.0)  # opposite sign of initial
+    drv._imu_corr_no_progress_streak = 5
+    # Initial drift positive; sampler returns negative past deadband
+    # → over-shot zero exit.
+    drv._perform_pivot_correction(4.0, threading.Event())
+    assert drv._imu_corr_no_progress_streak == 0
+
+
+def test_imu_begin_straight_resets_stuck_streak() -> None:
+    """A fresh straight leg must clear any stuck state from the previous leg."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _stuck_env(), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    drv._imu_corr_no_progress_streak = 5
+    drv._imu_begin_straight()
+    assert drv._imu_corr_no_progress_streak == 0
+
+
+def test_stuck_cooldown_kicks_in_after_streak_threshold(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """After ``stuck_streak`` consecutive no-progress events the next
+    cooldown log must report the long stuck cooldown, not the regular one.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _stuck_env(streak="2", stuck_cooldown="0.40", regular_cooldown="0.05"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)
+    # Inflate streak past the threshold; the next realign + cooldown should
+    # report the stuck cooldown.
+    drv._imu_corr_no_progress_streak = 2
+    base = {12: 2114, 13: 2114}
+    halt = threading.Event()
+    # Hold just long enough for ONE realign + ONE cooldown log to fire.
+    drv._imu_corrective_hold(base, 0.10, halt, is_forward=True)
+    cooldown_lines = [
+        r.getMessage()
+        for r in _imu_corr_log_records.records
+        if "cooldown" in r.getMessage()
+        and "primed-only motion" in r.getMessage()
+        or "stuck detected" in r.getMessage()
+    ]
+    joined = "\n".join(cooldown_lines)
+    assert "stuck detected" in joined, (
+        f"streak >= threshold must log stuck-detected warning; saw:\n{joined}"
+    )
+    assert "0.40s" in joined, (
+        f"stuck cooldown line must report the 0.40s value; saw:\n{joined}"
+    )
+    assert "0.05s" not in joined, (
+        f"stuck cooldown must override the regular 0.05s; saw:\n{joined}"
+    )
+
+
+def test_stuck_cooldown_not_applied_below_streak_threshold(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """If the streak is below the threshold the regular (direction-aware)
+    cooldown must still apply — single transient no-progress events
+    should NOT trigger the long stuck cooldown.
+
+    Sets STUCK_STREAK very high so multiple realigns may fit in the
+    test's hold window without ever crossing the stuck threshold (the
+    inner ``_imu_corrective_hold`` loop is otherwise free to fire 2-3
+    realigns in 100 ms once cooldown drops below ~30 ms).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _stuck_env(streak="50", stuck_cooldown="5.00", regular_cooldown="0.07"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)
+    # Streak well below threshold (50): must use regular cooldown even
+    # if the hold runs through several no-progress events.
+    drv._imu_corr_no_progress_streak = 1
+    base = {12: 2114, 13: 2114}
+    drv._imu_corrective_hold(base, 0.10, threading.Event(), is_forward=True)
+    log_text = _imu_corr_log_records.text
+    assert "cooldown 0.07s" in log_text, (
+        f"streak below threshold must use regular cooldown 0.07s; "
+        f"saw:\n{log_text}"
+    )
+    assert "stuck detected" not in log_text, (
+        f"streak below threshold must NOT log stuck-detected warning; "
+        f"saw:\n{log_text}"
+    )
+
+
+def test_stuck_streak_zero_disables_detector(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """Setting STUCK_STREAK=0 must completely disable the detector — even
+    an infinite no-progress streak must use the regular cooldown.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _stuck_env(streak="0", stuck_cooldown="5.00", regular_cooldown="0.04"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)
+    drv._imu_corr_no_progress_streak = 999
+    base = {12: 2114, 13: 2114}
+    drv._imu_corrective_hold(base, 0.08, threading.Event(), is_forward=True)
+    log_text = _imu_corr_log_records.text
+    assert "stuck detected" not in log_text, (
+        f"STREAK=0 must disable detector entirely; saw:\n{log_text}"
+    )
+    assert "cooldown 0.04s" in log_text, (
+        f"STREAK=0 must keep using regular cooldown; saw:\n{log_text}"
+    )
+
+
+def test_stuck_cooldown_clears_after_successful_realign(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """End-to-end: a stuck streak must be broken by the first successful
+    realign so the regular cooldown returns immediately. This is what
+    lets the bot recover automatically once it's moving again.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _stuck_env(streak="2", stuck_cooldown="5.00", regular_cooldown="0.06"),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)
+    # Manually mark the bot as currently stuck.
+    drv._imu_corr_no_progress_streak = 5
+    # Now switch the sampler to one that returns inside the deadband,
+    # forcing the very next realign to exit cleanly via "deadband reached".
+    drv._imu_yaw_drift_fn = lambda: 0.4
+    drv._perform_pivot_correction(4.0, threading.Event())
+    assert drv._imu_corr_no_progress_streak == 0, (
+        "successful realign must clear the streak so subsequent corrections "
+        "go back to the regular cooldown without operator intervention"
+    )

@@ -144,6 +144,23 @@ Backward-direction overrides (all default to the forward value when unset
                                                                 forward calibration over-shoots when reused
                                                                 in reverse)
 
+Stuck detector (defends against a feedback loop where the chassis is
+stationary, the pivot lean can't rotate stationary wheels, every realign
+exits as "no progress", and the regular short cooldown immediately fires
+another equally-doomed realign — locking the bot in place):
+
+  ``NINA_HOVER_IMU_CORR_STUCK_STREAK``           default 3     (consecutive ``no progress`` exits before
+                                                                the stuck cooldown kicks in; set to 0 to
+                                                                disable the detector entirely)
+  ``NINA_HOVER_IMU_CORR_STUCK_COOLDOWN_SEC``     default 5.0   (cooldown applied when the detector fires;
+                                                                long enough that the pulse loop gets at
+                                                                least one full hold cycle to build wheel
+                                                                momentum and break the chassis out of the
+                                                                stationary state. Resets back to the
+                                                                regular direction-aware cooldown on the
+                                                                first successful realign — any non-
+                                                                no-progress exit clears the streak)
+
 Logging convention: every IMU-correction log line emitted from inside the
 pulse hold (``hover IMU correction (forward): ...`` or
 ``hover IMU correction (backward): ...``) carries the direction tag of the
@@ -686,6 +703,73 @@ def _imu_corr_back_step_rate_deg_per_sec(forward_default: float) -> float:
         return forward_default
 
 
+# ----------------------------------------------------------------------
+# Stuck detector
+#
+# The iterative realign assumes the pivot lean can actually rotate the
+# chassis. That assumption breaks when the bot is STATIONARY (friction
+# locks the wheels in place; commanded lean changes the goal positions
+# but the chassis doesn't move). Symptom in the log: a streak of
+# realigns that all exit with reason "no progress" and ``drift_now``
+# essentially equal to ``drift_start``. With the default 1 s (forward)
+# or 0.3 s (backward) cooldown, the next correction fires immediately
+# after the failed one, never giving the pulse loop enough uninterrupted
+# time to build wheel momentum and break the chassis free.
+#
+# The stuck detector counts consecutive "no progress" exits across
+# realigns. When the count reaches ``STUCK_STREAK`` the next cooldown
+# is replaced with ``STUCK_COOLDOWN_SEC`` (much longer) so the pulse
+# loop gets a clean window to drive the chassis. Any non-no-progress
+# exit (deadband reached, overshoot past zero, wrong-direction bail,
+# max-steps cap) resets the streak immediately. The streak is also
+# reset at the start of every fresh straight leg (see
+# ``_imu_begin_straight``).
+# ----------------------------------------------------------------------
+
+
+def _imu_corr_stuck_streak() -> int:
+    """Consecutive ``no progress`` exits before the stuck cooldown kicks in.
+
+    Read from ``NINA_HOVER_IMU_CORR_STUCK_STREAK``. Default 3 — a single
+    no-progress exit is usually a transient drift burst, but 3 in a row
+    is a strong signal the pivots aren't rotating the chassis at all
+    (typically because the bot is stationary). Set to 0 to disable the
+    stuck detector and fall back to the legacy "always use the
+    direction-aware cooldown" behaviour.
+
+    Clamped to ``[0, 50]``.
+    """
+    try:
+        return max(
+            0,
+            min(50, int(float(os.environ.get("NINA_HOVER_IMU_CORR_STUCK_STREAK", "3")))),
+        )
+    except ValueError:
+        return 3
+
+
+def _imu_corr_stuck_cooldown_sec() -> float:
+    """Cooldown applied when the stuck detector fires (seconds).
+
+    Read from ``NINA_HOVER_IMU_CORR_STUCK_COOLDOWN_SEC``. Default 5.0 —
+    long enough for the pulse loop to complete at least one full hold
+    cycle (typically 1-2 s per cycle on the default ``pulse_series_*``
+    settings) so the chassis can actually build wheel momentum and
+    break out of the stationary state. Lower this if the bot ends up
+    drifting too far during the stuck window; raise it if the bot
+    still can't break free.
+
+    Clamped to ``[0.0, 60.0]``.
+    """
+    try:
+        return max(
+            0.0,
+            min(60.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STUCK_COOLDOWN_SEC", "5.0"))),
+        )
+    except ValueError:
+        return 5.0
+
+
 def _hover_turn_slow_wheel_pct() -> int:
     """Backward-side lean for held D-pad pivots (1–100, default 8)."""
     try:
@@ -845,6 +929,14 @@ class HoverboardAxisDrive:
         self._imu_corr_back_step_rate_dps: float = (
             _imu_corr_back_step_rate_deg_per_sec(self._imu_corr_step_rate_dps)
         )
+        # Stuck detector: counts consecutive "no progress" realign exits
+        # so a long ``stuck_cooldown_sec`` can be applied once the count
+        # reaches ``stuck_streak`` (typically the chassis is stationary
+        # and the pivots aren't rotating it; the longer cooldown gives
+        # the pulse loop a clean window to build wheel momentum).
+        self._imu_corr_stuck_streak_max: int = _imu_corr_stuck_streak()
+        self._imu_corr_stuck_cooldown_sec: float = _imu_corr_stuck_cooldown_sec()
+        self._imu_corr_no_progress_streak: int = 0
         # Earliest monotonic time at which the next IMU sample is allowed.
         # Set by every pivot to ``now + cooldown_sec`` so back-to-back
         # corrections can't fire. Reset to 0 by ``_imu_begin_straight`` so a
@@ -917,6 +1009,9 @@ class HoverboardAxisDrive:
         self._imu_corr_back_step_rate_dps = _imu_corr_back_step_rate_deg_per_sec(
             self._imu_corr_step_rate_dps
         )
+        self._imu_corr_stuck_streak_max = _imu_corr_stuck_streak()
+        self._imu_corr_stuck_cooldown_sec = _imu_corr_stuck_cooldown_sec()
+        self._imu_corr_no_progress_streak = 0
         # Allow the first sample of the next straight leg to fire immediately.
         self._imu_corr_next_sample_at = 0.0
         # Show the backward overrides only when they actually differ from
@@ -937,6 +1032,14 @@ class HoverboardAxisDrive:
             if self._imu_corr_back_step_rate_dps == self._imu_corr_step_rate_dps
             else f" back_step_rate={self._imu_corr_back_step_rate_dps:.1f}dps"
         )
+        stuck_tag = (
+            ""
+            if self._imu_corr_stuck_streak_max <= 0
+            else (
+                f" stuck_streak={self._imu_corr_stuck_streak_max}"
+                f" stuck_cooldown={self._imu_corr_stuck_cooldown_sec:.2f}s"
+            )
+        )
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
@@ -945,7 +1048,7 @@ class HoverboardAxisDrive:
             "progress_check=%d progress_min=%.2f deg "
             "bail_warmup=%d bail_margin=%.2f deg "
             "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s"
-            "%s%s%s "
+            "%s%s%s%s "
             "(iterative proportional micro-step realign)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
@@ -970,6 +1073,7 @@ class HoverboardAxisDrive:
             back_threshold_tag,
             back_cooldown_tag,
             back_step_rate_tag,
+            stuck_tag,
         )
 
     def _imu_sample_drift_deg(self) -> Optional[float]:
@@ -1063,14 +1167,43 @@ class HoverboardAxisDrive:
                         self._apply_goals(base_goals)
                     except Exception:
                         pass
+                    # If the realign has been failing to make progress for
+                    # ``stuck_streak`` events in a row, the pivots are not
+                    # rotating the chassis (typically because the bot is
+                    # stationary and friction is holding it). The regular
+                    # 0.3-1.0 s cooldown isn't enough time for the pulse
+                    # loop to build the wheel momentum needed to break
+                    # the chassis free, so apply a much longer cooldown
+                    # to give the primed-only motion a clean window. The
+                    # streak resets on the first successful realign (any
+                    # non-no-progress exit) so we automatically return to
+                    # the regular cooldown as soon as the bot is moving
+                    # again.
+                    if (
+                        self._imu_corr_stuck_streak_max > 0
+                        and self._imu_corr_no_progress_streak
+                        >= self._imu_corr_stuck_streak_max
+                    ):
+                        effective_cooldown = self._imu_corr_stuck_cooldown_sec
+                        log.warning(
+                            "hover IMU correction (%s): stuck detected "
+                            "(%d consecutive no-progress events) — "
+                            "extending cooldown to %.2fs to let the bot "
+                            "regain motion",
+                            direction_tag,
+                            self._imu_corr_no_progress_streak,
+                            effective_cooldown,
+                        )
+                    else:
+                        effective_cooldown = cooldown_sec
+                        log.info(
+                            "hover IMU correction (%s): cooldown %.2fs "
+                            "(primed-only motion)",
+                            direction_tag,
+                            effective_cooldown,
+                        )
                     self._imu_corr_next_sample_at = (
-                        time.monotonic() + cooldown_sec
-                    )
-                    log.info(
-                        "hover IMU correction (%s): cooldown %.2fs "
-                        "(primed-only motion)",
-                        direction_tag,
-                        cooldown_sec,
+                        time.monotonic() + effective_cooldown
                     )
             remaining = end - time.monotonic()
             if remaining <= 0.0:
@@ -1344,6 +1477,17 @@ class HoverboardAxisDrive:
             if step_settle > 0.0 and halt.wait(timeout=step_settle):
                 return True
 
+        # Update the stuck-detector streak. Consecutive "no progress" exits
+        # are evidence that the pivots aren't actually rotating the chassis
+        # (e.g. it's stationary and friction is holding the wheels). Any
+        # other exit (deadband reached, overshoot past zero, wrong-direction
+        # bail, max-steps cap) means the pivots ARE producing rotation, so
+        # reset the streak immediately.
+        if exit_reason == "no progress":
+            self._imu_corr_no_progress_streak += 1
+        else:
+            self._imu_corr_no_progress_streak = 0
+
         log.info(
             "hover IMU correction (%s): realign complete after %d "
             "micro-step%s (drift now %+.2f deg, exited via %s)",
@@ -1376,6 +1520,11 @@ class HoverboardAxisDrive:
         # to cooldown_sec after each new bench-button press before the first
         # correction could fire).
         self._imu_corr_next_sample_at = 0.0
+        # Reset the stuck-detector streak so a fresh leg doesn't inherit a
+        # stale "stuck" state from the previous leg (the previous leg's
+        # stuck condition may have been specific to its motion direction
+        # or chassis pose).
+        self._imu_corr_no_progress_streak = 0
         fn = self._imu_begin_fn
         if fn is None:
             return
