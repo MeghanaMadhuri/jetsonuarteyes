@@ -102,17 +102,22 @@ def _cfg() -> SimpleNamespace:
 
 
 def _fast_correction_env(**extras: str) -> dict[str, str]:
-    """Tunables that make the discrete pivot fast and easy to observe in tests.
+    """Tunables that make the iterative realign fast and easy to observe in tests.
 
-    ``COOLDOWN_SEC`` is pinned to ``0`` so a single test can observe multiple
-    pivots back-to-back where it needs to. Tests that exercise the cooldown
-    itself override this to a positive value.
+    The hover module now does a chain of small ~1° pivots per correction
+    (see :func:`HoverboardAxisDrive._perform_pivot_correction`); tests cap
+    ``MAX_STEPS`` low and zero out the between-step settle so a stuck-drift
+    realign returns in milliseconds. ``COOLDOWN_SEC`` is pinned to ``0`` so a
+    single test can observe multiple corrections back-to-back where it needs
+    to. Tests that exercise the cooldown itself override this.
     """
     env = {
         "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "3.0",
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.0",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.08",
+        "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_MAX_STEPS": "4",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
@@ -577,7 +582,13 @@ def test_yaw_drift_none_falls_back_to_plain_wait() -> None:
 # ----------------------------------------------------------------------
 
 def test_cooldown_suppresses_back_to_back_pivots_in_single_hold() -> None:
-    """One hold with stuck-high drift + long cooldown should pivot ONCE only."""
+    """One hold with stuck-high drift + long cooldown should realign ONCE only.
+
+    The new iterative realign writes many pivot-left micro-steps per call,
+    so this test counts ``_perform_pivot_correction`` invocations directly
+    (the meaningful "correction event" unit) rather than counting goal-stream
+    transitions.
+    """
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -585,32 +596,28 @@ def test_cooldown_suppresses_back_to_back_pivots_in_single_hold() -> None:
         os.environ,
         _fast_correction_env(
             NINA_HOVER_IMU_CORR_COOLDOWN_SEC="1.0",
-            NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.05",
+            NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.02",
+            NINA_HOVER_IMU_CORR_MAX_STEPS="2",
         ),
         clear=False,
     ):
         drv.set_imu_hooks(yaw_drift_fn=lambda: 10.0)  # stuck high
     halt = threading.Event()
     base = {12: 2114, 13: 2114}
-    pre = len(dxl.goal_writes)
-    drv._imu_corrective_hold(base, 0.40, halt, is_forward=True)
-    after = dxl.goal_writes[pre:]
-    pivot_left = _pivot_left_goals_20pct()
-    # Closed-loop never exits via deadband (drift stays at 10), so each pivot
-    # writes pivot_left multiple times. Detect distinct correction events by
-    # counting transitions base->pivot in the goal stream.
-    pivots = 0
-    in_pivot = False
-    for w in after:
-        if w == pivot_left:
-            if not in_pivot:
-                pivots += 1
-                in_pivot = True
-        else:
-            in_pivot = False
-    assert pivots == 1, (
-        f"expected exactly one correction with 1.0s cooldown; saw {pivots} "
-        f"(writes={after!r})"
+
+    calls: list[float] = []
+    original_pivot = drv._perform_pivot_correction
+
+    def counting_pivot(drift: float, halt_ev: threading.Event) -> bool:
+        calls.append(drift)
+        return original_pivot(drift, halt_ev)
+
+    with patch.object(drv, "_perform_pivot_correction", side_effect=counting_pivot):
+        drv._imu_corrective_hold(base, 0.40, halt, is_forward=True)
+
+    assert len(calls) == 1, (
+        f"expected exactly one realign event with 1.0s cooldown; saw {len(calls)} "
+        f"calls (drifts={calls!r})"
     )
 
 
@@ -683,7 +690,14 @@ def test_imu_begin_straight_resets_cooldown() -> None:
 
 
 def test_default_tunables_are_conservative() -> None:
-    """Smoke-test that the production defaults match the calmer profile."""
+    """Smoke-test that the production defaults match the calmer profile.
+
+    The iterative micro-step realign reinterprets ``PIVOT_BLEND_PCT`` and
+    ``PIVOT_MAX_SEC`` as *per-step* values, so the conservative bound rose
+    from 8 → 12 % blend and the cap dropped from 0.12 → 0.10 s — each step
+    is now sized for roughly one degree of rotation. The total correction
+    work is bounded by ``MAX_STEPS`` instead.
+    """
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
     for var in (
@@ -691,16 +705,28 @@ def test_default_tunables_are_conservative() -> None:
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC",
+        "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC",
+        "NINA_HOVER_IMU_CORR_MAX_STEPS",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC",
         "NINA_HOVER_IMU_CORR_COOLDOWN_SEC",
         "NINA_HOVER_IMU_CORR_POLL_HZ",
     ):
         os.environ.pop(var, None)
     drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
-    assert drv._imu_corr_threshold_deg >= 5.0, "threshold should be calm by default"
-    assert drv._imu_corr_pivot_blend_pct <= 10, "pivot blend should be gentle by default"
-    assert drv._imu_corr_pivot_max_sec <= 0.20, "pivot cap should be short by default"
-    assert drv._imu_corr_settle_sec >= 0.20, "brake settle should be long by default"
+    assert drv._imu_corr_threshold_deg >= 3.0, "threshold should be calm by default"
+    assert drv._imu_corr_pivot_blend_pct <= 15, (
+        "per-step blend should be gentle by default"
+    )
+    assert drv._imu_corr_pivot_max_sec <= 0.20, (
+        "per-step duration cap should be short by default"
+    )
+    assert drv._imu_corr_step_settle_sec <= 0.15, (
+        "between-step settle should be brief by default"
+    )
+    assert 5 <= drv._imu_corr_max_steps <= 50, (
+        "max-steps should give meaningful head-room without runaway loops"
+    )
+    assert drv._imu_corr_settle_sec >= 0.20, "outer brake settle should be long by default"
     assert drv._imu_corr_cooldown_sec >= 0.5, "cooldown should be substantial by default"
     assert drv._imu_corr_poll_sec >= 1.0 / 10.0, "poll rate should be slow by default"
     assert drv._imu_corr_invert_sign is False, "invert flag must default off (per-bot opt-in)"
@@ -774,31 +800,28 @@ def test_invert_sign_off_preserves_original_convention() -> None:
 # ----------------------------------------------------------------------
 
 def test_pivot_bails_when_drift_grows_past_starting_magnitude() -> None:
-    """Closed-loop pivot must abort early when drift grows past the start.
+    """Iterative realign must abort when drift grows past start on 2 samples.
 
     Mirrors the observed log on the real bot when the sign was wrong: drift
-    started at +8.20° and the next sample read +11.18° (delta=+2.98°, well
-    outside the 1° deadband). The closed-loop pivot itself (inside one
-    ``_perform_pivot_correction`` call) must bail almost immediately on that
-    second sample rather than burning the full ``pivot_max_sec`` cap going
-    the wrong way.
-
-    Production cooldown (1 s default) prevents the surrounding hold from
-    re-firing pivots back-to-back; that's covered separately by the cooldown
-    tests, so this test asserts the *single* pivot routine bails quickly when
-    invoked directly on the bad sample stream.
+    started at +8.20° and grew on each subsequent micro-step. To avoid
+    false-positive bails from a single noisy sample, the new code requires
+    *two consecutive* samples beyond ``|initial_drift| + deadband`` before
+    bailing. This test feeds exactly that pattern (samples 11.18° → 14.0°,
+    both > 8.20 + 1.0) and asserts the realign stops well before its
+    ``MAX_STEPS`` cap.
     """
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
-    yaws = [11.18, 14.0, 17.0]  # samples observed during the pivot itself
+    yaws = [11.18, 14.0, 17.0, 20.0]  # all grow past 8.20 + 1.0
 
     def sampler() -> float:
-        return yaws.pop(0) if yaws else 17.0
+        return yaws.pop(0) if yaws else 20.0
 
     env = _fast_correction_env(
-        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.5",
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.04",
         NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="25",
         NINA_HOVER_IMU_CORR_POLL_HZ="200",
     )
     with patch.dict(os.environ, env, clear=False):
@@ -810,9 +833,11 @@ def test_pivot_bails_when_drift_grows_past_starting_magnitude() -> None:
     elapsed = time.monotonic() - t0
     after = dxl.goal_writes[pre:]
     pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
-    assert len(pivot_writes) <= 2, (
-        f"wrong-direction bail must abort the pivot quickly; saw "
-        f"{len(pivot_writes)} pivot-left writes"
+    # Two consecutive growing samples must trigger the bail; only the first
+    # 1-2 micro-steps may have fired before the bail short-circuits the loop.
+    assert len(pivot_writes) <= 3, (
+        f"wrong-direction bail must abort the realign quickly; saw "
+        f"{len(pivot_writes)} pivot-left micro-step writes"
     )
     # Brake must appear after the bail so the wheels don't remain leaned in
     # the wrong direction (re-prime is the caller's responsibility).
@@ -820,5 +845,121 @@ def test_pivot_bails_when_drift_grows_past_starting_magnitude() -> None:
     assert any(w == brake for w in after), (
         "bail path must brake the pivot before returning to the caller"
     )
-    # Sanity: the full pivot cap (0.5s) was *not* used.
+    # Sanity: did NOT burn the full max-steps × step_dur budget
+    # (25 × 0.04s = 1.0s) going the wrong way.
     assert elapsed < 0.4, f"bail should be quick, elapsed={elapsed:.3f}s"
+
+
+# ----------------------------------------------------------------------
+# Iterative micro-step realign — exit on deadband, cap on max_steps,
+# direction re-evaluated each step (replaces the single-shot pivot).
+# ----------------------------------------------------------------------
+
+def test_realign_exits_when_drift_reaches_deadband() -> None:
+    """The loop must terminate as soon as |drift| dips inside the deadband.
+
+    Feeds a decaying drift series: +6, +4, +2, +0.5 (deadband=1.0). The
+    realign should fire ~3 micro-steps and exit cleanly without hitting
+    the MAX_STEPS cap or the bail.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    yaws = [6.0, 4.0, 2.0, 0.5]  # last sample inside the 1.0° deadband
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else 0.5
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.02",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="25",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(8.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    # Initial drift +8 was used to TRIGGER the realign; the loop samples
+    # +6 (act), +4 (act), +2 (act), +0.5 (exit). So ~3 actuated steps.
+    assert 2 <= len(pivot_writes) <= 5, (
+        f"realign should fire a small number of micro-steps before deadband "
+        f"exits the loop; saw {len(pivot_writes)} pivot-left writes"
+    )
+    # Last write should be brake or prime-neutral (both are {12:2048,13:2048}),
+    # never leave the wheels leaned.
+    assert after[-1] == {12: 2048, 13: 2048}, (
+        f"realign must leave wheels braked / re-primed; tail={after[-3:]!r}"
+    )
+
+
+def test_realign_caps_at_max_steps_under_stuck_drift() -> None:
+    """Stuck drift (always above threshold, never inside deadband) must hit
+    the ``MAX_STEPS`` safety cap — not loop forever.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="6",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)  # stuck above deadband, below bail
+    pre = len(dxl.goal_writes)
+    t0 = time.monotonic()
+    drv._perform_pivot_correction(5.0, threading.Event())
+    elapsed = time.monotonic() - t0
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    # Constant +5° drift never trips the deadband, the overshoot guard, or
+    # the wrong-direction bail (|5| is not > |initial 5| + deadband). Must
+    # hit MAX_STEPS=6.
+    assert pivot_writes == [_pivot_left_goals_20pct()] * 6, (
+        f"stuck drift must fire exactly MAX_STEPS=6 micro-pivots; "
+        f"saw {len(pivot_writes)} (writes={pivot_writes!r})"
+    )
+    # And the routine must return promptly (not block on something else).
+    assert elapsed < 1.0, f"cap should bound the routine; elapsed={elapsed:.3f}s"
+
+
+def test_realign_re_evaluates_direction_per_step() -> None:
+    """If the drift sign flips mid-realign, the next micro-step must pivot
+    the OTHER way instead of stubbornly continuing in the original direction.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # +6 → +3 → -3 (overshoot past zero past deadband → exits via overshoot guard)
+    yaws = [6.0, 3.0, -3.0]
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else -3.0
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.02",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="25",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(7.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_left = _pivot_left_goals_20pct()
+    pivot_right = _pivot_right_goals_20pct()
+    # Initial +7 drift -> first samples positive -> pivot LEFT for a couple
+    # of steps. Then sample -3 triggers the overshoot guard and exits without
+    # actuating a right-side step (so we don't see a pivot_right in this run).
+    assert any(w == pivot_left for w in after), (
+        f"expected at least one pivot-left micro-step; saw {after}"
+    )
+    # Overshoot guard fires BEFORE the negative-drift step would actuate, so
+    # no pivot_right writes here; that's the desired "stop chasing" behaviour.
+    assert not any(w == pivot_right for w in after), (
+        f"overshoot past zero must STOP the realign, not chase the other way; "
+        f"saw pivot_right in {after}"
+    )

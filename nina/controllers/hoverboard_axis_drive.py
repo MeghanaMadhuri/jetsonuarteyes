@@ -36,22 +36,34 @@ once at construction with a yaw-drift sampler and optional begin/end straight
 callbacks (the ``NinaService`` wires :class:`Mpu9250DriftMonitor` here). During
 the main and coast holds of both pulse series the controller polls the yaw
 integrator at ~20 Hz. When ``|drift| >= NINA_HOVER_IMU_CORR_THRESHOLD_DEG`` the
-controller **stops the wheels**, runs a brief **in-place pivot** in the opposite
-direction (closed-loop: keeps pivoting until ``|drift| <= NINA_HOVER_IMU_CORR_DEADBAND_DEG``
-or ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` elapses), brakes, **re-primes** the lean
-stack at the neutral pose, and only then **resumes the primed forward / back
-pulse**. The asymmetric-bias-while-moving approach is intentionally not used —
-biasing mid-pulse felt like uncommanded fast turns to the operator.
+controller **stops the wheels**, runs an **iterative micro-step realign**: a
+chain of tiny ~1° pivots that each (a) sample drift, (b) re-evaluate pivot
+direction from the latest sample, (c) apply a small pivot lean
+(``PIVOT_BLEND_PCT`` × ``PIVOT_MAX_SEC``), (d) brake-settle. The loop exits
+when ``|drift| <= NINA_HOVER_IMU_CORR_DEADBAND_DEG``, on overshoot past zero,
+on a sign-mismatch bail (drift growing past start on two consecutive samples),
+or at the ``NINA_HOVER_IMU_CORR_MAX_STEPS`` safety cap. Only then does the
+controller **brake**, **re-prime** the lean stack, and resume the primed
+forward / back pulse. The previous single-shot pivot was replaced because it
+either undershot (too weak to overcome natural drift) or, when pumped up,
+slammed the bot 30°+ in one go; tiny steps with live re-sampling let total
+correction time scale with the magnitude of the drift instead of being
+decided up-front.
 
 Tuning env vars (defaults err on the calm / subtle side; bump them up only
 if the bot can't keep heading):
 
   ``NINA_HOVER_IMU_CORR_ENABLE``           default 1
-  ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``    default 6.0   (only fire when drift gets noticeable)
-  ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``     default 1.5   (stop pivot when drift returns inside this)
-  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``  default 8     (much gentler than the timed Turn buttons)
-  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``    default 0.12  (hard cap on each pivot)
-  ``NINA_HOVER_IMU_CORR_SETTLE_SEC``       default 0.25  (brake settle before AND after pivot)
+  ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``    default 4.0   (only fire when drift gets noticeable)
+  ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``     default 1.5   (stop realign when drift returns inside this)
+  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``  default 12    (per-MICRO-STEP blend; sized for ~1°/step)
+  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``    default 0.10  (per-MICRO-STEP duration)
+  ``NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC``  default 0.06  (brake dwell between micro-steps so IMU
+                                                          re-samples on a still bot)
+  ``NINA_HOVER_IMU_CORR_MAX_STEPS``        default 25    (hard cap on micro-step iterations;
+                                                          ~25° head-room, ~4 s worst-case duration)
+  ``NINA_HOVER_IMU_CORR_SETTLE_SEC``       default 0.25  (brake settle BEFORE the first step AND
+                                                          AFTER the loop, before re-priming)
   ``NINA_HOVER_IMU_CORR_COOLDOWN_SEC``     default 1.0   (rest period after each correction before
                                                           the next IMU sample; persists across
                                                           pulse cycles so corrections don't fire
@@ -61,8 +73,9 @@ if the bot can't keep heading):
                                                           orientation and / or ``NINA_HOVER_SWAP_TURN_LR``
                                                           combination makes positive drift map to
                                                           "pivot right" on this chassis. Symptom:
-                                                          drift magnitude *grows* after every
-                                                          correction. Set to ``1`` on the bot only.)
+                                                          drift magnitude *grows* across multiple
+                                                          consecutive micro-steps and triggers the
+                                                          wrong-direction bail. Set to ``1`` then.)
 """
 
 from __future__ import annotations
@@ -259,18 +272,22 @@ def _imu_corr_enabled() -> bool:
 
 
 def _imu_corr_threshold_deg() -> float:
-    """At/above this |drift|, pause and pivot-correct. Higher = less twitchy."""
+    """At/above this |drift|, pause forward motion and run the incremental
+    realign. Higher = less twitchy but each correction does more work.
+    """
     try:
         return max(
             0.1,
-            min(45.0, float(os.environ.get("NINA_HOVER_IMU_CORR_THRESHOLD_DEG", "6.0"))),
+            min(45.0, float(os.environ.get("NINA_HOVER_IMU_CORR_THRESHOLD_DEG", "4.0"))),
         )
     except ValueError:
-        return 6.0
+        return 4.0
 
 
 def _imu_corr_deadband_deg() -> float:
-    """Pivot stops once |drift| drops back inside this band."""
+    """The micro-step realign exits once ``|drift| <= deadband``. Smaller =
+    tighter heading hold but more micro-steps per correction.
+    """
     try:
         return max(
             0.0,
@@ -281,25 +298,61 @@ def _imu_corr_deadband_deg() -> float:
 
 
 def _imu_corr_pivot_blend_pct() -> int:
-    """Pivot lean blend %. Lower = gentler / slower yaw correction."""
+    """**Per-micro-step** pivot blend %. Each correction is now a CHAIN of tiny
+    pivots, each sized to rotate the bot ~1°; this controls the *individual*
+    step's lean strength, not a one-shot pivot. 12 is the calm default.
+    """
     try:
         return max(
             1,
-            min(100, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT", "8")))),
+            min(100, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT", "12")))),
         )
     except ValueError:
-        return 8
+        return 12
 
 
 def _imu_corr_pivot_max_sec() -> float:
-    """Cap on each pivot's duration. Shorter = smaller correction per event."""
+    """**Per-micro-step** pivot duration cap. Default 0.10 s so each step
+    rotates roughly 1° at the calm 12 % blend. The realign loop reads the
+    live drift after every step, so total correction time auto-scales with
+    the magnitude of the drift instead of being decided up-front.
+    """
     try:
         return max(
             0.02,
-            min(3.0, float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC", "0.12"))),
+            min(3.0, float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC", "0.10"))),
         )
     except ValueError:
-        return 0.12
+        return 0.10
+
+
+def _imu_corr_step_settle_sec() -> float:
+    """Brake dwell BETWEEN micro-steps so the IMU re-samples on a still bot.
+
+    Smaller = faster total realign, but the integrator can be noisy if the
+    chassis is still rotating from the last step. 0.06 s is the calm default.
+    """
+    try:
+        return max(
+            0.0,
+            min(1.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC", "0.06"))),
+        )
+    except ValueError:
+        return 0.06
+
+
+def _imu_corr_max_steps() -> int:
+    """Hard cap on micro-step iterations inside one realign. Worst-case the
+    routine corrects ``max_steps * ~1°`` of drift before giving up. Default
+    25 gives ~25° of head-room while keeping the routine bounded to ~4 s.
+    """
+    try:
+        return max(
+            1,
+            min(200, int(float(os.environ.get("NINA_HOVER_IMU_CORR_MAX_STEPS", "25")))),
+        )
+    except ValueError:
+        return 25
 
 
 def _imu_corr_settle_sec() -> float:
@@ -493,6 +546,8 @@ class HoverboardAxisDrive:
         self._imu_corr_settle_sec: float = _imu_corr_settle_sec()
         self._imu_corr_cooldown_sec: float = _imu_corr_cooldown_sec()
         self._imu_corr_invert_sign: bool = _imu_corr_invert_sign()
+        self._imu_corr_step_settle_sec: float = _imu_corr_step_settle_sec()
+        self._imu_corr_max_steps: int = _imu_corr_max_steps()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
         # Earliest monotonic time at which the next IMU sample is allowed.
         # Set by every pivot to ``now + cooldown_sec`` so back-to-back
@@ -548,14 +603,17 @@ class HoverboardAxisDrive:
         self._imu_corr_settle_sec = _imu_corr_settle_sec()
         self._imu_corr_cooldown_sec = _imu_corr_cooldown_sec()
         self._imu_corr_invert_sign = _imu_corr_invert_sign()
+        self._imu_corr_step_settle_sec = _imu_corr_step_settle_sec()
+        self._imu_corr_max_steps = _imu_corr_max_steps()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
         # Allow the first sample of the next straight leg to fire immediately.
         self._imu_corr_next_sample_at = 0.0
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
-            "threshold=%.2f deg deadband=%.2f deg pivot=%s%% max=%.2fs "
-            "settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
-            "(discrete pause-pivot-resume)",
+            "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
+            "step_dur=%.2fs step_settle=%.2fs max_steps=%d "
+            "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
+            "(iterative micro-step realign)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
             "set" if end_straight_fn else "off",
@@ -564,6 +622,8 @@ class HoverboardAxisDrive:
             self._imu_corr_deadband_deg,
             self._imu_corr_pivot_blend_pct,
             self._imu_corr_pivot_max_sec,
+            self._imu_corr_step_settle_sec,
+            self._imu_corr_max_steps,
             self._imu_corr_settle_sec,
             self._imu_corr_cooldown_sec,
             _imu_corr_poll_hz(),
@@ -658,42 +718,59 @@ class HoverboardAxisDrive:
         drift_deg: float,
         halt: threading.Event,
     ) -> bool:
-        """Brake → pivot until drift returns to deadband → brake → re-prime.
+        """Brake → iterative micro-step realign → brake → re-prime.
 
-        Yaw tracking is intentionally **not** paused around the pivot so the
-        integrator sees the pivot's own rotation undoing the drift; we exit as
-        soon as ``|drift| <= deadband`` (or after ``pivot_max_sec`` as a safety
-        cap). Returns ``True`` if the pulse halt event fires during the routine.
+        The correction is **no longer a single pivot** — it's a closed-loop
+        chain of small ~1° pivots that each iterate:
 
-        Sign convention (before ``NINA_HOVER_IMU_CORR_INVERT_SIGN``): positive
-        *drift_deg* = bot drifted right → pivot left (``set_wheels(F, B)`` lean
-        geometry). Negative drift → pivot right. When the env flag is set we
-        flip ``drift_deg`` before choosing direction and re-flip it for the
-        over-correction guard, so the routine self-consistently chases zero
-        regardless of which sign the IMU mount reports.
+            1. Sample current drift (with the configured ``invert_sign`` flip).
+            2. If ``|drift| <= deadband`` we're done.
+            3. Re-evaluate pivot direction from the *latest* sample (not the
+               original ``drift_deg``) so a slight overshoot in step N flips
+               direction for step N+1 instead of compounding.
+            4. Apply a tiny pivot lean (``step_blend`` × ``step_dur``).
+            5. Brake-settle ``step_settle_sec`` so the integrator re-reads
+               on a still bot.
+
+        Bails on three failure modes:
+        - ``|drift|`` grows past ``|initial_drift| + deadband`` for two
+          consecutive samples (sign-mismatch — toggle ``INVERT_SIGN``).
+        - Drift crosses zero past deadband (overshoot — stop chasing).
+        - ``max_steps`` iterations reached (safety cap, ~25° head-room at
+          the calm defaults).
+
+        Returns ``True`` if the pulse halt event fires during the routine.
+        Sign convention is unchanged: positive *drift_deg* = bot drifted
+        right under the default (``NINA_HOVER_IMU_CORR_INVERT_SIGN=0``)
+        convention, negate drift before direction lookup when set to 1.
         """
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
         invert = bool(self._imu_corr_invert_sign)
-        effective_drift = -drift_deg if invert else drift_deg
-        pivot_left = effective_drift > 0.0
+        deadband = self._imu_corr_deadband_deg
+        step_blend = max(1, min(100, int(self._imu_corr_pivot_blend_pct)))
+        step_dur = max(0.02, float(self._imu_corr_pivot_max_sec))
+        step_settle = max(0.0, float(self._imu_corr_step_settle_sec))
+        max_steps = max(1, int(self._imu_corr_max_steps))
+
         log.info(
-            "hover IMU correction: drift=%+.2f deg (effective=%+.2f, invert=%s) "
-            ">= %.2f deg threshold -> pause + pivot %s "
-            "(blend=%s%%, max=%.2fs, deadband=%.2f deg)",
+            "hover IMU correction: drift=%+.2f deg (invert=%s) >= %.2f deg "
+            "threshold -> brake + iterative realign "
+            "(step_blend=%s%%, step_dur=%.2fs, step_settle=%.2fs, "
+            "max_steps=%d, deadband=%.2f deg)",
             drift_deg,
-            effective_drift,
             invert,
             self._imu_corr_threshold_deg,
-            "left" if pivot_left else "right",
-            self._imu_corr_pivot_blend_pct,
-            self._imu_corr_pivot_max_sec,
-            self._imu_corr_deadband_deg,
+            step_blend,
+            step_dur,
+            step_settle,
+            max_steps,
+            deadband,
         )
 
-        # 1. Brake to stop the primed forward/back motion.
+        # 1. Brake to stop the primed forward/back motion before chasing zero.
         try:
             self._apply_goals(brake_goals)
         except Exception:
@@ -701,84 +778,93 @@ class HoverboardAxisDrive:
         if halt.wait(timeout=self._imu_corr_settle_sec):
             return True
 
-        # 2. Apply pivot lean. Reuse the same geometry pipeline that the timed
-        #    Turn left/right buttons use so any swap_turn_lr / calibrated pivot
-        #    goals are honoured here too.
-        blend = max(1, min(100, int(self._imu_corr_pivot_blend_pct)))
-        if pivot_left:
-            pivot_goals = self._goals_for_wheels(
-                left_dir=self.DIR_FORWARD,
-                left_speed=blend,
-                right_dir=self.DIR_BACKWARD,
-                right_speed=blend,
-            )
-        else:
-            pivot_goals = self._goals_for_wheels(
-                left_dir=self.DIR_BACKWARD,
-                left_speed=blend,
-                right_dir=self.DIR_FORWARD,
-                right_speed=blend,
-            )
-        try:
-            self._apply_goals(pivot_goals)
-        except Exception:
-            pass
-
-        # 3. Closed-loop: poll IMU and exit as soon as drift is inside the
-        #    deadband, or after the per-pivot cap. Keeps re-applying pivot_goals
-        #    so the MX servos don't time out at large turn excursions.
-        pivot_deadline = time.monotonic() + self._imu_corr_pivot_max_sec
-        deadband = self._imu_corr_deadband_deg
-        poll = max(0.01, float(self._imu_corr_poll_sec))
+        # 2. Iterative micro-step realign. The direction is re-decided every
+        #    iteration from the latest IMU sample so over-shoots correct
+        #    themselves on the next step instead of compounding.
         last_yaw = drift_deg
-        while True:
+        growing_streak = 0
+        steps_taken = 0
+        exit_reason = "max-steps cap"
+        for step in range(max_steps):
+            steps_taken = step + 1
             if halt.is_set():
                 return True
-            now = time.monotonic()
-            if now >= pivot_deadline:
-                break
+
             yaw_now = self._imu_sample_drift_deg()
             if yaw_now is not None:
                 last_yaw = yaw_now
                 if abs(yaw_now) <= deadband:
+                    exit_reason = "deadband reached"
                     break
-                # If drift sign flipped strongly, the bot over-corrected — bail
-                # immediately so we don't pivot back-and-forth chasing zero.
+                # Over-correction guard: drift crossed zero past the deadband.
                 if drift_deg * yaw_now < 0 and abs(yaw_now) >= deadband:
+                    exit_reason = "over-shot zero"
                     break
-                # Drift is *growing* past the starting magnitude → the pivot
-                # is going the wrong way for this chassis (almost always a
-                # sign mismatch; toggle ``NINA_HOVER_IMU_CORR_INVERT_SIGN``).
-                # Bail immediately so we don't add the full pivot cap of bad
-                # rotation to whatever drift we already had.
+                # Sign-mismatch guard: |drift| trending strictly *bigger* than
+                # we started, two samples in a row → wrong direction for this
+                # chassis (almost always a NINA_HOVER_IMU_CORR_INVERT_SIGN
+                # mismatch). Bail before we do real harm.
                 if abs(yaw_now) > abs(drift_deg) + deadband:
-                    log.warning(
-                        "hover IMU correction: drift growing during pivot "
-                        "(|%+.2f| > |%+.2f| + %.2f) — bailing. Try toggling "
-                        "NINA_HOVER_IMU_CORR_INVERT_SIGN on this chassis.",
-                        yaw_now,
-                        drift_deg,
-                        deadband,
-                    )
-                    break
+                    growing_streak += 1
+                    if growing_streak >= 2:
+                        log.warning(
+                            "hover IMU correction: drift growing across 2 "
+                            "consecutive micro-steps (|%+.2f| > |%+.2f| + %.2f) "
+                            "— bailing. Try toggling "
+                            "NINA_HOVER_IMU_CORR_INVERT_SIGN on this chassis.",
+                            yaw_now,
+                            drift_deg,
+                            deadband,
+                        )
+                        exit_reason = "wrong-direction bail"
+                        break
+                else:
+                    growing_streak = 0
+
+            # Decide direction from the *latest* sample so micro-overshoots
+            # self-correct on the next iteration. Reuses the same geometry
+            # pipeline as the timed Turn left/right buttons, so calibrated
+            # pivot goals and NINA_HOVER_SWAP_TURN_LR are honoured.
+            effective = -last_yaw if invert else last_yaw
+            pivot_left = effective > 0.0
+            if pivot_left:
+                step_goals = self._goals_for_wheels(
+                    left_dir=self.DIR_FORWARD,
+                    left_speed=step_blend,
+                    right_dir=self.DIR_BACKWARD,
+                    right_speed=step_blend,
+                )
+            else:
+                step_goals = self._goals_for_wheels(
+                    left_dir=self.DIR_BACKWARD,
+                    left_speed=step_blend,
+                    right_dir=self.DIR_FORWARD,
+                    right_speed=step_blend,
+                )
             try:
-                self._apply_goals(pivot_goals)
+                self._apply_goals(step_goals)
             except Exception:
                 pass
-            remaining = pivot_deadline - now
-            if halt.wait(timeout=min(poll, remaining)):
+            if halt.wait(timeout=step_dur):
+                return True
+            # Brake between steps so the IMU re-samples on a still bot.
+            try:
+                self._apply_goals(brake_goals)
+            except Exception:
+                pass
+            if step_settle > 0.0 and halt.wait(timeout=step_settle):
                 return True
 
         log.info(
-            "hover IMU correction: pivot complete (drift now %+.2f deg, "
-            "exited via %s)",
+            "hover IMU correction: realign complete after %d micro-step%s "
+            "(drift now %+.2f deg, exited via %s)",
+            steps_taken,
+            "" if steps_taken == 1 else "s",
             last_yaw,
-            "deadband"
-            if abs(last_yaw) <= deadband
-            else "max-duration cap",
+            exit_reason,
         )
 
-        # 4. Brake to stop the pivot before we re-prime the straight lean.
+        # 3. Brake to make sure the bot is fully stopped before re-priming.
         try:
             self._apply_goals(brake_goals)
         except Exception:
@@ -786,7 +872,7 @@ class HoverboardAxisDrive:
         if halt.wait(timeout=self._imu_corr_settle_sec):
             return True
 
-        # 5. Re-prime the lean stack at neutral so the next primed forward /
+        # 4. Re-prime the lean stack at neutral so the next primed forward /
         #    back resume starts from the same baseline as a fresh start.
         try:
             self._prime_straight_neutral()
