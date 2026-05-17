@@ -599,11 +599,13 @@ sirena_ui/                       nina/
 # Navigation: Jetson GPIO (see Drive section above)
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
-# Drive "Straight test" bench run: straight only for NINA_STRAIGHT_TEST_MS (default 15 s), then stop.
+# Drive "Straight test" bench run: straight only for NINA_STRAIGHT_TEST_MS (default 40 s), then stop.
 # Legacy duration alias: NINA_STRAIGHT_SEQ_FWD1_MS. PWM: NINA_STRAIGHT_TEST_SPEED_PCT (default MAX_SPEED_PCT).
+# NINA_STRAIGHT_BACK_TEST_MS controls the matching "Straight back" duration (also default 40 s).
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
-# export NINA_STRAIGHT_TEST_MS=15000
-# export NINA_STRAIGHT_SEQ_FWD1_MS=15000   # legacy alias for duration only
+# export NINA_STRAIGHT_TEST_MS=40000
+# export NINA_STRAIGHT_BACK_TEST_MS=40000
+# export NINA_STRAIGHT_SEQ_FWD1_MS=40000   # legacy alias for duration only
 #
 # MPU-9250 IMU (I2C): gyro-integrated yaw drift on Drive "Straight" / "Straight back".
 # Enable on the Jetson after wiring 3.3 V / GND / SDA / SCL (same bus as other I2C ok).

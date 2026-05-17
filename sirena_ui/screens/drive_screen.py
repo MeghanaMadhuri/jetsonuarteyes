@@ -124,12 +124,12 @@ def _straight_sequence_spec(
         try:
             ms = int(raw)
         except ValueError:
-            ms = 20_000
+            ms = 40_000
     elif use_forward_pulse_bench:
         est_sec = estimate_forward_pulse_series_duration_sec(axis)
         ms = min(120_000, max(100, int(math.ceil(est_sec * 1000.0)) + 200))
     else:
-        ms = 20_000
+        ms = 40_000
     ms = max(100, min(120_000, ms))
     return [("fwd", ms)]
 
@@ -143,12 +143,12 @@ def _straight_back_sequence_spec(
         try:
             ms = int(raw)
         except ValueError:
-            ms = 20_000
+            ms = 40_000
     elif use_backward_pulse_bench:
         est_sec = estimate_backward_pulse_series_duration_sec(axis)
         ms = min(120_000, max(100, int(math.ceil(est_sec * 1000.0)) + 200))
     else:
-        ms = 20_000
+        ms = 40_000
     ms = max(100, min(120_000, ms))
     return [("back", ms)]
 
@@ -462,7 +462,7 @@ class DriveScreen(QWidget):
         self._straight_test_btn.setToolTip(
             "Straight front: runs for NINA_STRAIGHT_TEST_MS (legacy: NINA_STRAIGHT_SEQ_FWD1_MS), or if those "
             "are unset and hover forward pulse is on, for roughly one full pulse series plus margin. "
-            "Otherwise default 20 s. Speed: NINA_STRAIGHT_TEST_SPEED_PCT. Respects Reverse. "
+            "Otherwise default 40 s. Speed: NINA_STRAIGHT_TEST_SPEED_PCT. Respects Reverse. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
             "Turn off autonomous mode and release the brake first."
         )
@@ -474,7 +474,7 @@ class DriveScreen(QWidget):
         self._straight_back_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_back_test_btn.setMinimumHeight(32)
         self._straight_back_test_btn.setToolTip(
-            "Drives straight backward for NINA_STRAIGHT_BACK_TEST_MS (default 20 s) "
+            "Drives straight backward for NINA_STRAIGHT_BACK_TEST_MS (default 40 s) "
             "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Ignores the Reverse toggle. "
             "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
             "Turn off autonomous mode and release the brake first."
