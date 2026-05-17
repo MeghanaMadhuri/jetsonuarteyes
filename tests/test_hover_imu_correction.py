@@ -118,6 +118,12 @@ def _fast_correction_env(**extras: str) -> dict[str, str]:
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.08",
         "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_MAX_STEPS": "4",
+        # Proportional step sizing is tested explicitly; default in the
+        # shared env to a high rate + tiny floor so the proportional clamp
+        # almost always picks the explicitly-configured PIVOT_MAX_SEC cap,
+        # keeping legacy assertions stable.
+        "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "1000.0",
+        "NINA_HOVER_IMU_CORR_STEP_MIN_SEC": "0.005",
         # Bail warmup disabled in tests so wrong-direction sample streams
         # trigger the bail on the very first sample. The warmup-grace tests
         # override this explicitly.
@@ -1107,4 +1113,119 @@ def test_realign_re_evaluates_direction_per_step() -> None:
     assert not any(w == pivot_right for w in after), (
         f"overshoot past zero must STOP the realign, not chase the other way; "
         f"saw pivot_right in {after}"
+    )
+
+
+# ----------------------------------------------------------------------
+# Proportional step duration — small drifts → short pulses, big drifts
+# → full PIVOT_MAX_SEC cap. Mirrors the user's "turn the robot in
+# almost one degree at a time" spec.
+# ----------------------------------------------------------------------
+
+def test_proportional_step_uses_full_cap_for_large_drift() -> None:
+    """When remaining drift is much larger than the cap × rate, the
+    proportional step duration must saturate at ``PIVOT_MAX_SEC``.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # Big stuck drift; rate 30 dps × 0.18s = 5.4 deg per cap-duration step,
+    # so a 30° drift demands far more than one step's worth → clamp to cap.
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.18",
+        NINA_HOVER_IMU_CORR_STEP_MIN_SEC="0.02",
+        NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="30.0",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="1",  # capture just the first step
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 30.0)
+    halt = threading.Event()
+    t0 = time.monotonic()
+    drv._perform_pivot_correction(30.0, halt)
+    elapsed = time.monotonic() - t0
+    # Outer settle = 0, step_settle = 0 (both pinned by _fast_correction_env).
+    # One step of 0.18s for the cap + a tiny brake/settle should land at
+    # ~0.18-0.20s total. Definitely > 0.10s and < 0.30s.
+    assert 0.13 < elapsed < 0.30, (
+        f"large drift must use the FULL PIVOT_MAX_SEC cap; elapsed={elapsed:.3f}s "
+        f"(expected ~0.18s for one step at 0.18s cap)"
+    )
+
+
+def test_proportional_step_shrinks_for_small_drift() -> None:
+    """A small initial drift should produce a SHORT first-step pulse,
+    not the full ``PIVOT_MAX_SEC`` cap. Compares wall-clock of one step
+    at small drift vs one step at large drift to prove the scaling.
+    """
+    drv_small = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv_small.initialize()
+    drv_large = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv_large.initialize()
+
+    # rate 30 dps. small=2° → 2/30 = 0.067s. large=30° → 0.18s (cap).
+    base_env = {
+        "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "1.0",
+        "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "0.5",
+        "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
+        "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.18",
+        "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_STEP_MIN_SEC": "0.02",
+        "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "30.0",
+        "NINA_HOVER_IMU_CORR_MAX_STEPS": "1",
+        "NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS": "0",
+        "NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG": "100.0",  # disable bail
+        "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
+    }
+    with patch.dict(os.environ, base_env, clear=False):
+        drv_small.set_imu_hooks(yaw_drift_fn=lambda: 2.0)
+        drv_large.set_imu_hooks(yaw_drift_fn=lambda: 30.0)
+
+    t0 = time.monotonic()
+    drv_small._perform_pivot_correction(2.0, threading.Event())
+    small_elapsed = time.monotonic() - t0
+
+    t0 = time.monotonic()
+    drv_large._perform_pivot_correction(30.0, threading.Event())
+    large_elapsed = time.monotonic() - t0
+
+    # Small drift step should be markedly shorter than large drift step.
+    # large should be near the cap (~0.18s), small should be near 2/30 = 0.067s.
+    assert large_elapsed > small_elapsed + 0.05, (
+        f"small drift must produce a shorter step than large drift; "
+        f"small={small_elapsed:.3f}s vs large={large_elapsed:.3f}s"
+    )
+    # And the small-drift step should be SHORTER than the cap.
+    assert small_elapsed < 0.15, (
+        f"small drift step should be well under PIVOT_MAX_SEC=0.18s; "
+        f"actual={small_elapsed:.3f}s"
+    )
+
+
+def test_proportional_step_honours_min_sec_floor() -> None:
+    """A tiny drift just above deadband must still produce a step of at
+    least ``STEP_MIN_SEC`` (MX-28 slew floor), not a degenerate 0s pulse.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.18",
+        # rate so high that |drift|/rate would be <<min if not clamped.
+        NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="10000.0",
+        NINA_HOVER_IMU_CORR_STEP_MIN_SEC="0.08",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="0.5",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="100.0",  # disable bail
+        NINA_HOVER_IMU_CORR_MAX_STEPS="1",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 1.0)
+    t0 = time.monotonic()
+    drv._perform_pivot_correction(1.0, threading.Event())
+    elapsed = time.monotonic() - t0
+    # MIN_SEC=0.08 must be honoured even though 1/10000 ≈ 0s.
+    assert elapsed > 0.06, (
+        f"step duration must be clamped to STEP_MIN_SEC; elapsed={elapsed:.3f}s"
     )

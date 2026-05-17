@@ -76,11 +76,22 @@ hoverboard chassis; lower them only if the realign is over-shooting):
   ``NINA_HOVER_IMU_CORR_ENABLE``                default 1
   ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``         default 4.0   (only fire when drift gets noticeable)
   ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``          default 1.5   (stop realign when drift returns inside this)
-  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       default 20    (per-MICRO-STEP blend; sized for ~1.5-2°/step)
-  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``         default 0.18  (per-MICRO-STEP duration)
+  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       default 20    (per-MICRO-STEP blend)
+  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``         default 0.18  (per-MICRO-STEP duration CAP;
+                                                                actual duration is proportional
+                                                                to remaining drift, never longer
+                                                                than this)
+  ``NINA_HOVER_IMU_CORR_STEP_MIN_SEC``          default 0.05  (per-MICRO-STEP duration FLOOR;
+                                                                MX-28 needs ~50 ms to slew)
+  ``NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC`` default 30    (calibrated rotation rate at the
+                                                                configured blend; the proportional
+                                                                step duration is computed as
+                                                                ``|drift| / rate`` clamped to
+                                                                ``[STEP_MIN_SEC, PIVOT_MAX_SEC]``)
   ``NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC``       default 0.08  (brake dwell between micro-steps)
   ``NINA_HOVER_IMU_CORR_MAX_STEPS``             default 15    (hard cap on micro-step iterations;
-                                                                ~20-30° head-room, ~4 s worst-case)
+                                                                with proportional sizing typical
+                                                                events terminate in 1-3 steps)
   ``NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS``     default 3     (steps before wrong-direction bail
                                                                 can fire — absorbs pre-brake momentum)
   ``NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG``       default 5.0   (drift growth past post-warmup baseline
@@ -384,6 +395,38 @@ def _imu_corr_max_steps() -> int:
         return 15
 
 
+def _imu_corr_step_rate_deg_per_sec() -> float:
+    """Empirical chassis rotation rate (deg/s) at the configured per-step
+    blend. Used to make the realign **proportional**: each step's duration
+    is scaled by the remaining drift so small drifts get short pulses and
+    big drifts get the full ``PIVOT_MAX_SEC`` cap. Default 30 deg/s
+    matches the 20 % blend on the current hoverboard build (bench
+    measured); tune up if the bot still over-shoots small drifts, or down
+    if it visibly under-corrects.
+    """
+    try:
+        return max(
+            1.0,
+            min(360.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC", "30.0"))),
+        )
+    except ValueError:
+        return 30.0
+
+
+def _imu_corr_step_min_sec() -> float:
+    """Floor on the per-step duration (MX-28 needs >~50 ms commanded goal
+    to physically slew there). The proportional realign drops below this
+    only when it would actually exit on the next sample.
+    """
+    try:
+        return max(
+            0.01,
+            min(1.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STEP_MIN_SEC", "0.05"))),
+        )
+    except ValueError:
+        return 0.05
+
+
 def _imu_corr_bail_warmup_steps() -> int:
     """Micro-steps to skip at the START of a realign before the wrong-direction
     bail can fire. The bot has angular momentum from the forward lean when
@@ -611,6 +654,8 @@ class HoverboardAxisDrive:
         self._imu_corr_invert_sign: bool = _imu_corr_invert_sign()
         self._imu_corr_step_settle_sec: float = _imu_corr_step_settle_sec()
         self._imu_corr_max_steps: int = _imu_corr_max_steps()
+        self._imu_corr_step_rate_dps: float = _imu_corr_step_rate_deg_per_sec()
+        self._imu_corr_step_min_sec: float = _imu_corr_step_min_sec()
         self._imu_corr_bail_warmup_steps: int = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg: float = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
@@ -670,6 +715,8 @@ class HoverboardAxisDrive:
         self._imu_corr_invert_sign = _imu_corr_invert_sign()
         self._imu_corr_step_settle_sec = _imu_corr_step_settle_sec()
         self._imu_corr_max_steps = _imu_corr_max_steps()
+        self._imu_corr_step_rate_dps = _imu_corr_step_rate_deg_per_sec()
+        self._imu_corr_step_min_sec = _imu_corr_step_min_sec()
         self._imu_corr_bail_warmup_steps = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
@@ -678,10 +725,11 @@ class HoverboardAxisDrive:
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
-            "step_dur=%.2fs step_settle=%.2fs max_steps=%d "
+            "step_dur=%.2fs step_min=%.2fs step_rate=%.1fdps "
+            "step_settle=%.2fs max_steps=%d "
             "bail_warmup=%d bail_margin=%.2f deg "
             "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
-            "(iterative micro-step realign)",
+            "(iterative proportional micro-step realign)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
             "set" if end_straight_fn else "off",
@@ -690,6 +738,8 @@ class HoverboardAxisDrive:
             self._imu_corr_deadband_deg,
             self._imu_corr_pivot_blend_pct,
             self._imu_corr_pivot_max_sec,
+            self._imu_corr_step_min_sec,
+            self._imu_corr_step_rate_dps,
             self._imu_corr_step_settle_sec,
             self._imu_corr_max_steps,
             self._imu_corr_bail_warmup_steps,
@@ -788,17 +838,26 @@ class HoverboardAxisDrive:
         drift_deg: float,
         halt: threading.Event,
     ) -> bool:
-        """Brake → iterative micro-step realign → brake → re-prime.
+        """Brake → iterative PROPORTIONAL micro-step realign → brake → re-prime.
 
         The correction is **no longer a single pivot** — it's a closed-loop
-        chain of small ~1° pivots that each iterate:
+        chain of small pivots whose individual duration is **proportional
+        to the remaining drift** (clamped to
+        ``[STEP_MIN_SEC, PIVOT_MAX_SEC]``). Big drifts use full-duration
+        pulses to close in fast; small drifts use brief pulses so we don't
+        blow past zero on the final step.
+
+        Each iteration:
 
             1. Sample current drift (with the configured ``invert_sign`` flip).
             2. If ``|drift| <= deadband`` we're done.
             3. Re-evaluate pivot direction from the *latest* sample (not the
                original ``drift_deg``) so a slight overshoot in step N flips
                direction for step N+1 instead of compounding.
-            4. Apply a tiny pivot lean (``step_blend`` × ``step_dur``).
+            4. Apply a pivot lean (``step_blend`` × ``this_step_dur``) where
+               ``this_step_dur = clamp(|last_yaw| / step_rate_dps,
+               [STEP_MIN_SEC, PIVOT_MAX_SEC])`` aiming to land ~½ deadband
+               short of zero.
             5. Brake-settle ``step_settle_sec`` so the integrator re-reads
                on a still bot.
 
@@ -821,7 +880,9 @@ class HoverboardAxisDrive:
         invert = bool(self._imu_corr_invert_sign)
         deadband = self._imu_corr_deadband_deg
         step_blend = max(1, min(100, int(self._imu_corr_pivot_blend_pct)))
-        step_dur = max(0.02, float(self._imu_corr_pivot_max_sec))
+        step_dur_cap = max(0.02, float(self._imu_corr_pivot_max_sec))
+        step_min_sec = max(0.01, float(self._imu_corr_step_min_sec))
+        step_rate_dps = max(1.0, float(self._imu_corr_step_rate_dps))
         step_settle = max(0.0, float(self._imu_corr_step_settle_sec))
         max_steps = max(1, int(self._imu_corr_max_steps))
 
@@ -831,13 +892,16 @@ class HoverboardAxisDrive:
         log.info(
             "hover IMU correction: drift=%+.2f deg (invert=%s) >= %.2f deg "
             "threshold -> brake + iterative realign "
-            "(step_blend=%s%%, step_dur=%.2fs, step_settle=%.2fs, "
+            "(step_blend=%s%%, step_dur_cap=%.2fs, step_min=%.2fs, "
+            "step_rate=%.1fdps, step_settle=%.2fs, "
             "max_steps=%d, bail_warmup=%d, bail_margin=%.2f, deadband=%.2f deg)",
             drift_deg,
             invert,
             self._imu_corr_threshold_deg,
             step_blend,
-            step_dur,
+            step_dur_cap,
+            step_min_sec,
+            step_rate_dps,
             step_settle,
             max_steps,
             warmup_steps,
@@ -947,11 +1011,22 @@ class HoverboardAxisDrive:
                     right_dir=self.DIR_FORWARD,
                     right_speed=step_blend,
                 )
+            # Proportional step duration: target rotating ``|last_yaw|`` deg
+            # at the calibrated ``step_rate_dps`` rotation rate, clamped to
+            # [step_min_sec, step_dur_cap]. Small drifts get short pulses
+            # so we don't blow past zero; big drifts use the full cap.
+            # Aim to land ~0.5 deg short of zero so the next sample exits
+            # cleanly via the deadband rather than always over-shooting.
+            target_rotation_deg = max(0.5, abs(last_yaw) - 0.5 * deadband)
+            this_step_dur = max(
+                step_min_sec,
+                min(step_dur_cap, target_rotation_deg / step_rate_dps),
+            )
             try:
                 self._apply_goals(step_goals)
             except Exception:
                 pass
-            if halt.wait(timeout=step_dur):
+            if halt.wait(timeout=this_step_dur):
                 return True
             # Brake between steps so the IMU re-samples on a still bot.
             try:
