@@ -38,14 +38,15 @@ the main and coast holds of both pulse series the controller polls the yaw
 integrator at ~20 Hz. When ``|drift| >= NINA_HOVER_IMU_CORR_THRESHOLD_DEG`` the
 controller **stops the wheels**, runs an **iterative micro-step realign**: a
 chain of small decisive pivots that each (a) sample drift, (b) re-evaluate
-pivot direction from the latest sample, (c) apply a pivot lean
-(``PIVOT_BLEND_PCT`` × ``PIVOT_MAX_SEC`` — defaults sized for ~1.5-2° of
-visible rotation per step on the MX-28 servos), (d) brake-settle. The loop
-exits when ``|drift| <= NINA_HOVER_IMU_CORR_DEADBAND_DEG``, on overshoot past
-zero, on the wrong-direction bail (see below), or at the
-``NINA_HOVER_IMU_CORR_MAX_STEPS`` safety cap. Only then does the controller
-**brake**, **re-prime** the lean stack, and resume the primed forward / back
-pulse. The previous single-shot pivot was replaced because it either
+pivot direction from the latest sample, (c) apply a pivot lean of
+**proportional duration** (``PIVOT_BLEND_PCT`` × per-step duration computed
+from remaining drift), (d) brake-settle. The loop exits when
+``|drift| <= NINA_HOVER_IMU_CORR_DEADBAND_DEG``, on overshoot past zero,
+on the wrong-direction bail (see below), on the **no-progress safeguard**
+(``PROGRESS_CHECK_STEPS`` steps with less than ``PROGRESS_MIN_DEG`` of
+total improvement → exit cleanly, let the next event try fresh), or at the
+``MAX_STEPS`` hard cap. Only then does the controller **brake**, **re-prime**
+the lean stack, and resume the primed forward / back pulse. The previous single-shot pivot was replaced because it either
 undershot (too weak to overcome natural drift) or, when pumped up, slammed
 the bot 30°+ in one go; iterative steps with live re-sampling let total
 correction time scale with the magnitude of the drift instead of being
@@ -92,6 +93,15 @@ hoverboard chassis; lower them only if the realign is over-shooting):
   ``NINA_HOVER_IMU_CORR_MAX_STEPS``             default 15    (hard cap on micro-step iterations;
                                                                 with proportional sizing typical
                                                                 events terminate in 1-3 steps)
+  ``NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS``  default 4     (check progress after N steps;
+                                                                set 0 to disable)
+  ``NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG``      default 1.0   (min cumulative improvement in
+                                                                ``|drift|`` required by the
+                                                                progress-check step; below this
+                                                                the realign exits as "no progress"
+                                                                so the cooldown + next event can
+                                                                try fresh instead of burning
+                                                                MAX_STEPS on a stuck loop)
   ``NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS``     default 3     (steps before wrong-direction bail
                                                                 can fire — absorbs pre-brake momentum)
   ``NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG``       default 5.0   (drift growth past post-warmup baseline
@@ -414,17 +424,53 @@ def _imu_corr_step_rate_deg_per_sec() -> float:
 
 
 def _imu_corr_step_min_sec() -> float:
-    """Floor on the per-step duration (MX-28 needs >~50 ms commanded goal
-    to physically slew there). The proportional realign drops below this
-    only when it would actually exit on the next sample.
+    """Floor on the per-step duration. The MX-28 has ~50 ms of slew
+    latency before any visible rotation; pulses below this floor are
+    effectively no-ops. Default 0.08 s puts a little headroom above the
+    slew latency so even the smallest proportional step produces measurable
+    rotation.
     """
     try:
         return max(
             0.01,
-            min(1.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STEP_MIN_SEC", "0.05"))),
+            min(1.0, float(os.environ.get("NINA_HOVER_IMU_CORR_STEP_MIN_SEC", "0.08"))),
         )
     except ValueError:
-        return 0.05
+        return 0.08
+
+
+def _imu_corr_progress_check_steps() -> int:
+    """Number of micro-steps the realign will run before checking that it's
+    actually making progress. If, after this many steps, drift hasn't
+    improved by at least ``PROGRESS_MIN_DEG``, the realign exits cleanly
+    with reason "no progress" so the cooldown + next-event cycle can try
+    fresh instead of burning ``MAX_STEPS`` worth of ineffective pulses.
+
+    Set to 0 to disable the check entirely (legacy max-steps-only behaviour).
+    """
+    try:
+        return max(
+            0,
+            min(50, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS", "4")))),
+        )
+    except ValueError:
+        return 4
+
+
+def _imu_corr_progress_min_deg() -> float:
+    """Minimum improvement in ``|drift|`` (deg) the realign must show by
+    step ``PROGRESS_CHECK_STEPS``, otherwise it bails as "no progress".
+
+    Defaults to 1.0 — very lenient (only 0.25 deg/step on average after
+    4 steps). Tighter than this would be too noisy.
+    """
+    try:
+        return max(
+            0.0,
+            min(20.0, float(os.environ.get("NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG", "1.0"))),
+        )
+    except ValueError:
+        return 1.0
 
 
 def _imu_corr_bail_warmup_steps() -> int:
@@ -656,6 +702,8 @@ class HoverboardAxisDrive:
         self._imu_corr_max_steps: int = _imu_corr_max_steps()
         self._imu_corr_step_rate_dps: float = _imu_corr_step_rate_deg_per_sec()
         self._imu_corr_step_min_sec: float = _imu_corr_step_min_sec()
+        self._imu_corr_progress_check_steps: int = _imu_corr_progress_check_steps()
+        self._imu_corr_progress_min_deg: float = _imu_corr_progress_min_deg()
         self._imu_corr_bail_warmup_steps: int = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg: float = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
@@ -717,6 +765,8 @@ class HoverboardAxisDrive:
         self._imu_corr_max_steps = _imu_corr_max_steps()
         self._imu_corr_step_rate_dps = _imu_corr_step_rate_deg_per_sec()
         self._imu_corr_step_min_sec = _imu_corr_step_min_sec()
+        self._imu_corr_progress_check_steps = _imu_corr_progress_check_steps()
+        self._imu_corr_progress_min_deg = _imu_corr_progress_min_deg()
         self._imu_corr_bail_warmup_steps = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
@@ -727,6 +777,7 @@ class HoverboardAxisDrive:
             "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
             "step_dur=%.2fs step_min=%.2fs step_rate=%.1fdps "
             "step_settle=%.2fs max_steps=%d "
+            "progress_check=%d progress_min=%.2f deg "
             "bail_warmup=%d bail_margin=%.2f deg "
             "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
             "(iterative proportional micro-step realign)",
@@ -742,6 +793,8 @@ class HoverboardAxisDrive:
             self._imu_corr_step_rate_dps,
             self._imu_corr_step_settle_sec,
             self._imu_corr_max_steps,
+            self._imu_corr_progress_check_steps,
+            self._imu_corr_progress_min_deg,
             self._imu_corr_bail_warmup_steps,
             self._imu_corr_bail_margin_deg,
             self._imu_corr_settle_sec,
@@ -888,13 +941,16 @@ class HoverboardAxisDrive:
 
         warmup_steps = max(0, int(self._imu_corr_bail_warmup_steps))
         bail_margin = max(0.0, float(self._imu_corr_bail_margin_deg))
+        progress_check_step = max(0, int(self._imu_corr_progress_check_steps))
+        progress_min_deg = max(0.0, float(self._imu_corr_progress_min_deg))
 
         log.info(
             "hover IMU correction: drift=%+.2f deg (invert=%s) >= %.2f deg "
             "threshold -> brake + iterative realign "
             "(step_blend=%s%%, step_dur_cap=%.2fs, step_min=%.2fs, "
             "step_rate=%.1fdps, step_settle=%.2fs, "
-            "max_steps=%d, bail_warmup=%d, bail_margin=%.2f, deadband=%.2f deg)",
+            "max_steps=%d, progress_check=%d, progress_min=%.2f, "
+            "bail_warmup=%d, bail_margin=%.2f, deadband=%.2f deg)",
             drift_deg,
             invert,
             self._imu_corr_threshold_deg,
@@ -904,6 +960,8 @@ class HoverboardAxisDrive:
             step_rate_dps,
             step_settle,
             max_steps,
+            progress_check_step,
+            progress_min_deg,
             warmup_steps,
             bail_margin,
             deadband,
@@ -990,6 +1048,34 @@ class HoverboardAxisDrive:
                             break
                     else:
                         growing_streak = 0
+
+                # No-progress safeguard: if we've spent enough effort and
+                # ``|drift|`` hasn't dropped by ``progress_min_deg`` from
+                # ``drift_deg`` (the value that triggered the realign),
+                # exit cleanly. Natural drift rate has temporarily exceeded
+                # our per-step correction; the next event will get a fresh
+                # chance after the cooldown rather than us burning
+                # ``MAX_STEPS`` worth of ineffective pulses.
+                if (
+                    progress_check_step > 0
+                    and step >= progress_check_step
+                ):
+                    improvement = abs(drift_deg) - abs(yaw_now)
+                    if improvement < progress_min_deg:
+                        log.info(
+                            "hover IMU correction: realign making no "
+                            "progress (start=%+.2f, now=%+.2f, "
+                            "improvement=%+.2f deg after %d steps, "
+                            "threshold=%.2f deg) — exiting to let the next "
+                            "event try fresh",
+                            drift_deg,
+                            yaw_now,
+                            improvement,
+                            step + 1,
+                            progress_min_deg,
+                        )
+                        exit_reason = "no progress"
+                        break
 
             # Decide direction from the *latest* sample so micro-overshoots
             # self-correct on the next iteration. Reuses the same geometry

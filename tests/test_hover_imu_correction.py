@@ -124,6 +124,11 @@ def _fast_correction_env(**extras: str) -> dict[str, str]:
         # keeping legacy assertions stable.
         "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "1000.0",
         "NINA_HOVER_IMU_CORR_STEP_MIN_SEC": "0.005",
+        # No-progress safeguard disabled by default in tests; the
+        # progress-check test overrides it explicitly. Existing tests
+        # assume MAX_STEPS or deadband control termination.
+        "NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS": "0",
+        "NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG": "100.0",
         # Bail warmup disabled in tests so wrong-direction sample streams
         # trigger the bail on the very first sample. The warmup-grace tests
         # override this explicitly.
@@ -717,7 +722,11 @@ def test_default_tunables_are_conservative() -> None:
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC",
         "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC",
+        "NINA_HOVER_IMU_CORR_STEP_MIN_SEC",
+        "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC",
         "NINA_HOVER_IMU_CORR_MAX_STEPS",
+        "NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS",
+        "NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG",
         "NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS",
         "NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC",
@@ -744,6 +753,18 @@ def test_default_tunables_are_conservative() -> None:
     )
     assert drv._imu_corr_bail_margin_deg >= 2.0, (
         "bail margin must exceed typical per-step rotation to avoid false trips"
+    )
+    assert drv._imu_corr_step_min_sec >= 0.05, (
+        "step min must exceed MX-28 slew latency floor"
+    )
+    assert drv._imu_corr_step_rate_dps >= 10.0, (
+        "step rate calibration should match a real bench rotation rate"
+    )
+    assert drv._imu_corr_progress_check_steps >= 2, (
+        "no-progress safeguard must be enabled by default"
+    )
+    assert drv._imu_corr_progress_min_deg > 0.0, (
+        "progress threshold must be a positive degree value"
     )
     assert drv._imu_corr_settle_sec >= 0.20, "outer brake settle should be long by default"
     assert drv._imu_corr_cooldown_sec >= 0.5, "cooldown should be substantial by default"
@@ -1201,6 +1222,64 @@ def test_proportional_step_shrinks_for_small_drift() -> None:
     assert small_elapsed < 0.15, (
         f"small drift step should be well under PIVOT_MAX_SEC=0.18s; "
         f"actual={small_elapsed:.3f}s"
+    )
+
+
+def test_no_progress_exit_when_drift_held_at_start_value() -> None:
+    """If the realign isn't reducing drift after ``PROGRESS_CHECK_STEPS``,
+    it must exit cleanly with "no progress" rather than burn ``MAX_STEPS``.
+
+    Mirrors the field-observed event where 15 ineffective micro-steps ran
+    in ~3.6 s with drift held essentially constant — the cooldown + next
+    event should get the fresh chance instead of us wasting that time.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="20",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="100.0",  # disable wrong-direction bail
+        NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS="3",
+        NINA_HOVER_IMU_CORR_PROGRESS_MIN_DEG="2.0",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)  # stuck at start value
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(4.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    # Must exit at the progress-check step, not run all 20 max_steps.
+    assert len(pivot_writes) <= 5, (
+        f"no-progress safeguard must short-circuit the realign well "
+        f"before MAX_STEPS=20; saw {len(pivot_writes)} pivot writes"
+    )
+
+
+def test_no_progress_check_disabled_by_setting_check_steps_zero() -> None:
+    """Setting ``PROGRESS_CHECK_STEPS=0`` must disable the safeguard so the
+    legacy "run until MAX_STEPS" behaviour is recoverable.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="6",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="100.0",
+        NINA_HOVER_IMU_CORR_PROGRESS_CHECK_STEPS="0",  # disabled
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 4.0)  # stuck
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(4.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    assert len(pivot_writes) == 6, (
+        f"with progress-check disabled, stuck drift must run all "
+        f"MAX_STEPS=6 micro-steps; saw {len(pivot_writes)}"
     )
 
 
