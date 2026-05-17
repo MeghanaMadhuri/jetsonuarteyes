@@ -1398,3 +1398,250 @@ def test_corrective_hold_tags_cooldown_with_direction(
     assert "hover IMU correction (backward): cooldown" in log_text, (
         f"cooldown log line must include the (backward) tag; saw:\n{log_text}"
     )
+
+
+# ----------------------------------------------------------------------
+# Backward-direction overrides
+#
+# On a typical hoverboard chassis the natural yaw rate while reversing is
+# 1-2 orders of magnitude higher than while going forward, so the forward
+# cooldown / threshold / step-rate calibration produces a visible "snake"
+# pattern on the backward leg. The NINA_HOVER_IMU_CORR_BACK_* env vars
+# let backward be tuned more aggressively without disturbing forward; when
+# unset, backward must inherit the forward value verbatim (so no chassis
+# regresses just because the override knobs exist).
+# ----------------------------------------------------------------------
+
+def test_back_overrides_default_to_forward_value_when_unset() -> None:
+    """Unset BACK_* env vars must cache the forward value, so backward
+    behaves identically to forward on chassis that haven't opted in.
+    """
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "4.0",
+            "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "1.0",
+            "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "30.0",
+            # BACK_* deliberately unset.
+        },
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    assert drv._imu_corr_back_threshold_deg == drv._imu_corr_threshold_deg == 4.0
+    assert drv._imu_corr_back_cooldown_sec == drv._imu_corr_cooldown_sec == 1.0
+    assert drv._imu_corr_back_step_rate_dps == drv._imu_corr_step_rate_dps == 30.0
+
+
+def test_back_overrides_load_explicit_env_values() -> None:
+    """When set, BACK_* env vars must populate the dedicated backward attrs
+    while leaving the forward attrs untouched.
+    """
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "4.0",
+            "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "1.0",
+            "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "30.0",
+            "NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG": "3.0",
+            "NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC": "0.3",
+            "NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC": "60.0",
+        },
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    # Forward attrs unchanged
+    assert drv._imu_corr_threshold_deg == 4.0
+    assert drv._imu_corr_cooldown_sec == 1.0
+    assert drv._imu_corr_step_rate_dps == 30.0
+    # Backward attrs from explicit overrides
+    assert drv._imu_corr_back_threshold_deg == 3.0
+    assert drv._imu_corr_back_cooldown_sec == 0.3
+    assert drv._imu_corr_back_step_rate_dps == 60.0
+
+
+def test_back_overrides_invalid_env_falls_back_to_forward() -> None:
+    """Garbage BACK_* values must NOT crash the controller — they fall back
+    to the forward value so the bot still operates.
+    """
+    drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_IMU_CORR_THRESHOLD_DEG": "4.0",
+            "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "1.0",
+            "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC": "30.0",
+            "NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG": "not-a-number",
+            "NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC": "",
+            "NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC": "garbage",
+        },
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    assert drv._imu_corr_back_threshold_deg == 4.0
+    assert drv._imu_corr_back_cooldown_sec == 1.0
+    assert drv._imu_corr_back_step_rate_dps == 30.0
+
+
+def test_corrective_hold_uses_back_threshold_for_backward() -> None:
+    """A drift level that's *below* the forward threshold but *above* the
+    backward threshold must fire only on backward, not on forward.
+    """
+    dxl_fwd = FakeDxl()
+    drv_fwd = HoverboardAxisDrive(dxl_fwd, threading.RLock(), _axis(), _cfg())
+    drv_fwd.initialize()
+    dxl_back = FakeDxl()
+    drv_back = HoverboardAxisDrive(dxl_back, threading.RLock(), _axis(), _cfg())
+    drv_back.initialize()
+    env = _fast_correction_env(
+        # Forward threshold high, backward threshold low.
+        NINA_HOVER_IMU_CORR_THRESHOLD_DEG="10.0",
+        NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG="2.0",
+        # Cooldown 0 + quick correction so the test doesn't drag.
+        NINA_HOVER_IMU_CORR_COOLDOWN_SEC="0.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="1",
+        # Sampler reports a drift right between the two thresholds.
+        # (set later via set_imu_hooks per-drive)
+    )
+    drift = 5.0  # > 2.0 back, < 10.0 fwd
+    with patch.dict(os.environ, env, clear=False):
+        drv_fwd.set_imu_hooks(yaw_drift_fn=lambda: drift)
+        drv_back.set_imu_hooks(yaw_drift_fn=lambda: drift)
+    base = {12: 2114, 13: 2114}
+    halt = threading.Event()
+
+    pre_fwd = len(dxl_fwd.goal_writes)
+    drv_fwd._imu_corrective_hold(base, 0.10, halt, is_forward=True)
+    fwd_writes = dxl_fwd.goal_writes[pre_fwd:]
+    fwd_pivot_writes = [w for w in fwd_writes if w == _pivot_left_goals_20pct()]
+    assert fwd_pivot_writes == [], (
+        f"drift {drift} < forward threshold 10.0 must NOT pivot; saw "
+        f"{len(fwd_pivot_writes)} pivot writes"
+    )
+
+    pre_back = len(dxl_back.goal_writes)
+    drv_back._imu_corrective_hold(base, 0.10, halt, is_forward=False)
+    back_writes = dxl_back.goal_writes[pre_back:]
+    back_pivot_writes = [w for w in back_writes if w == _pivot_left_goals_20pct()]
+    assert len(back_pivot_writes) >= 1, (
+        f"drift {drift} > backward threshold 2.0 must fire pivot; saw "
+        f"{len(back_pivot_writes)} pivot writes"
+    )
+
+
+def test_corrective_hold_applies_back_cooldown_separately(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """The cooldown log line must report the backward cooldown when the
+    hold ran in backward mode (and the forward cooldown when forward).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_COOLDOWN_SEC="1.50",
+            NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC="0.25",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    drv._imu_corrective_hold(base, 0.10, halt, is_forward=False)
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (backward): cooldown 0.25s" in log_text, (
+        f"backward hold must log backward cooldown (0.25s); saw:\n{log_text}"
+    )
+    assert "cooldown 1.50s" not in log_text, (
+        f"backward hold must NOT log the forward cooldown; saw:\n{log_text}"
+    )
+
+
+def _realign_banner_messages(
+    caplog: pytest.LogCaptureFixture,
+) -> List[str]:
+    """Return only the per-correction realign-banner messages from caplog.
+
+    The ``hoverboard IMU hooks: ...`` startup banner also references
+    ``back_step_rate`` when the override is set, which would otherwise
+    contaminate "step_rate=X not in log_text" assertions. Filter to the
+    realign-banner lines (the ones that include ``drift=`` and
+    ``iterative realign``) so the assertions are scoped to the actual
+    correction event.
+    """
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if "hover IMU correction (" in r.getMessage()
+        and "iterative realign" in r.getMessage()
+    ]
+
+
+def test_perform_pivot_correction_uses_back_step_rate_for_backward(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """The realign banner must include the backward step_rate when the
+    pivot ran in backward mode.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="30.0",
+            NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC="90.0",
+            NINA_HOVER_IMU_CORR_MAX_STEPS="1",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    drv._perform_pivot_correction(5.0, threading.Event(), is_forward=False)
+    banners = _realign_banner_messages(_imu_corr_log_records)
+    assert banners, "expected at least one realign banner line"
+    joined = "\n".join(banners)
+    assert "step_rate=90.0dps" in joined, (
+        f"backward realign banner must log backward step_rate (90.0); "
+        f"saw:\n{joined}"
+    )
+    assert "step_rate=30.0dps" not in joined, (
+        f"backward realign must NOT log the forward step_rate; saw:\n{joined}"
+    )
+
+
+def test_perform_pivot_correction_still_uses_forward_step_rate_for_forward(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """Setting BACK_STEP_RATE must NOT leak into the forward leg — the
+    forward realign banner must still report the forward step_rate.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(
+        os.environ,
+        _fast_correction_env(
+            NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="30.0",
+            NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC="90.0",
+            NINA_HOVER_IMU_CORR_MAX_STEPS="1",
+        ),
+        clear=False,
+    ):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    drv._perform_pivot_correction(5.0, threading.Event(), is_forward=True)
+    banners = _realign_banner_messages(_imu_corr_log_records)
+    assert banners, "expected at least one realign banner line"
+    joined = "\n".join(banners)
+    assert "step_rate=30.0dps" in joined, (
+        f"forward realign banner must log forward step_rate (30.0); "
+        f"saw:\n{joined}"
+    )
+    assert "step_rate=90.0dps" not in joined, (
+        f"forward realign must NOT log the backward step_rate; saw:\n{joined}"
+    )

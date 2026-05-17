@@ -122,6 +122,28 @@ hoverboard chassis; lower them only if the realign is over-shooting):
                                                                 drift past ``BAIL_MARGIN_DEG``. Set to
                                                                 ``1`` then.)
 
+Backward-direction overrides (all default to the forward value when unset
+— so existing chassis behave identically until the operator opts in):
+
+  ``NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG``     default = forward threshold
+                                                                (set LOWER than forward to fire backward
+                                                                corrections earlier on chassis where the
+                                                                natural yaw rate while reversing is
+                                                                substantially higher than going forward)
+  ``NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC``      default = forward cooldown
+                                                                (set SMALLER than forward to let the next
+                                                                backward correction fire sooner; with the
+                                                                forward 1.0 s default ~30 deg of natural
+                                                                drift can accumulate between backward
+                                                                corrections on a snake-prone chassis)
+  ``NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC`` default = forward step rate
+                                                                (set HIGHER than forward to shrink each
+                                                                backward micro-step's duration -- useful
+                                                                when backward pivots are physically more
+                                                                authoritative than forward pivots and the
+                                                                forward calibration over-shoots when reused
+                                                                in reverse)
+
 Logging convention: every IMU-correction log line emitted from inside the
 pulse hold (``hover IMU correction (forward): ...`` or
 ``hover IMU correction (backward): ...``) carries the direction tag of the
@@ -131,7 +153,11 @@ frame drift sample, not from the chassis motion direction), but tagging
 lets the operator confirm via ``grep`` that the backward pulse loop is
 actually firing corrections — and at what rate / magnitude relative to
 forward — without needing to cross-reference timestamps against the
-``hover backward pulse series`` banner.
+``hover backward pulse series`` banner. The realign banner reports the
+*effective* threshold / step_rate for the direction in which the
+correction is firing, so a backward correction running under
+``NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG=3.0`` will print ``>= 3.00 deg
+threshold`` even when forward is configured for 4.0.
 """
 
 from __future__ import annotations
@@ -571,6 +597,95 @@ def _imu_corr_poll_hz() -> float:
         return 5.0
 
 
+# ----------------------------------------------------------------------
+# Backward-direction overrides
+#
+# The forward pulse and the backward pulse share the same IMU correction
+# code path (see ``_imu_corrective_hold`` / ``_perform_pivot_correction``)
+# because the pivot direction is derived from the SIGN of the world-frame
+# drift sample, not from the chassis motion direction. The mechanics,
+# however, are NOT symmetric — on a typical hoverboard build the natural
+# yaw rate while reversing can be one to two orders of magnitude higher
+# than while going forward (mismatched brake / coast lean per wheel in
+# reverse, hub-motor freewheel asymmetry, weight transfer onto the
+# trailing wheel, etc.). The forward-only tunables that work well at
+# ~0.2 deg/s natural drift produce a visible "snake" pattern at the
+# ~30 deg/s natural drift rate observed during reverse.
+#
+# Each helper returns the *forward* tunable as the default, so backward
+# behaviour is unchanged unless the operator explicitly opts in by
+# setting the ``NINA_HOVER_IMU_CORR_BACK_*`` env var. Recommended starting
+# point on a snake-prone chassis:
+#
+#   NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG=3.0      # fire earlier
+#   NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC=0.3       # fire more often
+#   NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC=60.0  # shorter, gentler steps
+# ----------------------------------------------------------------------
+
+
+def _imu_corr_back_threshold_deg(forward_default: float) -> float:
+    """Backward-only drift threshold override.
+
+    Set ``NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG`` to a value LOWER than
+    the forward threshold to fire backward corrections earlier (useful
+    when the chassis naturally drifts much faster in reverse). When unset
+    or unparseable, returns *forward_default* so backward behaviour is
+    identical to forward.
+
+    Clamped to the same ``[0.1, 45]`` range as the forward helper.
+    """
+    raw = os.environ.get("NINA_HOVER_IMU_CORR_BACK_THRESHOLD_DEG")
+    if raw is None or raw.strip() == "":
+        return forward_default
+    try:
+        return max(0.1, min(45.0, float(raw)))
+    except ValueError:
+        return forward_default
+
+
+def _imu_corr_back_cooldown_sec(forward_default: float) -> float:
+    """Backward-only cooldown override.
+
+    Set ``NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC`` to a SMALLER value than
+    forward to let the next backward correction fire sooner (the forward
+    default of 1.0 s lets ~30 deg of natural drift accumulate between
+    backward corrections, which then forces a large catch-up pivot and
+    produces the snake pattern). When unset, returns *forward_default*.
+
+    Clamped to the same ``[0.0, 10.0]`` range as the forward helper.
+    """
+    raw = os.environ.get("NINA_HOVER_IMU_CORR_BACK_COOLDOWN_SEC")
+    if raw is None or raw.strip() == "":
+        return forward_default
+    try:
+        return max(0.0, min(10.0, float(raw)))
+    except ValueError:
+        return forward_default
+
+
+def _imu_corr_back_step_rate_deg_per_sec(forward_default: float) -> float:
+    """Backward-only per-step rotation-rate override.
+
+    The proportional micro-step duration is computed as
+    ``|drift| / step_rate`` so a HIGHER rate produces SHORTER pulses.
+    On a chassis where backward pivots are physically more authoritative
+    than forward pivots (commonly the case when the bot has more
+    angular momentum in reverse), setting the backward rate higher than
+    forward shrinks each backward step and reduces overshoot. When unset,
+    returns *forward_default* so backward inherits the forward
+    calibration.
+
+    Clamped to the same ``[1.0, 360.0]`` range as the forward helper.
+    """
+    raw = os.environ.get("NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC")
+    if raw is None or raw.strip() == "":
+        return forward_default
+    try:
+        return max(1.0, min(360.0, float(raw)))
+    except ValueError:
+        return forward_default
+
+
 def _hover_turn_slow_wheel_pct() -> int:
     """Backward-side lean for held D-pad pivots (1–100, default 8)."""
     try:
@@ -718,6 +833,18 @@ class HoverboardAxisDrive:
         self._imu_corr_bail_warmup_steps: int = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg: float = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec: float = 1.0 / _imu_corr_poll_hz()
+        # Backward-direction overrides. Default to the forward value so
+        # backward behaviour is unchanged unless the operator opts in via
+        # NINA_HOVER_IMU_CORR_BACK_*. See helper docstrings for rationale.
+        self._imu_corr_back_threshold_deg: float = _imu_corr_back_threshold_deg(
+            self._imu_corr_threshold_deg
+        )
+        self._imu_corr_back_cooldown_sec: float = _imu_corr_back_cooldown_sec(
+            self._imu_corr_cooldown_sec
+        )
+        self._imu_corr_back_step_rate_dps: float = (
+            _imu_corr_back_step_rate_deg_per_sec(self._imu_corr_step_rate_dps)
+        )
         # Earliest monotonic time at which the next IMU sample is allowed.
         # Set by every pivot to ``now + cooldown_sec`` so back-to-back
         # corrections can't fire. Reset to 0 by ``_imu_begin_straight`` so a
@@ -781,8 +908,35 @@ class HoverboardAxisDrive:
         self._imu_corr_bail_warmup_steps = _imu_corr_bail_warmup_steps()
         self._imu_corr_bail_margin_deg = _imu_corr_bail_margin_deg()
         self._imu_corr_poll_sec = 1.0 / _imu_corr_poll_hz()
+        self._imu_corr_back_threshold_deg = _imu_corr_back_threshold_deg(
+            self._imu_corr_threshold_deg
+        )
+        self._imu_corr_back_cooldown_sec = _imu_corr_back_cooldown_sec(
+            self._imu_corr_cooldown_sec
+        )
+        self._imu_corr_back_step_rate_dps = _imu_corr_back_step_rate_deg_per_sec(
+            self._imu_corr_step_rate_dps
+        )
         # Allow the first sample of the next straight leg to fire immediately.
         self._imu_corr_next_sample_at = 0.0
+        # Show the backward overrides only when they actually differ from
+        # forward, so the banner stays compact on chassis that don't need
+        # direction-specific tuning.
+        back_threshold_tag = (
+            ""
+            if self._imu_corr_back_threshold_deg == self._imu_corr_threshold_deg
+            else f" back_threshold={self._imu_corr_back_threshold_deg:.2f}"
+        )
+        back_cooldown_tag = (
+            ""
+            if self._imu_corr_back_cooldown_sec == self._imu_corr_cooldown_sec
+            else f" back_cooldown={self._imu_corr_back_cooldown_sec:.2f}s"
+        )
+        back_step_rate_tag = (
+            ""
+            if self._imu_corr_back_step_rate_dps == self._imu_corr_step_rate_dps
+            else f" back_step_rate={self._imu_corr_back_step_rate_dps:.1f}dps"
+        )
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
@@ -790,7 +944,8 @@ class HoverboardAxisDrive:
             "step_settle=%.2fs max_steps=%d "
             "progress_check=%d progress_min=%.2f deg "
             "bail_warmup=%d bail_margin=%.2f deg "
-            "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s "
+            "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s"
+            "%s%s%s "
             "(iterative proportional micro-step realign)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
@@ -812,6 +967,9 @@ class HoverboardAxisDrive:
             self._imu_corr_cooldown_sec,
             _imu_corr_poll_hz(),
             self._imu_corr_invert_sign,
+            back_threshold_tag,
+            back_cooldown_tag,
+            back_step_rate_tag,
         )
 
     def _imu_sample_drift_deg(self) -> Optional[float]:
@@ -864,7 +1022,20 @@ class HoverboardAxisDrive:
             return halt.wait(timeout=duration_sec)
         step = max(0.01, float(self._imu_corr_poll_sec))
         end = time.monotonic() + duration_sec
-        threshold = self._imu_corr_threshold_deg
+        # Direction-aware threshold + cooldown so operators can tune the
+        # backward leg more aggressively without affecting forward. When
+        # the BACK_* env vars are unset both attrs hold the same value, so
+        # this is a no-op for chassis that haven't opted in.
+        threshold = (
+            self._imu_corr_threshold_deg
+            if is_forward
+            else self._imu_corr_back_threshold_deg
+        )
+        cooldown_sec = (
+            self._imu_corr_cooldown_sec
+            if is_forward
+            else self._imu_corr_back_cooldown_sec
+        )
         while True:
             if halt.is_set():
                 return True
@@ -893,13 +1064,13 @@ class HoverboardAxisDrive:
                     except Exception:
                         pass
                     self._imu_corr_next_sample_at = (
-                        time.monotonic() + self._imu_corr_cooldown_sec
+                        time.monotonic() + cooldown_sec
                     )
                     log.info(
                         "hover IMU correction (%s): cooldown %.2fs "
                         "(primed-only motion)",
                         direction_tag,
-                        self._imu_corr_cooldown_sec,
+                        cooldown_sec,
                     )
             remaining = end - time.monotonic()
             if remaining <= 0.0:
@@ -968,7 +1139,17 @@ class HoverboardAxisDrive:
         step_blend = max(1, min(100, int(self._imu_corr_pivot_blend_pct)))
         step_dur_cap = max(0.02, float(self._imu_corr_pivot_max_sec))
         step_min_sec = max(0.01, float(self._imu_corr_step_min_sec))
-        step_rate_dps = max(1.0, float(self._imu_corr_step_rate_dps))
+        # Direction-aware step rate: backward leg may use a different
+        # calibration (NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC).
+        # Falls back to the forward value when the override is unset.
+        step_rate_dps = max(
+            1.0,
+            float(
+                self._imu_corr_step_rate_dps
+                if is_forward
+                else self._imu_corr_back_step_rate_dps
+            ),
+        )
         step_settle = max(0.0, float(self._imu_corr_step_settle_sec))
         max_steps = max(1, int(self._imu_corr_max_steps))
 
@@ -976,6 +1157,11 @@ class HoverboardAxisDrive:
         bail_margin = max(0.0, float(self._imu_corr_bail_margin_deg))
         progress_check_step = max(0, int(self._imu_corr_progress_check_steps))
         progress_min_deg = max(0.0, float(self._imu_corr_progress_min_deg))
+        effective_threshold = (
+            self._imu_corr_threshold_deg
+            if is_forward
+            else self._imu_corr_back_threshold_deg
+        )
 
         log.info(
             "hover IMU correction (%s): drift=%+.2f deg (invert=%s) >= "
@@ -987,7 +1173,7 @@ class HoverboardAxisDrive:
             direction_tag,
             drift_deg,
             invert,
-            self._imu_corr_threshold_deg,
+            effective_threshold,
             step_blend,
             step_dur_cap,
             step_min_sec,
