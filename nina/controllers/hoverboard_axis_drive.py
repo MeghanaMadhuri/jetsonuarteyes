@@ -866,6 +866,167 @@ def _timed_turn_pivot_blend_pct() -> int:
         return 17
 
 
+# ----------------------------------------------------------------------
+# Closed-loop 90° turn (Drive screen "Turn left" / "Turn right" buttons)
+#
+# These knobs configure :meth:`HoverboardAxisDrive.pulse_turn_90`, which
+# reuses the iterative proportional micro-step algorithm from
+# :meth:`_perform_pivot_correction` — same per-step geometry
+# (``_goals_for_wheels`` with opposite leans), same per-step duration
+# formula (``rotation_target / step_rate_dps`` clamped to
+# ``[step_min, step_dur_cap]``), same brake-between-steps for clean IMU
+# re-sampling — but DRIVEN BY A YAW BUDGET (target ±90°) rather than
+# straight-line drift correction.
+#
+# Defaults are intentionally close to the forward straight-leg correction
+# values so a fresh deploy inherits the tuning the operator has already
+# validated for forward motion; only knobs that are genuinely
+# turn-specific (target deg, step cap headroom, settle dwells, progress
+# / fallback) get their own env name.
+# ----------------------------------------------------------------------
+
+
+def _imu_turn_target_deg() -> float:
+    """Yaw budget (deg) the closed-loop turn must traverse.
+
+    Default 90.0 — the operator-facing "Turn left" / "Turn right" buttons
+    are documented as 90° turns. Override only for special calibration
+    runs (e.g. 45° staircase profiles); clamped to ``[5.0, 180.0]`` so a
+    typo can't request more than half a full rotation.
+    """
+    try:
+        return max(
+            5.0,
+            min(180.0, float(os.environ.get("NINA_HOVER_TURN_TARGET_DEG", "90.0"))),
+        )
+    except ValueError:
+        return 90.0
+
+
+def _imu_turn_max_steps() -> int:
+    """Hard cap on micro-steps inside one closed-loop 90° turn.
+
+    A 90° target at the default 30 deg/s step rate × 0.18 s cap rotates
+    up to ~5.4°/step at saturation, so ~17 saturated steps would cover
+    90° before any deceleration / fine-tuning at the end. Default 40
+    leaves comfortable headroom for proportional slow-down near the
+    target plus a few extra for noisy IMU samples or a sticky chassis.
+    """
+    try:
+        return max(
+            1,
+            min(200, int(float(os.environ.get("NINA_HOVER_TURN_MAX_STEPS", "40")))),
+        )
+    except ValueError:
+        return 40
+
+
+def _imu_turn_step_rate_deg_per_sec() -> float:
+    """Empirical chassis rotation rate (deg/s) for the closed-loop turn.
+
+    Defaults to the same value as the forward IMU correction step rate
+    (``NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC``, 30 dps) — the
+    operator-tuned forward number is the most rigorous data we have on
+    how this chassis rotates per unit of commanded lean × time. Override
+    with ``NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC`` if in-place pivots
+    end up empirically faster (turns drive both wheels actively in
+    opposite directions, whereas forward straight-leg correction
+    micro-pivots against forward chassis momentum).
+    """
+    raw = (os.environ.get("NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC") or "").strip()
+    if raw:
+        try:
+            return max(1.0, min(360.0, float(raw)))
+        except ValueError:
+            pass
+    return _imu_corr_step_rate_deg_per_sec()
+
+
+def _imu_turn_step_blend_pct() -> int:
+    """Per-micro-step pivot blend %% for the closed-loop turn.
+
+    Defaults to the forward IMU correction blend
+    (``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``, 20). Override with
+    ``NINA_HOVER_TURN_STEP_BLEND_PCT`` to lean harder on each step
+    (faster turn, more risk of overshoot) or softer (smoother, more
+    steps).
+    """
+    raw = (os.environ.get("NINA_HOVER_TURN_STEP_BLEND_PCT") or "").strip()
+    if raw:
+        try:
+            return max(1, min(100, int(float(raw))))
+        except ValueError:
+            pass
+    return _imu_corr_pivot_blend_pct()
+
+
+def _imu_turn_pre_settle_sec() -> float:
+    """Brake dwell BEFORE the first micro-step fires.
+
+    Lets any forward / backward pulse leg we just halted bleed off
+    chassis momentum so the integrator anchors a stable zero. Default
+    0.20 s — long enough for the MX-28 to land on brake, short enough
+    that the operator doesn't perceive the turn as laggy.
+    """
+    try:
+        return max(
+            0.0,
+            min(2.0, float(os.environ.get("NINA_HOVER_TURN_PRE_SETTLE_SEC", "0.20"))),
+        )
+    except ValueError:
+        return 0.20
+
+
+def _imu_turn_post_settle_sec() -> float:
+    """Brake dwell AFTER the last micro-step fires.
+
+    Holds the bot stationary after reaching the target so the chassis
+    doesn't keep rotating from residual lean momentum (the lean servos
+    are commanded to brake but the wheels coast a touch). Default
+    0.30 s.
+    """
+    try:
+        return max(
+            0.0,
+            min(2.0, float(os.environ.get("NINA_HOVER_TURN_POST_SETTLE_SEC", "0.30"))),
+        )
+    except ValueError:
+        return 0.30
+
+
+def _imu_turn_progress_check_steps() -> int:
+    """Steps to run before the closed-loop turn checks for progress.
+
+    Same idea as :func:`_imu_corr_progress_check_steps` but tuned for
+    the much larger angular budget (90° vs ~5°): default 6 lets the
+    realign do real work before bailing on "no progress" exits. Set 0
+    to disable the check entirely.
+    """
+    try:
+        return max(
+            0,
+            min(50, int(float(os.environ.get("NINA_HOVER_TURN_PROGRESS_CHECK_STEPS", "6")))),
+        )
+    except ValueError:
+        return 6
+
+
+def _imu_turn_progress_min_deg() -> float:
+    """Minimum |yaw| advance (deg) required by ``PROGRESS_CHECK_STEPS``.
+
+    Default 3.0° — at the saturated 5.4°/step rotation rate this is half
+    a step's worth; if the chassis hasn't moved that much in 6 steps the
+    pivots aren't actually rotating it (stuck wheel, no torque, etc.).
+    """
+    try:
+        return max(
+            0.0,
+            min(45.0, float(os.environ.get("NINA_HOVER_TURN_PROGRESS_MIN_DEG", "3.0"))),
+        )
+    except ValueError:
+        return 3.0
+
+
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
     """Upper-bound seconds for ``start_pulse_straight_forward`` until the pulse thread exits.
 
@@ -2656,6 +2817,321 @@ class HoverboardAxisDrive:
         if dur > 0.0:
             time.sleep(dur)
         self.stop(settle=False)
+
+    def pulse_turn_90(self, direction: str) -> bool:
+        """Closed-loop ~90° in-place turn driven by the IMU yaw integrator.
+
+        Reuses the iterative proportional micro-step machinery that
+        :meth:`_perform_pivot_correction` uses for straight-leg drift
+        correction, but anchored to a yaw BUDGET (±``NINA_HOVER_TURN_TARGET_DEG``)
+        instead of correcting a small drift back to zero. Each step:
+
+        1. Sample remaining yaw (target − current).
+        2. Choose pivot direction from the sign of remaining (positive
+           remaining in intent frame → pivot right, i.e. L=BACKWARD,
+           R=FORWARD).
+        3. Compute step duration ∝ |remaining|, clamped to
+           ``[step_min_sec, step_dur_cap]`` so big remainings get the
+           full cap and the last few degrees fall through small,
+           precise pulses.
+        4. Apply the pivot goals (built via :meth:`_goals_for_wheels`
+           so they honour the operator's tuned forward / backward lean
+           positions), wait, brake, settle, re-sample.
+
+        Halts any in-flight straight-pulse series first, brackets the
+        turn with :meth:`_imu_begin_straight` / :meth:`_imu_end_straight`
+        so the IMU integrator is reset to zero at the start (turning
+        the integrator into a closed-loop angle measurement for the
+        duration of the turn). The battery latch check is owned by
+        :meth:`sirena_ui.workers.drive_controller.DriveController._do_turn_90`,
+        which is the only caller wired from the Drive screen buttons.
+
+        ``direction`` must be ``"left"`` or ``"right"``. Returns ``True``
+        when the turn completed cleanly inside the deadband, ``False``
+        when it bailed early (max-steps reached, no-progress, IMU
+        unavailable, etc.) — the caller can use the return value to
+        decide whether to log a warning, but the brake / settle sequence
+        runs regardless so the bot is always left stationary.
+
+        Falls back to the legacy timed :meth:`turn_left` /
+        :meth:`turn_right` open-loop pivot when the IMU yaw sampler is
+        not wired or is returning ``None`` (integrator paused) so the
+        Drive button is never functionally dead.
+        """
+        if not self._is_initialized:
+            return False
+
+        direction = (direction or "").strip().lower()
+        if direction not in ("left", "right"):
+            log.warning(
+                "pulse_turn_90: unknown direction %r (expected 'left' / 'right')",
+                direction,
+            )
+            return False
+
+        # 1. Halt any in-flight straight pulse so we start from a known
+        # stationary pose; ``_halt_pulse_series`` joins the thread.
+        self._halt_pulse_series(wait=True)
+
+        brake_goals = {
+            self._left_id: self._brake_left,
+            self._right_id: self._brake_right,
+        }
+        # 2. Brake and let the chassis bleed off momentum before we
+        # anchor the integrator. The pre-settle is also what gives the
+        # MX-28 servos enough time to actually land on brake.
+        try:
+            self._apply_goals(brake_goals)
+        except Exception:
+            log.debug("pulse_turn_90: pre-brake apply failed", exc_info=True)
+        pre_settle = _imu_turn_pre_settle_sec()
+        if pre_settle > 0.0:
+            time.sleep(pre_settle)
+
+        yaw_fn = self._imu_yaw_drift_fn
+        if yaw_fn is None:
+            # No IMU hook wired (autonomy off, dev box, unit test
+            # without IMU fake) — fall back to the timed pivot so the
+            # button still does *something*.
+            log.warning(
+                "pulse_turn_90(%s): no IMU yaw hook wired, falling back to timed turn",
+                direction,
+            )
+            self._pulse_turn_timed_fallback(direction)
+            return False
+
+        # 3. Begin the integrator. This resets ``yaw_accum`` to 0 and
+        # flips ``_track_straight`` on so subsequent ``yaw_fn()`` calls
+        # return a live signed angle relative to the start of the turn.
+        self._imu_begin_straight()
+        try:
+            # Make sure the integrator has actually started reporting
+            # before we treat its samples as authoritative. A brief
+            # poll-and-wait loop tolerates the snapshot lag without
+            # blocking the Qt worker forever.
+            initial = self._poll_yaw_until_ready(yaw_fn, timeout_sec=0.5)
+            if initial is None:
+                log.warning(
+                    "pulse_turn_90(%s): IMU yaw sampler returned None for 0.5 s, "
+                    "falling back to timed turn",
+                    direction,
+                )
+                self._pulse_turn_timed_fallback(direction)
+                return False
+
+            target_deg = _imu_turn_target_deg()
+            max_steps = _imu_turn_max_steps()
+            step_blend = _imu_turn_step_blend_pct()
+            step_rate = _imu_turn_step_rate_deg_per_sec()
+            step_dur_cap = _imu_corr_pivot_max_sec()
+            step_min = _imu_corr_step_min_sec()
+            step_settle = _imu_corr_step_settle_sec()
+            deadband = _imu_corr_deadband_deg()
+            invert = _imu_corr_invert_sign()
+            progress_check = _imu_turn_progress_check_steps()
+            progress_min = _imu_turn_progress_min_deg()
+
+            # Intent-frame target: + = the chassis must rotate right
+            # (clockwise viewed from above). ``invert`` flips both the
+            # reading and the target so the pivot-direction decision
+            # stays correct regardless of IMU mount sign.
+            target_intent = target_deg if direction == "right" else -target_deg
+
+            def yaw_intent() -> Optional[float]:
+                raw = yaw_fn()
+                if raw is None:
+                    return None
+                return -float(raw) if invert else float(raw)
+
+            current = -float(initial) if invert else float(initial)
+            log.info(
+                "hover IMU turn (%s): begin target=%+.1f deg (intent frame, "
+                "invert=%s), step_blend=%d%%, step_rate=%.1fdps, "
+                "step_dur_cap=%.2fs, step_min=%.2fs, step_settle=%.2fs, "
+                "deadband=%.2f deg, max_steps=%d, progress_check=%d/%.2f deg",
+                direction,
+                target_intent,
+                invert,
+                step_blend,
+                step_rate,
+                step_dur_cap,
+                step_min,
+                step_settle,
+                deadband,
+                max_steps,
+                progress_check,
+                progress_min,
+            )
+
+            first_remaining_abs: Optional[float] = None
+            steps_taken = 0
+            exit_reason = "max-steps cap"
+            for step in range(max_steps):
+                remaining = target_intent - current
+                if abs(remaining) <= deadband:
+                    exit_reason = "deadband reached"
+                    break
+
+                if first_remaining_abs is None:
+                    first_remaining_abs = abs(remaining)
+
+                # No-progress bail: if after PROGRESS_CHECK_STEPS the
+                # remaining hasn't shrunk by at least PROGRESS_MIN_DEG,
+                # the pivots aren't actually rotating the chassis (stuck
+                # wheel, no torque). Bail cleanly rather than burning
+                # MAX_STEPS of ineffective pulses.
+                if (
+                    progress_check > 0
+                    and step >= progress_check
+                    and first_remaining_abs is not None
+                ):
+                    advance = first_remaining_abs - abs(remaining)
+                    if advance < progress_min:
+                        log.info(
+                            "hover IMU turn (%s): no progress after %d steps "
+                            "(advance=%+.2f deg, threshold=%.2f deg) — bailing",
+                            direction,
+                            step + 1,
+                            advance,
+                            progress_min,
+                        )
+                        exit_reason = "no progress"
+                        break
+
+                pivot_right_intent = remaining > 0.0
+                if pivot_right_intent:
+                    step_goals = self._goals_for_wheels(
+                        left_dir=self.DIR_BACKWARD,
+                        left_speed=step_blend,
+                        right_dir=self.DIR_FORWARD,
+                        right_speed=step_blend,
+                    )
+                else:
+                    step_goals = self._goals_for_wheels(
+                        left_dir=self.DIR_FORWARD,
+                        left_speed=step_blend,
+                        right_dir=self.DIR_BACKWARD,
+                        right_speed=step_blend,
+                    )
+
+                # Proportional duration — same formula as
+                # ``_perform_pivot_correction``: aim to land ~0.5 deadband
+                # short of the target so the next sample exits via the
+                # deadband instead of always overshooting.
+                rotation_target = max(0.5, abs(remaining) - 0.5 * deadband)
+                this_step_dur = max(
+                    step_min,
+                    min(step_dur_cap, rotation_target / step_rate),
+                )
+
+                try:
+                    self._apply_goals(step_goals)
+                except Exception:
+                    log.debug(
+                        "hover IMU turn (%s): step apply failed", direction,
+                        exc_info=True,
+                    )
+                time.sleep(this_step_dur)
+
+                # Brake between steps so the IMU re-samples on a still bot.
+                try:
+                    self._apply_goals(brake_goals)
+                except Exception:
+                    pass
+                if step_settle > 0.0:
+                    time.sleep(step_settle)
+
+                sample = yaw_intent()
+                if sample is None:
+                    # Transient None — don't update ``current``; the
+                    # next iteration will re-sample. We still count the
+                    # step so a permanently broken IMU eventually hits
+                    # ``max_steps``.
+                    log.debug(
+                        "hover IMU turn (%s): step %d IMU returned None, "
+                        "skipping update",
+                        direction,
+                        step + 1,
+                    )
+                    steps_taken = step + 1
+                    continue
+
+                current = sample
+                steps_taken = step + 1
+                log.debug(
+                    "hover IMU turn (%s): step %d yaw=%+.2f deg remaining=%+.2f "
+                    "deg this_dur=%.3fs",
+                    direction,
+                    steps_taken,
+                    current,
+                    target_intent - current,
+                    this_step_dur,
+                )
+
+            final_remaining = target_intent - current
+            log.info(
+                "hover IMU turn (%s): complete after %d step%s "
+                "(final yaw=%+.2f deg, remaining=%+.2f deg, exited via %s)",
+                direction,
+                steps_taken,
+                "" if steps_taken == 1 else "s",
+                current,
+                final_remaining,
+                exit_reason,
+            )
+            return exit_reason == "deadband reached"
+        finally:
+            # 4. Always brake + post-settle so the bot is left
+            # stationary, then end the integrator. The ``_imu_end_straight``
+            # call leaves the snapshot's last yaw intact in case the
+            # autonomy stack wants to inspect it.
+            try:
+                self._apply_goals(brake_goals)
+            except Exception:
+                log.debug(
+                    "pulse_turn_90: post-brake apply failed", exc_info=True
+                )
+            post_settle = _imu_turn_post_settle_sec()
+            if post_settle > 0.0:
+                time.sleep(post_settle)
+            self._imu_end_straight()
+
+    def _poll_yaw_until_ready(
+        self,
+        yaw_fn: Callable[[], Optional[float]],
+        *,
+        timeout_sec: float,
+        poll_interval_sec: float = 0.02,
+    ) -> Optional[float]:
+        """Poll ``yaw_fn`` until it returns a number or the timeout elapses.
+
+        ``MpuDriftMonitor.begin_straight_leg`` flips ``_track_straight``
+        immediately but the snapshot only starts returning a non-``None``
+        ``drift_side`` once the next poll tick lands. This helper waits
+        for that bridge so the turn doesn't false-fall-back to the
+        timed pivot on a perfectly-fine integrator just because we
+        sampled too early.
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout_sec))
+        while True:
+            value = yaw_fn()
+            if value is not None:
+                return float(value)
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(max(0.001, poll_interval_sec))
+
+    def _pulse_turn_timed_fallback(self, direction: str) -> None:
+        """Open-loop timed pivot when the closed-loop turn can't run.
+
+        Reuses the legacy :meth:`turn_left` / :meth:`turn_right` path so
+        an IMU outage on the bot doesn't render the Drive screen turn
+        buttons dead.
+        """
+        if direction == "left":
+            self.turn_left()
+        else:
+            self.turn_right()
 
     def forward(self, speed_percent: Optional[int] = None) -> None:
         sp = self._resolve_speed(speed_percent)

@@ -1158,24 +1158,44 @@ class DriveController(QObject):
                     "left" if which == _DIR_LEFT else "right"
                 )
             self._emit_state()
-            speed = _drive_turn_90_speed_pct()
-            duration = _drive_turn_90_duration_sec(self._nav)
-            log.info(
-                "turn_90(%s): software hold %.3fs (NINA_DRIVE_TURN_90_SEC / "
-                "NINA_NAV_TURN_SEC; ignores Motion-cal turn_duration_sec)",
-                which,
-                duration,
-            )
-            if which == _DIR_LEFT:
-                self._nav.turn_left(speed_percent=speed, duration=duration)
+            # Prefer the closed-loop IMU-driven 90° turn (reuses the
+            # same iterative micro-step machinery as the forward
+            # straight-leg drift correction, anchored to a yaw budget
+            # instead of a drift sample). ``pulse_turn_90`` already
+            # halts any in-flight pulse series and brackets the turn
+            # with brake / settle dwells on both ends, and falls back
+            # to the legacy timed pivot internally when the IMU yaw
+            # sampler is not wired. Older nav backends (GPIO
+            # ``NavigationManager``, test fakes) don't implement
+            # ``pulse_turn_90`` — for those, fall back here so the
+            # Drive button still works.
+            label = "left" if which == _DIR_LEFT else "right"
+            pulse_turn_90 = getattr(self._nav, "pulse_turn_90", None)
+            if callable(pulse_turn_90):
+                log.info("turn_90(%s): closed-loop IMU pulse turn", label)
+                pulse_turn_90(label)
             else:
-                self._nav.turn_right(speed_percent=speed, duration=duration)
+                speed = _drive_turn_90_speed_pct()
+                duration = _drive_turn_90_duration_sec(self._nav)
+                log.info(
+                    "turn_90(%s): backend lacks pulse_turn_90 — timed "
+                    "fallback %.3fs (NINA_DRIVE_TURN_90_SEC / "
+                    "NINA_NAV_TURN_SEC; ignores Motion-cal "
+                    "turn_duration_sec)",
+                    label,
+                    duration,
+                )
+                if which == _DIR_LEFT:
+                    self._nav.turn_left(speed_percent=speed, duration=duration)
+                else:
+                    self._nav.turn_right(speed_percent=speed, duration=duration)
         except Exception as exc:
             log.exception("turn_90(%s) failed: %s", which, exc)
         finally:
-            # Timed turn already ends with stop(); on error ensure PWM is parked
-            # so the next Straight/drive_wheels sequence does not inherit stale
-            # nav bookkeeping.
+            # Closed-loop turn already brakes + settles before returning;
+            # on error (or the timed-fallback path) ensure PWM is parked
+            # so the next Straight / drive_wheels sequence does not
+            # inherit stale nav bookkeeping.
             try:
                 self._nav.stop()
             except Exception:
