@@ -118,6 +118,11 @@ def _fast_correction_env(**extras: str) -> dict[str, str]:
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.08",
         "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_MAX_STEPS": "4",
+        # Bail warmup disabled in tests so wrong-direction sample streams
+        # trigger the bail on the very first sample. The warmup-grace tests
+        # override this explicitly.
+        "NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS": "0",
+        "NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG": "1.0",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
@@ -690,13 +695,13 @@ def test_imu_begin_straight_resets_cooldown() -> None:
 
 
 def test_default_tunables_are_conservative() -> None:
-    """Smoke-test that the production defaults match the calmer profile.
+    """Smoke-test that the production defaults match the iterative profile.
 
-    The iterative micro-step realign reinterprets ``PIVOT_BLEND_PCT`` and
-    ``PIVOT_MAX_SEC`` as *per-step* values, so the conservative bound rose
-    from 8 → 12 % blend and the cap dropped from 0.12 → 0.10 s — each step
-    is now sized for roughly one degree of rotation. The total correction
-    work is bounded by ``MAX_STEPS`` instead.
+    The iterative micro-step realign needs each step to be *visibly*
+    authoritative on the MX-28 servos — 12 % × 0.10 s produced no
+    perceptible rotation, so defaults are now 20 % × 0.18 s for ~1.5-2°
+    per step. The bail logic gets a 3-step warmup so pre-brake angular
+    momentum can't false-trip a sign-mismatch bail.
     """
     drv = HoverboardAxisDrive(FakeDxl(), threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -707,6 +712,8 @@ def test_default_tunables_are_conservative() -> None:
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC",
         "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC",
         "NINA_HOVER_IMU_CORR_MAX_STEPS",
+        "NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS",
+        "NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG",
         "NINA_HOVER_IMU_CORR_SETTLE_SEC",
         "NINA_HOVER_IMU_CORR_COOLDOWN_SEC",
         "NINA_HOVER_IMU_CORR_POLL_HZ",
@@ -714,17 +721,23 @@ def test_default_tunables_are_conservative() -> None:
         os.environ.pop(var, None)
     drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
     assert drv._imu_corr_threshold_deg >= 3.0, "threshold should be calm by default"
-    assert drv._imu_corr_pivot_blend_pct <= 15, (
-        "per-step blend should be gentle by default"
+    assert 15 <= drv._imu_corr_pivot_blend_pct <= 30, (
+        "per-step blend should be authoritative enough to actually move the bot"
     )
-    assert drv._imu_corr_pivot_max_sec <= 0.20, (
-        "per-step duration cap should be short by default"
+    assert 0.10 <= drv._imu_corr_pivot_max_sec <= 0.30, (
+        "per-step duration cap should let the MX-28 actually slew to the goal"
     )
-    assert drv._imu_corr_step_settle_sec <= 0.15, (
+    assert drv._imu_corr_step_settle_sec <= 0.20, (
         "between-step settle should be brief by default"
     )
     assert 5 <= drv._imu_corr_max_steps <= 50, (
         "max-steps should give meaningful head-room without runaway loops"
+    )
+    assert drv._imu_corr_bail_warmup_steps >= 1, (
+        "bail must wait for pre-brake angular momentum to bleed off"
+    )
+    assert drv._imu_corr_bail_margin_deg >= 2.0, (
+        "bail margin must exceed typical per-step rotation to avoid false trips"
     )
     assert drv._imu_corr_settle_sec >= 0.20, "outer brake settle should be long by default"
     assert drv._imu_corr_cooldown_sec >= 0.5, "cooldown should be substantial by default"
@@ -924,6 +937,88 @@ def test_realign_caps_at_max_steps_under_stuck_drift() -> None:
     )
     # And the routine must return promptly (not block on something else).
     assert elapsed < 1.0, f"cap should bound the routine; elapsed={elapsed:.3f}s"
+
+
+def test_warmup_grace_period_absorbs_pre_brake_momentum() -> None:
+    """During warmup, drift growth must NOT trigger the wrong-direction bail.
+
+    Simulates the real-bot scenario where the chassis still has angular
+    momentum from the forward lean when the realign brakes: drift grows
+    for the first few samples regardless of pivot direction. With warmup=3,
+    those first 3 samples must be ignored by the bail logic. After warmup,
+    if drift stops growing past the post-warmup baseline + margin, the
+    realign should continue and eventually hit the max-steps cap (not bail).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # Mimic momentum-driven growth during warmup, then steady state. Once
+    # warmup is over, samples hover around yaw_after_warmup so the bail
+    # never trips.
+    yaws = [
+        9.0, 10.0, 11.0,  # warmup (steps 0-2): growth ignored
+        11.2, 11.3, 11.2, 11.1,  # post-warmup: held inside +margin (5° default)
+    ]
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else 11.0
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="7",
+        NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS="3",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="5.0",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(8.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    # All 7 steps should run (no early bail) — drift in warmup ignored,
+    # post-warmup samples stay inside the 5° margin so no bail trigger.
+    assert len(pivot_writes) >= 5, (
+        f"warmup must absorb momentum-driven growth and let the realign "
+        f"run; saw only {len(pivot_writes)} pivot-left micro-step writes"
+    )
+
+
+def test_bail_margin_must_be_exceeded_before_bail_fires() -> None:
+    """A single noisy sample over the margin must NOT trigger the bail
+    (needs two consecutive growths past the margin).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # warmup=0 → first sample becomes the post-warmup baseline.
+    # Then one noisy spike past margin, then back inside margin, repeat.
+    # No two consecutive samples both >baseline+margin, so no bail.
+    yaws = [4.0, 11.0, 5.0, 11.0, 5.0, 11.0, 5.0]
+
+    def sampler() -> float:
+        return yaws.pop(0) if yaws else 5.0
+
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="0.01",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="1.0",
+        NINA_HOVER_IMU_CORR_MAX_STEPS="7",
+        NINA_HOVER_IMU_CORR_BAIL_WARMUP_STEPS="0",
+        NINA_HOVER_IMU_CORR_BAIL_MARGIN_DEG="3.0",  # baseline 4 + 3 = 7
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=sampler)
+
+    pre = len(dxl.goal_writes)
+    drv._perform_pivot_correction(3.0, threading.Event())
+    after = dxl.goal_writes[pre:]
+    pivot_writes = [w for w in after if w == _pivot_left_goals_20pct()]
+    # No two-in-a-row growths past 7° → must reach max_steps=7, not bail.
+    assert len(pivot_writes) == 7, (
+        f"isolated noisy samples past margin must NOT bail the realign; "
+        f"expected all 7 micro-steps, saw {len(pivot_writes)}"
+    )
 
 
 def test_realign_re_evaluates_direction_per_step() -> None:
