@@ -163,6 +163,25 @@ another equally-doomed realign — locking the bot in place):
                                                                 first successful realign — any non-
                                                                 no-progress exit clears the streak)
 
+Drift-abort (catastrophic-drift safety stop with spoken alert; sits
+above the realign loop so a sign-flipped IMU mount, a failed wheel, or
+any condition that puts the bot into a runaway spin terminates the
+pulse leg cleanly instead of spending pulse cycles snaking off course):
+
+  ``NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG``        default 30.0  (abort the pulse series when ``|drift|``
+                                                                first crosses this magnitude on a fresh
+                                                                IMU sample. Brakes the lean stack, sets
+                                                                the pulse halt event, and queues a
+                                                                single TTS announcement via
+                                                                :func:`nina.services.bldc_speech_alerts.maybe_speak_bldc_alert`
+                                                                — the exact phrase is
+                                                                :data:`_IMU_CORR_ABORT_PHRASE`. The
+                                                                operator must issue a fresh drive
+                                                                command to resume — there is no
+                                                                automatic retry. Set to ``0`` to
+                                                                disable. Fires on both the forward
+                                                                and backward pulse loops.)
+
 Logging convention: every IMU-correction log line emitted from inside the
 pulse hold (``hover IMU correction (forward): ...`` or
 ``hover IMU correction (backward): ...``) carries the direction tag of the
@@ -191,8 +210,14 @@ from typing import Callable, Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
+from nina.services.bldc_speech_alerts import maybe_speak_bldc_alert
 
 log = logging.getLogger("nina.hoverboard_axis")
+
+# Spoken when the drift-abort fires; kept as a module constant so tests can
+# assert on the exact phrase the operator will hear and so the bldc speech
+# alerts cooldown (12 s default) coalesces repeated aborts within one leg.
+_IMU_CORR_ABORT_PHRASE = "I can't move steadily any further, stopping now."
 
 # Yaw drift sampler — returns signed degrees ``+`` = bot drifted right, ``-`` = left,
 # or ``None`` when the integrator is paused / calibrating / unavailable.
@@ -777,6 +802,40 @@ def _imu_corr_stuck_cooldown_sec() -> float:
         return 8.0
 
 
+def _imu_corr_abort_drift_deg() -> float:
+    """Drift magnitude (deg) above which a pulse leg aborts with a spoken alert.
+
+    Read from ``NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG``. Default 30.0 — well
+    past the largest drift the iterative realign has been observed to
+    recover from on the production chassis (~26°), but small enough to
+    catch a runaway spin within one or two correction cycles. Set to
+    ``0`` (or any non-positive value) to disable the abort entirely and
+    fall back to the legacy "let the realign keep retrying" behaviour.
+
+    When the abort fires, ``_imu_corrective_hold`` brakes, sets the pulse
+    halt event so the pulse loop exits cleanly, and queues a single
+    :data:`_IMU_CORR_ABORT_PHRASE` TTS announcement via
+    :func:`nina.services.bldc_speech_alerts.maybe_speak_bldc_alert` (which
+    enforces its own per-message cooldown so back-to-back aborts in the
+    same leg do not chatter). The operator must issue a fresh drive
+    command to resume — there is no automatic retry.
+
+    Clamped to ``[0.0, 180.0]``.
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                180.0,
+                float(
+                    os.environ.get("NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG", "30.0")
+                ),
+            ),
+        )
+    except ValueError:
+        return 30.0
+
+
 def _hover_turn_slow_wheel_pct() -> int:
     """Backward-side lean for held D-pad pivots (1–100, default 8)."""
     try:
@@ -948,6 +1007,9 @@ class HoverboardAxisDrive:
         self._imu_corr_stuck_streak_max: int = _imu_corr_stuck_streak()
         self._imu_corr_stuck_cooldown_sec: float = _imu_corr_stuck_cooldown_sec()
         self._imu_corr_no_progress_streak: int = 0
+        # Drift-abort: catastrophic drift past this magnitude halts the pulse
+        # series and announces via TTS. 0 disables.
+        self._imu_corr_abort_drift_deg: float = _imu_corr_abort_drift_deg()
         # Earliest monotonic time at which the next IMU sample is allowed.
         # Set by every pivot to ``now + cooldown_sec`` so back-to-back
         # corrections can't fire. Reset to 0 by ``_imu_begin_straight`` so a
@@ -1023,6 +1085,7 @@ class HoverboardAxisDrive:
         self._imu_corr_stuck_streak_max = _imu_corr_stuck_streak()
         self._imu_corr_stuck_cooldown_sec = _imu_corr_stuck_cooldown_sec()
         self._imu_corr_no_progress_streak = 0
+        self._imu_corr_abort_drift_deg = _imu_corr_abort_drift_deg()
         # Allow the first sample of the next straight leg to fire immediately.
         self._imu_corr_next_sample_at = 0.0
         # Show the backward overrides only when they actually differ from
@@ -1051,6 +1114,11 @@ class HoverboardAxisDrive:
                 f" stuck_cooldown={self._imu_corr_stuck_cooldown_sec:.2f}s"
             )
         )
+        abort_tag = (
+            ""
+            if self._imu_corr_abort_drift_deg <= 0
+            else f" abort_drift={self._imu_corr_abort_drift_deg:.2f} deg"
+        )
         log.info(
             "hoverboard IMU hooks: drift=%s begin=%s end=%s enabled=%s "
             "threshold=%.2f deg deadband=%.2f deg step_blend=%s%% "
@@ -1059,7 +1127,7 @@ class HoverboardAxisDrive:
             "progress_check=%d progress_min=%.2f deg "
             "bail_warmup=%d bail_margin=%.2f deg "
             "outer_settle=%.2fs cooldown=%.2fs poll=%.2fHz invert_sign=%s"
-            "%s%s%s%s "
+            "%s%s%s%s%s "
             "(iterative proportional micro-step realign)",
             "set" if yaw_drift_fn else "off",
             "set" if begin_straight_fn else "off",
@@ -1085,6 +1153,7 @@ class HoverboardAxisDrive:
             back_cooldown_tag,
             back_step_rate_tag,
             stuck_tag,
+            abort_tag,
         )
 
     def _imu_sample_drift_deg(self) -> Optional[float]:
@@ -1167,6 +1236,49 @@ class HoverboardAxisDrive:
             # so the bot is doing primed forward/back motion only.
             if now >= self._imu_corr_next_sample_at:
                 yaw = self._imu_sample_drift_deg()
+                # Drift-abort: when the magnitude exceeds the configured
+                # abort threshold the iterative realign has no realistic
+                # chance of recovering (the largest drift it has ever been
+                # observed to close out on this chassis is ~26°). Brake,
+                # halt the pulse series, and tell the operator via TTS
+                # rather than burning more pulse cycles producing snake
+                # motion. A non-positive ``abort_drift_deg`` (i.e. 0)
+                # disables the abort and falls back to the legacy
+                # "keep retrying" behaviour.
+                if (
+                    yaw is not None
+                    and self._imu_corr_abort_drift_deg > 0
+                    and abs(yaw) >= self._imu_corr_abort_drift_deg
+                ):
+                    log.warning(
+                        "hover IMU correction (%s): drift=%+.2f deg >= "
+                        "%.2f deg ABORT threshold -> halting pulse series "
+                        "and announcing (operator must issue a fresh "
+                        "drive command to resume)",
+                        direction_tag,
+                        yaw,
+                        self._imu_corr_abort_drift_deg,
+                    )
+                    try:
+                        self._apply_goals(
+                            {
+                                self._left_id: self._brake_left,
+                                self._right_id: self._brake_right,
+                            }
+                        )
+                    except Exception:
+                        log.debug(
+                            "drift abort: brake apply failed", exc_info=True
+                        )
+                    try:
+                        maybe_speak_bldc_alert(_IMU_CORR_ABORT_PHRASE)
+                    except Exception:
+                        log.debug(
+                            "drift abort: bldc speech alert failed",
+                            exc_info=True,
+                        )
+                    halt.set()
+                    return True
                 if yaw is not None and abs(yaw) >= threshold:
                     # Drift exceeded — pause the primed motion, pivot-correct,
                     # re-prime, then enforce the cooldown before next sample.

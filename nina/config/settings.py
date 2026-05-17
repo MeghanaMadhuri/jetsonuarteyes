@@ -804,8 +804,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
     )
 
-    low_v = _env_float("NINA_BATTERY_LOW_VOLTAGE_V", 23.0)
-    clear_v = _env_float("NINA_BATTERY_CLEAR_VOLTAGE_V", 23.6)
+    low_v = _env_float("NINA_BATTERY_LOW_VOLTAGE_V", 25.5)
+    clear_v = _env_float("NINA_BATTERY_CLEAR_VOLTAGE_V", 26.1)
     if clear_v <= low_v:
         clear_v = low_v + 0.5
 

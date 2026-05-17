@@ -140,6 +140,13 @@ def _fast_correction_env(**extras: str) -> dict[str, str]:
         "NINA_HOVER_IMU_CORR_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_COOLDOWN_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_POLL_HZ": "60",
+        # Drift-abort disabled by default in the shared test env. Several
+        # legacy realign tests pump |drift| up to 30+ deg to exercise the
+        # "stuck high" code paths, which would otherwise be short-circuited
+        # by the 30 deg abort default that ships in production. The
+        # dedicated abort tests in this file override this back to a small
+        # positive value to exercise the safety stop explicitly.
+        "NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG": "0",
     }
     env.update(extras)
     return env
@@ -1914,4 +1921,225 @@ def test_stuck_cooldown_clears_after_successful_realign(
     assert drv._imu_corr_no_progress_streak == 0, (
         "successful realign must clear the streak so subsequent corrections "
         "go back to the regular cooldown without operator intervention"
+    )
+
+
+# ----------------------------------------------------------------------
+# Drift-abort tests
+#
+# Above ``NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG`` (default 30.0) the
+# iterative realign cannot recover within one cycle; ``_imu_corrective_hold``
+# must brake, set the pulse halt event, and queue a single TTS
+# announcement so the operator knows the leg ended. Fires on both the
+# forward and backward pulse loops. ``ABORT_DRIFT_DEG=0`` disables the
+# safety stop entirely (legacy "keep retrying" behaviour).
+# ----------------------------------------------------------------------
+
+
+def _abort_env(
+    abort_deg: str = "30.0",
+    **extras: str,
+) -> dict[str, str]:
+    """Test env: high MAX_STEPS / disabled stuck detector so the abort path
+    isn't masked by other safeguards.
+    """
+    env = _fast_correction_env(
+        NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG=abort_deg,
+        # Disable the stuck detector so cooldown logs don't mix in.
+        NINA_HOVER_IMU_CORR_STUCK_STREAK="0",
+        # Make sure the abort fires on the FIRST sample, before any
+        # correction logic decides to bail out for other reasons.
+        NINA_HOVER_IMU_CORR_POLL_HZ="100",
+    )
+    env.update(extras)
+    return env
+
+
+def test_imu_corr_abort_drift_deg_default_is_30() -> None:
+    """A fresh deploy with no env override must use the 30 deg abort default."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    env_without_abort = {
+        k: v
+        for k, v in _fast_correction_env().items()
+        if k != "NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG"
+    }
+    with patch.dict(os.environ, env_without_abort, clear=False):
+        os.environ.pop("NINA_HOVER_IMU_CORR_ABORT_DRIFT_DEG", None)
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    assert drv._imu_corr_abort_drift_deg == pytest.approx(30.0), (
+        "fresh deploy must default the drift-abort threshold to 30.0 deg"
+    )
+
+
+def test_drift_abort_fires_for_forward_and_invokes_tts(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """|drift| >= ABORT_DRIFT_DEG must halt the forward pulse leg and
+    queue exactly one TTS announcement with the canonical phrase.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _abort_env(abort_deg="10.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 25.0)  # well past 10 deg abort
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    with patch(
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+    ) as speak:
+        ret = drv._imu_corrective_hold(base, 0.20, halt, is_forward=True)
+    assert ret is True, "abort must return True so the pulse loop bails"
+    assert halt.is_set(), "abort must set the pulse halt event"
+    assert speak.call_count == 1, (
+        f"abort must speak exactly once, saw {speak.call_count} calls"
+    )
+    (msg,), _ = speak.call_args
+    assert msg == "I can't move steadily any further, stopping now.", (
+        f"abort phrase must match the operator-facing wording; saw {msg!r}"
+    )
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (forward):" in log_text
+    assert "ABORT threshold" in log_text, (
+        f"abort must emit a WARNING log line; saw:\n{log_text}"
+    )
+    # Brake goals (2048, 2048) must appear in the writes so the bot stops
+    # cleanly before the pulse loop bails.
+    brake = {12: 2048, 13: 2048}
+    assert any(w == brake for w in dxl.goal_writes), (
+        f"abort must brake before halting; saw writes={dxl.goal_writes}"
+    )
+
+
+def test_drift_abort_fires_for_backward(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """Backward pulse leg must abort the same way (drift is in world frame)."""
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _abort_env(abort_deg="15.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: -40.0)  # opposite sign, big magnitude
+    halt = threading.Event()
+    base = {12: 1986, 13: 1986}  # primed backward
+    with patch(
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+    ) as speak:
+        ret = drv._imu_corrective_hold(base, 0.20, halt, is_forward=False)
+    assert ret is True
+    assert halt.is_set()
+    assert speak.call_count == 1
+    log_text = _imu_corr_log_records.text
+    assert "hover IMU correction (backward):" in log_text
+    assert "ABORT threshold" in log_text
+
+
+def test_drift_abort_does_not_fire_below_threshold(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """Drift smaller than the abort threshold must let the normal
+    correction path run (no halt, no TTS, no ABORT log).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    # Drift is +5° (above normal 3° correction threshold from _fast_correction_env
+    # but well below the 20° abort threshold).
+    with patch.dict(os.environ, _abort_env(abort_deg="20.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    with patch(
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+    ) as speak:
+        drv._imu_corrective_hold(base, 0.20, halt, is_forward=True)
+    assert speak.call_count == 0, (
+        "drift below abort threshold must not invoke TTS"
+    )
+    assert not halt.is_set(), (
+        "drift below abort threshold must not set the pulse halt event"
+    )
+    log_text = _imu_corr_log_records.text
+    assert "ABORT threshold" not in log_text, (
+        f"sub-threshold drift must not log the abort line; saw:\n{log_text}"
+    )
+
+
+def test_drift_abort_disabled_when_zero(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """``ABORT_DRIFT_DEG=0`` must disable the safety stop entirely so even
+    catastrophic drift falls through to the legacy realign behaviour
+    (existing operators relying on never-aborting workflows aren't
+    affected by the new default).
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _abort_env(abort_deg="0.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 250.0)
+    halt = threading.Event()
+    base = {12: 2114, 13: 2114}
+    with patch(
+        "nina.controllers.hoverboard_axis_drive.maybe_speak_bldc_alert"
+    ) as speak:
+        # Bounded duration so the test ends even if abort is disabled and
+        # the legacy realign keeps running.
+        drv._imu_corrective_hold(base, 0.06, halt, is_forward=True)
+    assert speak.call_count == 0, (
+        "ABORT_DRIFT_DEG=0 must disable TTS announcements entirely"
+    )
+    assert not halt.is_set(), (
+        "ABORT_DRIFT_DEG=0 must not set the pulse halt event"
+    )
+    log_text = _imu_corr_log_records.text
+    assert "ABORT threshold" not in log_text
+
+
+def test_drift_abort_banner_tag_present_when_enabled(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """The IMU-hooks startup banner must include ``abort_drift=`` when the
+    safety stop is configured so operators can spot the active threshold
+    in a single grep without diving into env vars.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _abort_env(abort_deg="25.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    banner_lines = [
+        r.getMessage()
+        for r in _imu_corr_log_records.records
+        if r.getMessage().startswith("hoverboard IMU hooks:")
+    ]
+    assert banner_lines, "expected IMU hooks startup banner"
+    joined = "\n".join(banner_lines)
+    assert "abort_drift=25.00 deg" in joined, (
+        f"banner must surface the configured abort threshold; saw:\n{joined}"
+    )
+
+
+def test_drift_abort_banner_tag_absent_when_disabled(
+    _imu_corr_log_records: pytest.LogCaptureFixture,
+) -> None:
+    """With the safety stop disabled (``ABORT_DRIFT_DEG=0``) the startup
+    banner must NOT include the ``abort_drift=`` tag so the log line
+    stays compact on bots that opted out.
+    """
+    dxl = FakeDxl()
+    drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
+    drv.initialize()
+    with patch.dict(os.environ, _abort_env(abort_deg="0.0"), clear=False):
+        drv.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+    banner_lines = [
+        r.getMessage()
+        for r in _imu_corr_log_records.records
+        if r.getMessage().startswith("hoverboard IMU hooks:")
+    ]
+    assert banner_lines
+    joined = "\n".join(banner_lines)
+    assert "abort_drift=" not in joined, (
+        f"disabled abort must omit the tag entirely; saw:\n{joined}"
     )

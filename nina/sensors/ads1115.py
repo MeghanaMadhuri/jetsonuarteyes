@@ -41,8 +41,13 @@ DEFAULT_BATTERY_R2_OHM = 33_000.0
 # One-point DMM trim (26.3 V vs ~24.24 V uncorrected on bench); override with env.
 DEFAULT_BATTERY_CAL_SCALE = 26.3 / (3.197 * (251.0 / 33.0))
 # Pack thresholds (override via ``NINA_BATTERY_LOW_VOLTAGE_V`` / settings).
-DEFAULT_LOW_BATTERY_V = 23.5
-DEFAULT_CLEAR_BATTERY_V = 24.0
+# Updated 2026-05-18 to match the higher-cutoff defaults locked into
+# ``nina/config/settings.py`` so the fallback values used by the publish /
+# health / overview helpers stay in sync if a caller forgets to pass an
+# explicit threshold (legacy paths only — the live monitor always reads
+# from ``BatteryAds1115Settings``).
+DEFAULT_LOW_BATTERY_V = 25.5
+DEFAULT_CLEAR_BATTERY_V = 26.1
 LOW_BATTERY_TTS = "I am low on battery , Please put me on charge"
 NEUTRAL_MOTOR_GOAL = 2048
 # Never probe bus 5 on Orin NX (can reboot). Prefer 7 before legacy 1/2 guesses.
