@@ -1096,13 +1096,25 @@ def _straight_corr_step_rate_dps() -> float:
 def _straight_corr_deadband_deg() -> float:
     """Drift magnitude (deg) below which no correction step fires.
 
-    Default **2.5°** — wider than the legacy 1.5° because the new
-    standstill correction can land each step within ~2° of the
-    deadband (with the chassis-matched cap + rate above), so a
-    tighter deadband would chase noise. The legacy
-    ``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (1.5°) is **not** changed
-    by this knob — backward and the in-motion correction keep their
-    finer deadband. Clamped to ``[0.1, 30.0]``.
+    Default **3.5°**. Sized to skip the "near-noise-floor" band on
+    the reference chassis: steady-state per-leg drift is ±1–2°, and
+    correcting just-past-2.5° drifts produced ineffective 0.015 s
+    minimum-floor kicks that chased noise for 4–6 steps before
+    breaking stiction (and occasionally bailed at the active-settle
+    timeout). A 3.5° deadband:
+
+    * Skips every marginal correction the old 2.5° default fired in
+      field testing (cluster of −3.5°…+3.9° drifts that all
+      resolved after multiple tiny kicks).
+    * Keeps the big corrections — at 3.5° / 140 dps, the smallest
+      auto-computed step is 0.025 s (above the 0.015 s floor), so
+      anything that DOES fire is a single decisive kick.
+    * 90° abort is unchanged, so runaway drift still triggers
+      ``cant_move.mp3``.
+
+    The legacy ``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (1.5°) is **not**
+    changed by this knob — backward and the in-motion correction
+    keep their finer deadband. Clamped to ``[0.1, 30.0]``.
     """
     try:
         return max(
@@ -1110,12 +1122,12 @@ def _straight_corr_deadband_deg() -> float:
             min(
                 30.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG", "2.5")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG", "3.5")
                 ),
             ),
         )
     except ValueError:
-        return 2.5
+        return 3.5
 
 
 def _straight_bench_cycles() -> int:
