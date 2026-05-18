@@ -207,8 +207,8 @@ _STRAIGHT_ENV_KEYS = (
 
 
 def test_straight_env_getter_defaults() -> None:
-    """Without overrides: 0.5 s leg, 0.3 s brake settle, 90° abort, 100%
-    pivot, chassis-matched 0.05 s cap / 0.030 s floor / 140 dps / 3.0°
+    """Without overrides: 0.5 s leg, 0.3 s brake settle, 90° abort, 60%
+    blend, chassis-matched 0.030 s cap / 0.030 s floor / 84 dps / 3.0°
     deadband; active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s
     poll; correction pivot direction SWAPPED by default (reference
     chassis)."""
@@ -218,10 +218,10 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
-        assert _straight_corr_blend_pct() == 100
-        assert _straight_corr_step_dur_cap_sec() == 0.05
+        assert _straight_corr_blend_pct() == 60
+        assert _straight_corr_step_dur_cap_sec() == 0.030
         assert _straight_corr_step_min_sec() == 0.030
-        assert _straight_corr_step_rate_dps() == 140.0
+        assert _straight_corr_step_rate_dps() == 84.0
         assert _straight_corr_deadband_deg() == 3.0
         assert _straight_settle_rate_dps() == 3.0
         assert _straight_settle_stable_sec() == 0.10
@@ -512,21 +512,26 @@ def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
     )
 
 
-def test_forward_loop_correction_default_uses_full_pivot_pose() -> None:
-    """With no override, drift correction must drive servos to the
-    *full calibrated* pivot pose (same shape ``turn_left`` uses), not
-    a 20% blended nudge. This is what gives each step real torque
-    against hoverboard hub-motor static friction.
+def test_forward_loop_correction_default_uses_meaningful_pivot_blend() -> None:
+    """With no override, drift correction must drive servos to a
+    *meaningful* pivot pose — one motor leaning back, the other
+    leaning forward, with each at least 50 ticks off the brake
+    centre — not the legacy 20% blended nudge that chassis
+    stiction defeated.
+
+    The current default is 60% blend (tuned down from 100% to dial
+    in less per-kick rotation); this test asserts the structural
+    properties of the write rather than the exact tick values, so
+    future blend-tuning doesn't churn the test.
     """
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([10.0, 0.0]))
 
     # Same env as ``_fast_straight_env`` EXCEPT do not override
-    # NINA_HOVER_STRAIGHT_CORR_BLEND_PCT — let it fall to the default (100).
+    # NINA_HOVER_STRAIGHT_CORR_BLEND_PCT — let it fall to the default.
     env = {k: v for k, v in _fast_straight_env().items()
            if k != "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT"}
-    # Make sure no stray env value bleeds in.
     with patch.dict(os.environ, env, clear=False):
         os.environ.pop("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", None)
         hb.start_pulse_straight_forward(50)
@@ -534,15 +539,19 @@ def test_forward_loop_correction_default_uses_full_pivot_pose() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    full_pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD,
-        left_speed=100,
-        right_dir=hb.DIR_BACKWARD,
-        right_speed=100,
-    )
-    assert any(g == full_pivot_left for g in dxl.goal_writes), (
-        f"default drift correction must use 100% pivot pose "
-        f"{full_pivot_left}; goal_writes={dxl.goal_writes}"
+    brake = 2048
+    legacy_20pct_offset_max = 30  # 20%-blend pivot is ~17–24 ticks off brake on this fixture
+    meaningful_pivot_writes = [
+        g for g in dxl.goal_writes
+        if 12 in g and 13 in g
+        and (g[12] - brake) * (g[13] - brake) < 0  # one above, one below
+        and abs(g[12] - brake) > legacy_20pct_offset_max
+        and abs(g[13] - brake) > legacy_20pct_offset_max
+    ]
+    assert meaningful_pivot_writes, (
+        "default drift correction must apply a pivot pose with one motor "
+        "back and one forward, each >30 ticks off brake (i.e. NOT the "
+        f"legacy 20%-blend nudge). goal_writes={dxl.goal_writes}"
     )
 
 

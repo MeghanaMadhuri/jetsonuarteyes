@@ -990,44 +990,59 @@ def _straight_corr_blend_pct() -> int:
     The legacy in-motion :meth:`HoverboardAxisDrive._perform_pivot_correction`
     used ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT`` (default **20**) — a
     gentle nudge that the chassis often couldn't translate into actual
-    rotation because static friction in the hoverboard hub motors wins
-    at a ~6–8 tick lean. The new drift correction runs at **standstill
-    between forward legs** and we want each step to actually rotate the
-    chassis, so the default here is **100** — full calibrated pivot
-    (same pose that ``turn_left`` / ``turn_right`` use, which we've
-    confirmed rotates the bot reliably). The "micro" in micro-step
-    comes from the per-step *duration* (``step_min`` … ``step_dur_cap``),
-    not from a watered-down lean.
+    rotation because static friction wins at a ~6–8 tick lean offset.
+    Initial deployment of the new standstill correction used 100%
+    (full calibrated pivot) on the assumption we'd need that much
+    torque to break stiction from a stopped state.
 
-    Dial down (e.g. ``80`` or ``60``) if the chassis over-rotates per
-    step; bump back up if a step occasionally fails to budge the bot.
-    Clamped to ``[1, 100]``.
+    Field data revealed the opposite problem: at 100% blend + ≥0.030 s
+    kick the chassis releases far more rotation than the steady-state
+    rate suggests (observed multipliers of 2–6× for cycles with
+    high pre-correction drift), causing single-step overshoot of
+    4–6° on small drifts and one cycle of 26° of unwanted rotation
+    when the chassis had built-up momentum from the prior forward
+    leg. Default lowered to **60** to dial the per-kick energy down
+    while still being well above the stiction-defeat threshold (a
+    60-of-the-way-to-full pivot offset is still a substantial lean,
+    not a 20%-tick-offset whisper).
+
+    Dial down further (e.g. ``50``) if the chassis still over-rotates
+    per step; bump up (``80``, ``100``) if a step occasionally fails
+    to budge the bot. Clamped to ``[1, 100]``.
     """
     try:
         return max(
             1,
             min(
                 100,
-                int(os.environ.get("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", "100")),
+                int(os.environ.get("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", "60")),
             ),
         )
     except ValueError:
-        return 100
+        return 60
 
 
 def _straight_corr_step_dur_cap_sec() -> float:
     """Per-step pivot duration cap (seconds) for drift correction.
 
-    Each correction step pivots at full calibrated lean for
+    Each correction step pivots at the configured blend for
     ``min(cap, max(step_min, |drift| / step_rate_dps))`` seconds.
 
-    Default **0.05 s** — tuned for the reference chassis whose
-    measured pivot rate at 100% lean is ~140 °/s, giving ~7° of
-    actual rotation per capped step. The legacy
-    ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` (0.18 s, for the 20%-blend
-    in-motion backward correction) is **not** changed by this knob.
-    Bump up if your chassis pivots more slowly; reduce further if it
-    over-rotates per step. Clamped to ``[0.005, 1.0]``.
+    Default **0.030 s** — matches ``step_min`` so every correction
+    step is the same controlled magnitude. Bigger drifts converge
+    by doing *more* equal-sized kicks (with active-settle + drift
+    re-sample between each) rather than one over-strong kick. The
+    earlier 0.05 s cap meant a 7° drift fired one 0.05 s kick that,
+    with the chassis's pre-correction momentum getting released,
+    produced 10–26° of rotation and badly overshot. Forcing every
+    kick to 0.030 s caps that release energy regardless of drift
+    magnitude.
+
+    The legacy ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` (0.18 s, for
+    the 20%-blend in-motion backward correction) is **not** changed
+    by this knob. Bump back up if a chassis pivots so slowly that
+    even 0.030 s isn't enough to make progress; reduce further if
+    it over-rotates per step. Clamped to ``[0.005, 1.0]``.
     """
     try:
         return max(
@@ -1035,12 +1050,12 @@ def _straight_corr_step_dur_cap_sec() -> float:
             min(
                 1.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC", "0.05")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC", "0.030")
                 ),
             ),
         )
     except ValueError:
-        return 0.05
+        return 0.030
 
 
 def _straight_corr_step_min_sec() -> float:
@@ -1085,12 +1100,19 @@ def _straight_corr_step_rate_dps() -> float:
 
     The standstill correction picks each step's duration as
     ``|drift| / step_rate_dps`` (clamped to ``[step_min, step_dur_cap]``).
-    Default **140 °/s** — empirical at 100% calibrated pivot lean
-    on the reference chassis. The legacy
-    ``NINA_HOVER_IMU_CORR_STEP_RATE_DPS`` (30 °/s, tuned for
-    20%-blend) is **not** changed by this knob. Tune per chassis: do
-    one full-pivot pulse, measure ``Δyaw / pulse_sec``, plug it in.
-    Clamped to ``[1.0, 500.0]``.
+    Default **84 °/s** — empirical 140 °/s at 100% lean scaled by
+    the 60% default blend (``140 × 0.60 = 84``). Tune per chassis
+    *and* per blend: do one full-blend pivot pulse at the blend
+    you're using, measure ``Δyaw / pulse_sec``, plug it in.
+
+    Note this value is mostly cosmetic now that ``step_min`` and
+    ``step_dur_cap`` are both 0.030 s by default — every kick is
+    clamped to 0.030 s regardless of what the formula computes. The
+    rate still matters if you raise the cap or lower the floor.
+
+    The legacy ``NINA_HOVER_IMU_CORR_STEP_RATE_DPS`` (30 °/s, tuned
+    for 20%-blend in-motion backward correction) is **not** changed
+    by this knob. Clamped to ``[1.0, 500.0]``.
     """
     try:
         return max(
@@ -1098,12 +1120,12 @@ def _straight_corr_step_rate_dps() -> float:
             min(
                 500.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS", "140.0")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS", "84.0")
                 ),
             ),
         )
     except ValueError:
-        return 140.0
+        return 84.0
 
 
 def _straight_corr_deadband_deg() -> float:
