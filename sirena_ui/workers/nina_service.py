@@ -311,6 +311,30 @@ class NinaService:
             return None
         return float(s.yaw_drift_deg)
 
+    def _imu_yaw_rate_dps(self) -> Optional[float]:
+        """Instantaneous yaw rate (deg/s) for the drive layer's active settle.
+
+        Used by :meth:`HoverboardAxisDrive._active_settle_until_still`
+        to wait until the chassis is actually stationary (not just
+        commanded to brake) before sampling drift / running a
+        correction step. Returns ``None`` when no MPU-9250 monitor is
+        running so the drive layer falls back to the fixed-timer
+        settle. Unlike :meth:`_imu_yaw_drift_deg` this samples even
+        when ``drift_side == "n/a"`` (i.e. between straight legs)
+        because the active-settle is paused-state monitoring, not a
+        drift measurement.
+        """
+        mon = self._imu_monitor
+        if mon is None:
+            return None
+        try:
+            s = mon.snapshot()
+        except Exception:
+            return None
+        if not s.ok:
+            return None
+        return float(s.yaw_rate_dps)
+
     def _apply_imu_hooks_to_drive(self) -> None:
         """Push IMU hooks into the drive layer (no-op when drive isn't built yet)."""
         drv = self._drive
@@ -323,6 +347,7 @@ class NinaService:
             yaw_drift_fn=self._imu_yaw_drift_deg,
             begin_straight_fn=self.imu_straight_begin,
             end_straight_fn=self.imu_straight_end,
+            yaw_rate_fn=self._imu_yaw_rate_dps,
         )
 
     def is_battery_low_latched(self) -> bool:
@@ -384,6 +409,7 @@ class NinaService:
                     yaw_drift_fn=self._imu_yaw_drift_deg,
                     begin_straight_fn=self.imu_straight_begin,
                     end_straight_fn=self.imu_straight_end,
+                    yaw_rate_fn=self._imu_yaw_rate_dps,
                 )
             # Manual drive duty is fixed in DriveController (no slider); do not
             # seed the GUI state from nav_settings.default_speed_percent.

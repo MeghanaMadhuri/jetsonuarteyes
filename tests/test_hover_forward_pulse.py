@@ -31,6 +31,10 @@ from nina.controllers.hoverboard_axis_drive import (
     _straight_corr_step_min_sec,
     _straight_corr_step_rate_dps,
     _straight_leg_sec,
+    _straight_settle_max_sec,
+    _straight_settle_poll_sec,
+    _straight_settle_rate_dps,
+    _straight_settle_stable_sec,
     estimate_backward_pulse_series_duration_sec,
 )
 
@@ -123,6 +127,12 @@ def _fast_straight_env() -> dict[str, str]:
         "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.005",
         "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "60",
         "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "1.5",
+        # Active settle: snappy windows so tests don't hang on the
+        # default 1.5 s hard cap when no yaw_rate_fn is wired.
+        "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "3.0",
+        "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.01",
+        "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.10",
+        "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.002",
         "NINA_HOVER_POST_TURN_SETTLE_SEC": "0.0",
         # Legacy in-motion correction knobs (still consumed by the
         # backward pulse and the 90° turn closed loop). Pinned so the
@@ -182,12 +192,17 @@ _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC",
     "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS",
     "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG",
+    "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS",
+    "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC",
+    "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC",
+    "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC",
 )
 
 
 def test_straight_env_getter_defaults() -> None:
     """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot,
-    chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5° deadband."""
+    chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5° deadband;
+    active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s poll."""
     with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
@@ -199,6 +214,10 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_corr_step_min_sec() == 0.015
         assert _straight_corr_step_rate_dps() == 140.0
         assert _straight_corr_deadband_deg() == 2.5
+        assert _straight_settle_rate_dps() == 3.0
+        assert _straight_settle_stable_sec() == 0.10
+        assert _straight_settle_max_sec() == 1.50
+        assert _straight_settle_poll_sec() == 0.02
 
 
 def test_straight_env_getter_overrides() -> None:
@@ -213,6 +232,10 @@ def test_straight_env_getter_overrides() -> None:
             "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.04",
             "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "90.0",
             "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "4.0",
+            "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "5.0",
+            "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.25",
+            "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "3.5",
+            "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.05",
         },
         clear=False,
     ):
@@ -224,6 +247,10 @@ def test_straight_env_getter_overrides() -> None:
         assert _straight_corr_step_min_sec() == 0.04
         assert _straight_corr_step_rate_dps() == 90.0
         assert _straight_corr_deadband_deg() == 4.0
+        assert _straight_settle_rate_dps() == 5.0
+        assert _straight_settle_stable_sec() == 0.25
+        assert _straight_settle_max_sec() == 3.5
+        assert _straight_settle_poll_sec() == 0.05
 
 
 def test_straight_env_getter_clamps() -> None:
@@ -238,6 +265,10 @@ def test_straight_env_getter_clamps() -> None:
             "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "9999",
             "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "0.001",
             "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "9999",
+            "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "9999",
+            "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "-1",
+            "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "9999",
+            "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.00001",
         },
         clear=False,
     ):
@@ -249,6 +280,10 @@ def test_straight_env_getter_clamps() -> None:
         assert _straight_corr_step_min_sec() == 1.0
         assert _straight_corr_step_rate_dps() == 1.0
         assert _straight_corr_deadband_deg() == 30.0
+        assert _straight_settle_rate_dps() == 30.0
+        assert _straight_settle_stable_sec() == 0.0
+        assert _straight_settle_max_sec() == 10.0
+        assert _straight_settle_poll_sec() == 0.001
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +481,131 @@ def test_forward_loop_correction_default_uses_full_pivot_pose() -> None:
     assert any(g == full_pivot_left for g in dxl.goal_writes), (
         f"default drift correction must use 100% pivot pose "
         f"{full_pivot_left}; goal_writes={dxl.goal_writes}"
+    )
+
+
+class _RateSequence:
+    """Yaw-rate sampler that returns a scripted series, then 0.0 forever.
+
+    Models a chassis that's spinning at first (high |rate|) and gradually
+    comes to rest. Each call returns the next value; once the list is
+    exhausted it returns 0.0 (perfectly still) so the active settle
+    eventually succeeds.
+    """
+
+    def __init__(self, rates: list[float]) -> None:
+        self._rates = list(rates)
+
+    def __call__(self) -> float:
+        if self._rates:
+            return self._rates.pop(0)
+        return 0.0
+
+
+def test_active_settle_waits_for_low_rate_before_drift_sample() -> None:
+    """When the chassis is still rotating (|yaw_rate| > threshold), the
+    loop must hold off on sampling drift until the rate drops. Once it
+    does, normal cycling resumes.
+    """
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    # First 5 rate samples are "spinning" (>3 dps threshold); then 0.
+    # Drift fn returns 0 once we get there.
+    rate_seq = _RateSequence([20.0, 15.0, 8.0, 5.0, 4.0])
+    drift_calls = {"n": 0}
+
+    def drift_fn() -> float:
+        drift_calls["n"] += 1
+        return 0.0
+
+    hb.set_imu_hooks(yaw_drift_fn=drift_fn, yaw_rate_fn=rate_seq)
+
+    # Make the loop run one cycle then halt.
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "1.0",
+        "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.005",
+        "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.005",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    # Drift must have been sampled at least once (rate eventually
+    # dropped below threshold within the test window).
+    assert drift_calls["n"] >= 1, (
+        "active settle should release once yaw_rate dips below threshold; "
+        f"drift_fn was called {drift_calls['n']} times"
+    )
+
+
+def test_active_settle_falls_back_to_timer_when_no_rate_hook() -> None:
+    """No yaw_rate_fn wired -> loop must fall back to the fixed
+    brake_settle timer and keep cycling normally."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Only drift hook, no rate hook.
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    fwd = _expected_forward_goals()
+    forward_count = sum(1 for g in dxl.goal_writes if g == fwd)
+    assert forward_count >= 2, (
+        "fallback path should still cycle forward legs without rate hook; "
+        f"forward legs={forward_count}"
+    )
+
+
+def test_active_settle_timeout_skips_drift_sample() -> None:
+    """If the chassis never settles within SETTLE_MAX_SEC, the loop
+    must skip the drift sample for this cycle (no correction fires)
+    rather than sample stale drift while the chassis is still spinning.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Rate sampler that always returns a high value -> never settles.
+    drift_calls = {"n": 0}
+
+    def drift_fn() -> float:
+        drift_calls["n"] += 1
+        return 5.0  # Would normally trigger correction.
+
+    hb.set_imu_hooks(yaw_drift_fn=drift_fn, yaw_rate_fn=lambda: 50.0)
+
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.05",
+        "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.005",
+        "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.005",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    # Drift must NOT have been sampled (active settle bailed before
+    # the sample point).
+    assert drift_calls["n"] == 0, (
+        "active-settle timeout must skip the drift sample; "
+        f"drift_fn was called {drift_calls['n']} times"
+    )
+    # No pivot writes either (no correction fired).
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    assert all(g != pivot_l and g != pivot_r for g in dxl.goal_writes), (
+        "active-settle timeout should prevent any correction step"
     )
 
 

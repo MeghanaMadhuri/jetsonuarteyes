@@ -206,7 +206,7 @@ import os
 import threading
 import time
 import traceback
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS, DynamixelManager
@@ -222,6 +222,11 @@ _IMU_CORR_ABORT_PHRASE = "I can't move steadily any further, stopping now."
 # Yaw drift sampler — returns signed degrees ``+`` = bot drifted right, ``-`` = left,
 # or ``None`` when the integrator is paused / calibrating / unavailable.
 ImuYawDriftFn = Callable[[], Optional[float]]
+# Instantaneous yaw rate sampler — returns signed deg/s (sign convention matches
+# the drift sampler) or ``None`` when the gyro is unavailable. Used by the new
+# active-settle (wait-until-chassis-is-actually-still) helper in the forward
+# straight loop; if not wired the loop falls back to a fixed timer.
+ImuYawRateFn = Callable[[], Optional[float]]
 # Optional begin/end hooks called when the drive enters / leaves a straight leg.
 ImuStraightHook = Callable[[], None]
 
@@ -851,6 +856,95 @@ def _straight_brake_settle_sec() -> float:
         return 0.30
 
 
+def _straight_settle_rate_dps() -> float:
+    """Yaw-rate threshold (deg/s) below which the chassis is "still".
+
+    The drift-corrected forward loop polls the IMU's instantaneous yaw
+    rate after braking; once ``|rate|`` drops below this for
+    ``SETTLE_STABLE_SEC`` continuous, the chassis is treated as
+    stationary and we can sample drift / start a correction step.
+    Default **3.0 °/s** — small enough that any residual rotation
+    won't corrupt the drift sample over the next sampling window,
+    large enough not to chase gyro noise on a quiet IMU. Clamped to
+    ``[0.1, 30.0]``.
+    """
+    try:
+        return max(
+            0.1,
+            min(
+                30.0,
+                float(os.environ.get("NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS", "3.0")),
+            ),
+        )
+    except ValueError:
+        return 3.0
+
+
+def _straight_settle_stable_sec() -> float:
+    """Continuous window (seconds) the yaw rate must stay below the
+    settle threshold before the chassis is declared still.
+
+    Default **0.10 s** — a 100 ms quiet window filters out brief gyro
+    noise dips without forcing the loop to wait excessively after a
+    real stop. Clamped to ``[0.0, 2.0]`` (set to 0 to declare stillness
+    on a single sub-threshold sample).
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                2.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC", "0.10")
+                ),
+            ),
+        )
+    except ValueError:
+        return 0.10
+
+
+def _straight_settle_max_sec() -> float:
+    """Hard cap (seconds) on the active-settle wait before bailing.
+
+    If the chassis hasn't settled within this many seconds after a
+    brake command, the loop logs a warning, skips the drift sample
+    for this cycle, and moves on to the next forward leg rather than
+    sampling stale / moving-chassis drift. Default **1.50 s** —
+    several times longer than a normal hoverboard stops but short
+    enough that a stuck wheel or runaway condition doesn't block the
+    loop indefinitely. Clamped to ``[0.05, 10.0]``.
+    """
+    try:
+        return max(
+            0.05,
+            min(
+                10.0,
+                float(os.environ.get("NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC", "1.50")),
+            ),
+        )
+    except ValueError:
+        return 1.50
+
+
+def _straight_settle_poll_sec() -> float:
+    """Polling interval (seconds) for the active-settle yaw-rate loop.
+
+    Default **0.02 s** = 50 Hz. Matches the typical MPU-9250 sample
+    cadence so we don't oversample stale values nor under-sample and
+    miss a brief sub-threshold window. Clamped to ``[0.001, 0.5]``.
+    """
+    try:
+        return max(
+            0.001,
+            min(
+                0.5,
+                float(os.environ.get("NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC", "0.02")),
+            ),
+        )
+    except ValueError:
+        return 0.02
+
+
 def _straight_corr_blend_pct() -> int:
     """Pivot lean blend (%) used by the drift-correction micro-steps.
 
@@ -1349,6 +1443,7 @@ class HoverboardAxisDrive:
         # IMU yaw-correction hooks (wired from NinaService when the MPU-9250
         # monitor is enabled). All three may be None on dev hosts without IMU.
         self._imu_yaw_drift_fn: Optional[ImuYawDriftFn] = None
+        self._imu_yaw_rate_fn: Optional[ImuYawRateFn] = None
         self._imu_begin_fn: Optional[ImuStraightHook] = None
         self._imu_end_fn: Optional[ImuStraightHook] = None
         # Cached tunables: re-loaded by ``set_imu_hooks`` so unit tests / runtime
@@ -1414,8 +1509,9 @@ class HoverboardAxisDrive:
         yaw_drift_fn: Optional[ImuYawDriftFn],
         begin_straight_fn: Optional[ImuStraightHook] = None,
         end_straight_fn: Optional[ImuStraightHook] = None,
+        yaw_rate_fn: Optional[ImuYawRateFn] = None,
     ) -> None:
-        """Wire the MPU-9250 (or any) yaw drift sampler into the straight pulses.
+        """Wire the MPU-9250 (or any) yaw sampler into the straight pulses.
 
         *yaw_drift_fn* should return signed degrees (positive = bot drifted to the
         right) or ``None`` while the integrator is paused / calibrating. The
@@ -1424,6 +1520,17 @@ class HoverboardAxisDrive:
         ``set_wheels``) so the integrator can be reset and stopped without UI
         plumbing.
 
+        *yaw_rate_fn* (optional) returns the instantaneous yaw rate in deg/s
+        (sign convention matches ``yaw_drift_fn``), or ``None`` when the gyro
+        is unavailable. The new forward straight loop uses it as an
+        **active settle** — after braking, the loop polls the rate until the
+        chassis is actually still (``|rate| < SETTLE_RATE_DPS`` for
+        ``SETTLE_STABLE_SEC`` continuous) before sampling drift, so drift
+        corrections never run while the chassis is still rotating from the
+        previous forward leg. When ``yaw_rate_fn`` is not wired, the loop
+        falls back to the fixed ``brake_settle`` timer for backwards
+        compatibility.
+
         Correction is **discrete**: the pulse loop polls the sampler at
         ``NINA_HOVER_IMU_CORR_POLL_HZ`` and, when drift crosses the threshold,
         brakes, pivots in place until drift returns inside the deadband (or the
@@ -1431,6 +1538,7 @@ class HoverboardAxisDrive:
         then lets the primed forward / back pulse resume.
         """
         self._imu_yaw_drift_fn = yaw_drift_fn
+        self._imu_yaw_rate_fn = yaw_rate_fn
         self._imu_begin_fn = begin_straight_fn
         self._imu_end_fn = end_straight_fn
         # Refresh static-ish knobs in case env changed since construction.
@@ -2277,13 +2385,96 @@ class HoverboardAxisDrive:
         # Use the halt event so a fast stop() during settle still bails out quickly.
         self._pulse_halt.wait(timeout=dwell)
 
+    def _active_settle_until_still(
+        self,
+        halt: threading.Event,
+        *,
+        context: str,
+    ) -> Tuple[str, float, float]:
+        """Wait until the chassis is actually still (or bail at the timeout).
+
+        Returns a ``(status, elapsed_sec, last_rate_dps)`` tuple where
+        ``status`` is one of:
+
+        - ``"settled"``  — ``|yaw_rate|`` stayed below ``SETTLE_RATE_DPS``
+          for a continuous ``SETTLE_STABLE_SEC`` window. Chassis is
+          confirmed still; safe to sample drift / start a correction step.
+        - ``"timeout"``  — hard cap (``SETTLE_MAX_SEC``) hit before the
+          chassis settled. Caller should skip the drift sample for this
+          cycle / step and try again on the next leg.
+        - ``"halted"``   — ``halt`` was set during the wait (operator
+          released the button). Caller should exit cleanly.
+        - ``"no_rate"``  — no ``yaw_rate_fn`` was wired into the drive;
+          caller should fall back to the fixed-timer settle. ``elapsed``
+          is 0 and ``last_rate`` is 0 in this case.
+
+        Polls at ``SETTLE_POLL_SEC`` (~50 Hz default) and resets the
+        stable-window timer any time ``|rate|`` exceeds the threshold so
+        a single noisy sample doesn't falsely declare stillness. Brief
+        ``None`` samples from the rate fn (gyro temporarily unavailable)
+        also reset the window without aborting — the next valid sample
+        decides.
+        """
+        rate_fn = self._imu_yaw_rate_fn
+        if rate_fn is None:
+            return ("no_rate", 0.0, 0.0)
+        rate_thr = _straight_settle_rate_dps()
+        stable_sec = _straight_settle_stable_sec()
+        max_sec = _straight_settle_max_sec()
+        poll_sec = _straight_settle_poll_sec()
+        deadline = time.monotonic() + max_sec
+        stable_until = 0.0
+        started = time.monotonic()
+        last_rate = 0.0
+        while True:
+            if halt.is_set():
+                return ("halted", time.monotonic() - started, last_rate)
+            now = time.monotonic()
+            if now >= deadline:
+                log.warning(
+                    "hover forward settle (%s): BAILED after %.2fs — "
+                    "chassis never went below %.1f deg/s (last rate "
+                    "%+.2f deg/s). Skipping drift sample for this cycle.",
+                    context,
+                    now - started,
+                    rate_thr,
+                    last_rate,
+                )
+                return ("timeout", now - started, last_rate)
+            try:
+                sample = rate_fn()
+            except Exception:
+                sample = None
+            if sample is None:
+                # Sampler hiccup; reset the stable window so a transient
+                # ``None`` doesn't get treated as a "still" reading.
+                stable_until = 0.0
+            else:
+                last_rate = float(sample)
+                if abs(last_rate) < rate_thr:
+                    if stable_until == 0.0:
+                        stable_until = now + stable_sec
+                    elif now >= stable_until:
+                        elapsed = now - started
+                        log.debug(
+                            "hover forward settle (%s): settled in %.3fs "
+                            "(last rate %+.2f deg/s, threshold %.2f)",
+                            context, elapsed, last_rate, rate_thr,
+                        )
+                        return ("settled", elapsed, last_rate)
+                else:
+                    stable_until = 0.0
+            if halt.wait(timeout=poll_sec):
+                return ("halted", time.monotonic() - started, last_rate)
+
     def _forward_drift_correct_loop(self) -> None:
         """Drive-then-check forward loop with at-standstill drift correction.
 
-        Each cycle: drive forward for ``leg_sec`` → brake + settle →
-        sample drift → optionally correct with micro-steps → repeat.
-        See :meth:`start_pulse_straight_forward` for the full
-        algorithm.
+        Each cycle: drive forward for ``leg_sec`` → brake → wait for the
+        chassis to actually stop (active settle on the IMU yaw rate, or
+        a fixed timer fallback if no rate hook is wired) → sample drift
+        → optionally correct with micro-steps → repeat. See
+        :meth:`start_pulse_straight_forward` for the full algorithm.
         """
         halt = self._pulse_halt
         brake_goals = {
@@ -2301,14 +2492,24 @@ class HoverboardAxisDrive:
         brake_settle = _straight_brake_settle_sec()
         abort_deg = _straight_abort_drift_deg()
         deadband = _straight_corr_deadband_deg()
+        settle_rate = _straight_settle_rate_dps()
+        settle_stable = _straight_settle_stable_sec()
+        settle_max = _straight_settle_max_sec()
+        have_rate_hook = self._imu_yaw_rate_fn is not None
 
         log.info(
             "hover forward straight loop: leg=%.2fs brake_settle=%.2fs "
-            "abort_drift=%.1f deg deadband=%.2f deg | FWD L(id%s)=%s R(id%s)=%s",
+            "abort_drift=%.1f deg deadband=%.2f deg active_settle=%s "
+            "(rate_thr=%.1f dps stable=%.2fs max=%.2fs) | "
+            "FWD L(id%s)=%s R(id%s)=%s",
             leg_sec,
             brake_settle,
             abort_deg,
             deadband,
+            "ON" if have_rate_hook else "OFF (no yaw_rate_fn hook)",
+            settle_rate,
+            settle_stable,
+            settle_max,
             self._left_id,
             forward_goals[self._left_id],
             self._right_id,
@@ -2340,15 +2541,39 @@ class HoverboardAxisDrive:
                 if halt.wait(timeout=leg_sec):
                     break
 
-                # 2. Brake + settle (chassis must be still before sampling)
+                # 2. Brake + active settle (chassis MUST be still before
+                # we sample drift, otherwise we'd be correcting a
+                # still-rotating chassis and the brief pivot can't punch
+                # through the ongoing rotation — the exact bug field
+                # testing surfaced when corrections kept making drift
+                # worse). Fallback to fixed brake_settle timer when no
+                # yaw_rate_fn is wired (e.g. dev hosts without an IMU).
                 try:
                     self._apply_goals(brake_goals)
                 except Exception:
                     log.debug(
                         "forward straight: brake apply failed", exc_info=True
                     )
-                if brake_settle > 0.0 and halt.wait(timeout=brake_settle):
+                status, elapsed, last_rate = self._active_settle_until_still(
+                    halt, context=f"cycle {cycle} post-leg"
+                )
+                if status == "halted":
                     break
+                if status == "no_rate":
+                    if brake_settle > 0.0 and halt.wait(timeout=brake_settle):
+                        break
+                elif status == "timeout":
+                    # Chassis never settled — skip drift sample for this
+                    # cycle and try again on the next leg. Logged by the
+                    # helper as a WARNING.
+                    self._imu_end_straight()
+                    continue
+                else:
+                    log.info(
+                        "hover forward straight: cycle %d — settled in "
+                        "%.3fs (last rate %+.2f deg/s)",
+                        cycle, elapsed, last_rate,
+                    )
 
                 # 3. Drift sample at standstill
                 drift = yaw_fn() if yaw_fn is not None else None
@@ -2534,7 +2759,25 @@ class HoverboardAxisDrive:
                 self._apply_goals(brake_goals)
             except Exception:
                 pass
-            if step_settle > 0.0 and halt.wait(timeout=step_settle):
+            # Active settle between correction steps so the next drift
+            # sample isn't taken while the chassis is still rotating
+            # from the pivot we just commanded. Falls back to the legacy
+            # step_settle timer when no yaw_rate_fn is wired.
+            settle_status, settle_elapsed, _ = self._active_settle_until_still(
+                halt, context=f"corr step {step + 1}"
+            )
+            if settle_status == "halted":
+                return
+            if settle_status == "no_rate":
+                if step_settle > 0.0 and halt.wait(timeout=step_settle):
+                    return
+            elif settle_status == "timeout":
+                log.warning(
+                    "hover forward drift-correct: step %d settle BAILED "
+                    "(elapsed %.2fs); exiting correction so the next "
+                    "leg can sample fresh.",
+                    step + 1, settle_elapsed,
+                )
                 return
 
             sample = yaw_fn() if yaw_fn is not None else None
