@@ -30,6 +30,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _straight_corr_step_dur_cap_sec,
     _straight_corr_step_min_sec,
     _straight_corr_step_rate_dps,
+    _straight_corr_swap_pivot_dir,
     _straight_leg_sec,
     _straight_settle_max_sec,
     _straight_settle_poll_sec,
@@ -127,6 +128,11 @@ def _fast_straight_env() -> dict[str, str]:
         "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.005",
         "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "60",
         "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "1.5",
+        # Pin pivot-direction swap OFF in the snappy fixture so the
+        # legacy direction-of-correction assertions (which expect
+        # ``L=FWD,R=BACK`` for a positive-drift pivot LEFT decision)
+        # stay valid; a dedicated test exercises swap=True separately.
+        "NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR": "0",
         # Active settle: snappy windows so tests don't hang on the
         # default 1.5 s hard cap when no yaw_rate_fn is wired.
         "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "3.0",
@@ -196,13 +202,15 @@ _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC",
     "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC",
     "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC",
+    "NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR",
 )
 
 
 def test_straight_env_getter_defaults() -> None:
     """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot,
     chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5° deadband;
-    active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s poll."""
+    active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s poll;
+    correction pivot direction SWAPPED by default (reference chassis)."""
     with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
@@ -218,6 +226,25 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_settle_stable_sec() == 0.10
         assert _straight_settle_max_sec() == 1.50
         assert _straight_settle_poll_sec() == 0.02
+        assert _straight_corr_swap_pivot_dir() is True
+
+
+def test_straight_corr_swap_pivot_dir_truthy_values() -> None:
+    """Common truthy / falsy spellings of the swap env var."""
+    for falsy in ("0", "false", "FALSE", "no", "off", ""):
+        with patch.dict(
+            os.environ,
+            {"NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR": falsy},
+            clear=False,
+        ):
+            assert _straight_corr_swap_pivot_dir() is False, falsy
+    for truthy in ("1", "true", "yes", "ON", "anything"):
+        with patch.dict(
+            os.environ,
+            {"NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR": truthy},
+            clear=False,
+        ):
+            assert _straight_corr_swap_pivot_dir() is True, truthy
 
 
 def test_straight_env_getter_overrides() -> None:
@@ -423,6 +450,40 @@ def test_forward_loop_negative_drift_pivots_right() -> None:
     )
     assert any(g == pivot_right for g in dxl.goal_writes), (
         f"expected pivot-right goals {pivot_right} not found"
+    )
+
+
+def test_forward_loop_swap_pivot_dir_inverts_goals() -> None:
+    """With SWAP_PIVOT_DIR=1, a positive-drift pivot_left decision must
+    apply the L=BACK, R=FWD goals (the field-tested mapping on the
+    reference chassis where the conventional L=FWD,R=BACK mechanically
+    rotates the chassis right). The legacy mapping is never applied.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([10.0, 0.0]))
+
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR": "1"}
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    swapped_pivot_left = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    legacy_pivot_left = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    assert any(g == swapped_pivot_left for g in dxl.goal_writes), (
+        f"with swap=1, positive-drift pivot_left decision must apply "
+        f"{swapped_pivot_left}; goal_writes={dxl.goal_writes}"
+    )
+    assert all(g != legacy_pivot_left for g in dxl.goal_writes), (
+        "with swap=1, the legacy L=FWD,R=BACK goals must NOT be applied"
     )
 
 
