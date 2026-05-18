@@ -886,26 +886,103 @@ def _straight_corr_step_dur_cap_sec() -> float:
     """Per-step pivot duration cap (seconds) for drift correction.
 
     Each correction step pivots at full calibrated lean for
-    ``min(cap, max(step_min, |drift| / step_rate_dps))`` seconds. Default
-    **0.30 s** — long enough at the empirical ~30 °/s pivot rate to
-    recover a ~9° drift in a single step, short enough to never
-    over-rotate past zero. The legacy
-    ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` (0.18 s) is still respected
-    by the backward + legacy in-motion correction. Clamped to
-    ``[0.05, 1.0]``.
+    ``min(cap, max(step_min, |drift| / step_rate_dps))`` seconds.
+
+    Default **0.05 s** — tuned for the reference chassis whose
+    measured pivot rate at 100% lean is ~140 °/s, giving ~7° of
+    actual rotation per capped step. The legacy
+    ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` (0.18 s, for the 20%-blend
+    in-motion backward correction) is **not** changed by this knob.
+    Bump up if your chassis pivots more slowly; reduce further if it
+    over-rotates per step. Clamped to ``[0.005, 1.0]``.
     """
     try:
         return max(
-            0.05,
+            0.005,
             min(
                 1.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC", "0.30")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC", "0.05")
                 ),
             ),
         )
     except ValueError:
-        return 0.30
+        return 0.05
+
+
+def _straight_corr_step_min_sec() -> float:
+    """Per-step pivot duration floor (seconds) for drift correction.
+
+    Default **0.015 s** — paired with the 140 °/s pivot rate, this
+    gives a ~2° minimum rotation per step on the reference chassis,
+    which keeps tiny drift cleanups from over-shooting the deadband.
+    The legacy ``NINA_HOVER_IMU_CORR_STEP_MIN_SEC`` (0.08 s, tuned
+    for 20%-blend in-motion correction) is **not** changed by this
+    knob. Clamped to ``[0.005, 1.0]``.
+    """
+    try:
+        return max(
+            0.005,
+            min(
+                1.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC", "0.015")
+                ),
+            ),
+        )
+    except ValueError:
+        return 0.015
+
+
+def _straight_corr_step_rate_dps() -> float:
+    """Expected chassis pivot rate (deg/s) used to size each step's duration.
+
+    The standstill correction picks each step's duration as
+    ``|drift| / step_rate_dps`` (clamped to ``[step_min, step_dur_cap]``).
+    Default **140 °/s** — empirical at 100% calibrated pivot lean
+    on the reference chassis. The legacy
+    ``NINA_HOVER_IMU_CORR_STEP_RATE_DPS`` (30 °/s, tuned for
+    20%-blend) is **not** changed by this knob. Tune per chassis: do
+    one full-pivot pulse, measure ``Δyaw / pulse_sec``, plug it in.
+    Clamped to ``[1.0, 500.0]``.
+    """
+    try:
+        return max(
+            1.0,
+            min(
+                500.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS", "140.0")
+                ),
+            ),
+        )
+    except ValueError:
+        return 140.0
+
+
+def _straight_corr_deadband_deg() -> float:
+    """Drift magnitude (deg) below which no correction step fires.
+
+    Default **2.5°** — wider than the legacy 1.5° because the new
+    standstill correction can land each step within ~2° of the
+    deadband (with the chassis-matched cap + rate above), so a
+    tighter deadband would chase noise. The legacy
+    ``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (1.5°) is **not** changed
+    by this knob — backward and the in-motion correction keep their
+    finer deadband. Clamped to ``[0.1, 30.0]``.
+    """
+    try:
+        return max(
+            0.1,
+            min(
+                30.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG", "2.5")
+                ),
+            ),
+        )
+    except ValueError:
+        return 2.5
 
 
 def _straight_bench_cycles() -> int:
@@ -2223,7 +2300,7 @@ class HoverboardAxisDrive:
         leg_sec = _straight_leg_sec()
         brake_settle = _straight_brake_settle_sec()
         abort_deg = _straight_abort_drift_deg()
-        deadband = _imu_corr_deadband_deg()
+        deadband = _straight_corr_deadband_deg()
 
         log.info(
             "hover forward straight loop: leg=%.2fs brake_settle=%.2fs "
@@ -2372,16 +2449,18 @@ class HoverboardAxisDrive:
         Returns when ``|drift| <= deadband``, after ``max_steps``
         iterations, or when ``halt`` is set.
         """
-        deadband = _imu_corr_deadband_deg()
+        # Use the new dedicated standstill knobs so the backward + legacy
+        # in-motion correction (which run at 20% blend) keep their own
+        # tuning. Full calibrated pivot lean here means each step actually
+        # rotates the chassis (the legacy 20% blend was a 6–8 tick nudge
+        # that static friction defeated).
+        deadband = _straight_corr_deadband_deg()
         invert = _imu_corr_invert_sign()
-        # Use the new dedicated knobs: full calibrated pivot lean by
-        # default so each step actually rotates the chassis (the legacy
-        # 20% blend was a 6–8 tick nudge that static friction defeated).
         step_blend = _straight_corr_blend_pct()
         step_dur_cap = _straight_corr_step_dur_cap_sec()
-        step_min = _imu_corr_step_min_sec()
+        step_min = _straight_corr_step_min_sec()
+        step_rate = _straight_corr_step_rate_dps()
         step_settle = _imu_corr_step_settle_sec()
-        step_rate = _imu_corr_step_rate_deg_per_sec()
         max_steps = _imu_corr_max_steps()
         yaw_fn = self._imu_yaw_drift_fn
 

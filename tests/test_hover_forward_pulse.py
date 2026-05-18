@@ -26,7 +26,10 @@ from nina.controllers.hoverboard_axis_drive import (
     _straight_abort_drift_deg,
     _straight_brake_settle_sec,
     _straight_corr_blend_pct,
+    _straight_corr_deadband_deg,
     _straight_corr_step_dur_cap_sec,
+    _straight_corr_step_min_sec,
+    _straight_corr_step_rate_dps,
     _straight_leg_sec,
     estimate_backward_pulse_series_duration_sec,
 )
@@ -107,6 +110,9 @@ def _fast_straight_env() -> dict[str, str]:
     goals match ``_goals_for_wheels(..., 20, ..., 20)`` in the
     direction-of-pivot assertions below. The production default
     (full calibrated pivot at 100) is exercised by a dedicated test.
+    The deadband override (1.5°) is tighter than the new production
+    default (2.5°) so the existing ``drift=0.5`` / ``drift=10``
+    fixtures keep mapping to skip / correct as the assertions expect.
     """
     return {
         "NINA_HOVER_STRAIGHT_LEG_SEC": "0.05",
@@ -114,7 +120,13 @@ def _fast_straight_env() -> dict[str, str]:
         "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.01",
         "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "20",
         "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.05",
+        "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.005",
+        "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "60",
+        "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "1.5",
         "NINA_HOVER_POST_TURN_SETTLE_SEC": "0.0",
+        # Legacy in-motion correction knobs (still consumed by the
+        # backward pulse and the 90° turn closed loop). Pinned so the
+        # backward + turn tests in other modules stay stable.
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.5",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.05",
@@ -167,11 +179,15 @@ _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
     "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT",
     "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC",
+    "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC",
+    "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS",
+    "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG",
 )
 
 
 def test_straight_env_getter_defaults() -> None:
-    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot, 0.30 s cap."""
+    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot,
+    chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5° deadband."""
     with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
@@ -179,7 +195,10 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
         assert _straight_corr_blend_pct() == 100
-        assert _straight_corr_step_dur_cap_sec() == 0.30
+        assert _straight_corr_step_dur_cap_sec() == 0.05
+        assert _straight_corr_step_min_sec() == 0.015
+        assert _straight_corr_step_rate_dps() == 140.0
+        assert _straight_corr_deadband_deg() == 2.5
 
 
 def test_straight_env_getter_overrides() -> None:
@@ -191,6 +210,9 @@ def test_straight_env_getter_overrides() -> None:
             "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "45.0",
             "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "60",
             "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.18",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.04",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "90.0",
+            "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "4.0",
         },
         clear=False,
     ):
@@ -199,6 +221,9 @@ def test_straight_env_getter_overrides() -> None:
         assert _straight_abort_drift_deg() == 45.0
         assert _straight_corr_blend_pct() == 60
         assert _straight_corr_step_dur_cap_sec() == 0.18
+        assert _straight_corr_step_min_sec() == 0.04
+        assert _straight_corr_step_rate_dps() == 90.0
+        assert _straight_corr_deadband_deg() == 4.0
 
 
 def test_straight_env_getter_clamps() -> None:
@@ -210,6 +235,9 @@ def test_straight_env_getter_clamps() -> None:
             "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "500",
             "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "9999",
             "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.0001",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "9999",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "0.001",
+            "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "9999",
         },
         clear=False,
     ):
@@ -217,7 +245,10 @@ def test_straight_env_getter_clamps() -> None:
         assert _straight_brake_settle_sec() == 0.0
         assert _straight_abort_drift_deg() == 180.0
         assert _straight_corr_blend_pct() == 100
-        assert _straight_corr_step_dur_cap_sec() == 0.05
+        assert _straight_corr_step_dur_cap_sec() == 0.005
+        assert _straight_corr_step_min_sec() == 1.0
+        assert _straight_corr_step_rate_dps() == 1.0
+        assert _straight_corr_deadband_deg() == 30.0
 
 
 # ---------------------------------------------------------------------------
