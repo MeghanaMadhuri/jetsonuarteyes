@@ -478,38 +478,19 @@ def test_backward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
     )
 
 
-def test_forward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
-    dxl = FakeDxl()
-    drv = HoverboardAxisDrive(
-        dxl,
-        threading.RLock(),
-        replace(
-            _axis(),
-            pulse_series_max=1,
-            pulse_series_fwd_sec=0.20,
-            pulse_series_coast_initial_sec=0.0,
-        ),
-        _cfg(),
-    )
-    drv.initialize()
-
-    def fake_drift() -> float:
-        return -5.0  # bot drifted left → pivot right
-
-    with patch.dict(os.environ, _fast_correction_env(), clear=False):
-        drv.set_imu_hooks(yaw_drift_fn=fake_drift)
-
-    drv.start_pulse_straight_forward(50)
-    for _ in range(200):
-        if not drv.is_forward_pulse_active():
-            break
-        time.sleep(0.02)
-    drv.stop()
-    pivot_right = _pivot_right_goals_20pct()
-    assert any(g == pivot_right for g in dxl.goal_writes), (
-        f"expected pivot-right lean {pivot_right} during forward pulse, "
-        f"saw writes={dxl.goal_writes!r}"
-    )
+# NOTE: the legacy forward-path test
+# ``test_forward_pulse_main_hold_pivots_when_drift_exceeds_threshold``
+# was removed when the forward motion algorithm switched from the
+# legacy pulse-series + in-motion ``_imu_corrective_hold`` correction
+# to the at-standstill drift-correct loop. The forward
+# direction-of-correction is now covered by
+# :func:`tests.test_hover_forward_pulse.test_forward_loop_positive_drift_pivots_left`,
+# :func:`tests.test_hover_forward_pulse.test_forward_loop_negative_drift_pivots_right`,
+# and :func:`tests.test_hover_forward_pulse.test_forward_loop_invert_sign_flips_pivot_direction`,
+# which exercise the new standstill correction path at full calibrated
+# pivot lean. Backward motion still uses ``_imu_corrective_hold`` and
+# the in-motion 20%-blend pivot, which the tests below continue to
+# validate.
 
 
 def test_pulse_main_hold_skips_pivot_when_drift_is_quiet() -> None:

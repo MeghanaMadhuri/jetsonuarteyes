@@ -25,6 +25,8 @@ from nina.controllers.hoverboard_axis_drive import (
     _nudge_goal_from_brake,
     _straight_abort_drift_deg,
     _straight_brake_settle_sec,
+    _straight_corr_blend_pct,
+    _straight_corr_step_dur_cap_sec,
     _straight_leg_sec,
     estimate_backward_pulse_series_duration_sec,
 )
@@ -99,11 +101,19 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
 
 
 def _fast_straight_env() -> dict[str, str]:
-    """Snappy timings + IMU correction tuning for unit tests."""
+    """Snappy timings + IMU correction tuning for unit tests.
+
+    Pins ``NINA_HOVER_STRAIGHT_CORR_BLEND_PCT`` to 20 so the pivot
+    goals match ``_goals_for_wheels(..., 20, ..., 20)`` in the
+    direction-of-pivot assertions below. The production default
+    (full calibrated pivot at 100) is exercised by a dedicated test.
+    """
     return {
         "NINA_HOVER_STRAIGHT_LEG_SEC": "0.05",
         "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.02",
         "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.01",
+        "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "20",
+        "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.05",
         "NINA_HOVER_POST_TURN_SETTLE_SEC": "0.0",
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.5",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
@@ -151,29 +161,25 @@ def _wait_until_idle(hb: HoverboardAxisDrive, timeout_sec: float = 5.0) -> None:
 # ---------------------------------------------------------------------------
 
 
+_STRAIGHT_ENV_KEYS = (
+    "NINA_HOVER_STRAIGHT_LEG_SEC",
+    "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
+    "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
+    "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT",
+    "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC",
+)
+
+
 def test_straight_env_getter_defaults() -> None:
-    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort."""
-    with patch.dict(
-        os.environ,
-        {
-            k: ""
-            for k in (
-                "NINA_HOVER_STRAIGHT_LEG_SEC",
-                "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
-                "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
-            )
-        },
-        clear=False,
-    ):
-        for k in (
-            "NINA_HOVER_STRAIGHT_LEG_SEC",
-            "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
-            "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
-        ):
+    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot, 0.30 s cap."""
+    with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
+        for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
         assert _straight_leg_sec() == 1.0
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
+        assert _straight_corr_blend_pct() == 100
+        assert _straight_corr_step_dur_cap_sec() == 0.30
 
 
 def test_straight_env_getter_overrides() -> None:
@@ -183,12 +189,16 @@ def test_straight_env_getter_overrides() -> None:
             "NINA_HOVER_STRAIGHT_LEG_SEC": "0.5",
             "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.1",
             "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "45.0",
+            "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "60",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.18",
         },
         clear=False,
     ):
         assert _straight_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.1
         assert _straight_abort_drift_deg() == 45.0
+        assert _straight_corr_blend_pct() == 60
+        assert _straight_corr_step_dur_cap_sec() == 0.18
 
 
 def test_straight_env_getter_clamps() -> None:
@@ -198,12 +208,16 @@ def test_straight_env_getter_clamps() -> None:
             "NINA_HOVER_STRAIGHT_LEG_SEC": "999",
             "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "-5",
             "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "500",
+            "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "9999",
+            "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.0001",
         },
         clear=False,
     ):
         assert _straight_leg_sec() == 5.0
         assert _straight_brake_settle_sec() == 0.0
         assert _straight_abort_drift_deg() == 180.0
+        assert _straight_corr_blend_pct() == 100
+        assert _straight_corr_step_dur_cap_sec() == 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +381,40 @@ def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
     )
     assert any(g == pivot_right for g in dxl.goal_writes), (
         "with INVERT_SIGN=1, positive drift should produce a right pivot"
+    )
+
+
+def test_forward_loop_correction_default_uses_full_pivot_pose() -> None:
+    """With no override, drift correction must drive servos to the
+    *full calibrated* pivot pose (same shape ``turn_left`` uses), not
+    a 20% blended nudge. This is what gives each step real torque
+    against hoverboard hub-motor static friction.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([10.0, 0.0]))
+
+    # Same env as ``_fast_straight_env`` EXCEPT do not override
+    # NINA_HOVER_STRAIGHT_CORR_BLEND_PCT — let it fall to the default (100).
+    env = {k: v for k, v in _fast_straight_env().items()
+           if k != "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT"}
+    # Make sure no stray env value bleeds in.
+    with patch.dict(os.environ, env, clear=False):
+        os.environ.pop("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", None)
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    full_pivot_left = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD,
+        left_speed=100,
+        right_dir=hb.DIR_BACKWARD,
+        right_speed=100,
+    )
+    assert any(g == full_pivot_left for g in dxl.goal_writes), (
+        f"default drift correction must use 100% pivot pose "
+        f"{full_pivot_left}; goal_writes={dxl.goal_writes}"
     )
 
 

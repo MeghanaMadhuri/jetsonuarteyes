@@ -851,6 +851,63 @@ def _straight_brake_settle_sec() -> float:
         return 0.30
 
 
+def _straight_corr_blend_pct() -> int:
+    """Pivot lean blend (%) used by the drift-correction micro-steps.
+
+    The legacy in-motion :meth:`HoverboardAxisDrive._perform_pivot_correction`
+    used ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT`` (default **20**) — a
+    gentle nudge that the chassis often couldn't translate into actual
+    rotation because static friction in the hoverboard hub motors wins
+    at a ~6–8 tick lean. The new drift correction runs at **standstill
+    between forward legs** and we want each step to actually rotate the
+    chassis, so the default here is **100** — full calibrated pivot
+    (same pose that ``turn_left`` / ``turn_right`` use, which we've
+    confirmed rotates the bot reliably). The "micro" in micro-step
+    comes from the per-step *duration* (``step_min`` … ``step_dur_cap``),
+    not from a watered-down lean.
+
+    Dial down (e.g. ``80`` or ``60``) if the chassis over-rotates per
+    step; bump back up if a step occasionally fails to budge the bot.
+    Clamped to ``[1, 100]``.
+    """
+    try:
+        return max(
+            1,
+            min(
+                100,
+                int(os.environ.get("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", "100")),
+            ),
+        )
+    except ValueError:
+        return 100
+
+
+def _straight_corr_step_dur_cap_sec() -> float:
+    """Per-step pivot duration cap (seconds) for drift correction.
+
+    Each correction step pivots at full calibrated lean for
+    ``min(cap, max(step_min, |drift| / step_rate_dps))`` seconds. Default
+    **0.30 s** — long enough at the empirical ~30 °/s pivot rate to
+    recover a ~9° drift in a single step, short enough to never
+    over-rotate past zero. The legacy
+    ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` (0.18 s) is still respected
+    by the backward + legacy in-motion correction. Clamped to
+    ``[0.05, 1.0]``.
+    """
+    try:
+        return max(
+            0.05,
+            min(
+                1.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC", "0.30")
+                ),
+            ),
+        )
+    except ValueError:
+        return 0.30
+
+
 def _straight_bench_cycles() -> int:
     """Forward-leg cycle count used to size the Straight bench watchdog.
 
@@ -2317,8 +2374,11 @@ class HoverboardAxisDrive:
         """
         deadband = _imu_corr_deadband_deg()
         invert = _imu_corr_invert_sign()
-        step_blend = _imu_corr_pivot_blend_pct()
-        step_dur_cap = _imu_corr_pivot_max_sec()
+        # Use the new dedicated knobs: full calibrated pivot lean by
+        # default so each step actually rotates the chassis (the legacy
+        # 20% blend was a 6–8 tick nudge that static friction defeated).
+        step_blend = _straight_corr_blend_pct()
+        step_dur_cap = _straight_corr_step_dur_cap_sec()
         step_min = _imu_corr_step_min_sec()
         step_settle = _imu_corr_step_settle_sec()
         step_rate = _imu_corr_step_rate_deg_per_sec()
