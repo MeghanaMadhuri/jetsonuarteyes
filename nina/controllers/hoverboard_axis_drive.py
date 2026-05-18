@@ -1046,9 +1046,22 @@ def _straight_corr_step_dur_cap_sec() -> float:
 def _straight_corr_step_min_sec() -> float:
     """Per-step pivot duration floor (seconds) for drift correction.
 
-    Default **0.015 s** — paired with the 140 °/s pivot rate, this
-    gives a ~2° minimum rotation per step on the reference chassis,
-    which keeps tiny drift cleanups from over-shooting the deadband.
+    Default **0.030 s** — empirically the smallest single kick that
+    reliably overcomes chassis static friction + asymmetric
+    forward-leg residual on the reference chassis. Field log showed
+    a 0.044 s kick achieving 5.23° of clean rotation (cycle 1 of a
+    test run), while clusters of 0.015 s kicks rocked the chassis
+    unpredictably — some steps moved the right way, others the wrong
+    way, often netting a *worse* drift after 15 attempts. The 0.030 s
+    floor sits in the proven-reliable regime.
+
+    Paired with the target-zero step-duration formula and the 3.0°
+    deadband, every correction that fires is a single decisive kick
+    (or at most two for drifts >7°) instead of a 15-step chase that
+    fights the chassis bias. Slight overshoot into the opposite-
+    direction half of the deadband is bounded and absorbed on the
+    next leg's drift sample.
+
     The legacy ``NINA_HOVER_IMU_CORR_STEP_MIN_SEC`` (0.08 s, tuned
     for 20%-blend in-motion correction) is **not** changed by this
     knob. Clamped to ``[0.005, 1.0]``.
@@ -1059,12 +1072,12 @@ def _straight_corr_step_min_sec() -> float:
             min(
                 1.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC", "0.015")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC", "0.030")
                 ),
             ),
         )
     except ValueError:
-        return 0.015
+        return 0.030
 
 
 def _straight_corr_step_rate_dps() -> float:

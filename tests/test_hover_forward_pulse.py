@@ -208,7 +208,7 @@ _STRAIGHT_ENV_KEYS = (
 
 def test_straight_env_getter_defaults() -> None:
     """Without overrides: 0.5 s leg, 0.3 s brake settle, 90° abort, 100%
-    pivot, chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 3.0°
+    pivot, chassis-matched 0.05 s cap / 0.030 s floor / 140 dps / 3.0°
     deadband; active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s
     poll; correction pivot direction SWAPPED by default (reference
     chassis)."""
@@ -220,7 +220,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_abort_drift_deg() == 90.0
         assert _straight_corr_blend_pct() == 100
         assert _straight_corr_step_dur_cap_sec() == 0.05
-        assert _straight_corr_step_min_sec() == 0.015
+        assert _straight_corr_step_min_sec() == 0.030
         assert _straight_corr_step_rate_dps() == 140.0
         assert _straight_corr_deadband_deg() == 3.0
         assert _straight_settle_rate_dps() == 3.0
