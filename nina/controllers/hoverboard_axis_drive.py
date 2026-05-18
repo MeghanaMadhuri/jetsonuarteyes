@@ -1490,7 +1490,7 @@ def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> 
 
     The ``axis`` argument is unused (kept for signature compatibility
     with :func:`estimate_backward_pulse_series_duration_sec`, which
-    still drives the legacy backward pulse series).
+    now uses the same drift-corrected algorithm and the same formula).
     """
     _ = axis  # reserved for compatibility
     cycles = _straight_bench_cycles()
@@ -1501,32 +1501,22 @@ def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> 
 
 
 def estimate_backward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
-    """Upper-bound seconds for ``start_pulse_straight_backward`` until the pulse thread exits.
+    """Upper-bound seconds for ``start_pulse_straight_backward`` until the loop exits.
 
-    Uses the same prime cap plus **backward-only** series timing (``pulse_backward_return_ramp_sec``,
-    ``pulse_series_back_sec``, ``pulse_series_back_coast_initial_sec``).
+    The backward path now uses the **exact same drift-corrected
+    algorithm** as forward (cumulative IMU tracking, drive-then-check
+    cycles with at-standstill micro-step pivot correction), so the
+    duration model is identical to
+    :func:`estimate_forward_pulse_series_duration_sec`. The ``axis``
+    argument is kept for signature compatibility but is no longer
+    consulted.
     """
-    ramp_sec = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_backward_return_ramp_sec", 0.0))),
-    )
-    min_trans = max(
-        0.0,
-        min(2.0, float(getattr(axis, "pulse_series_min_transition_sec", 0.0))),
-    )
-    eff_ramp = min(5.0, max(ramp_sec, min_trans))
-    n = max(1, min(20, int(getattr(axis, "pulse_series_max", 12))))
-    series_back = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_series_back_sec", 0.9))),
-    )
-    coast_init = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_series_back_coast_initial_sec", 0.30))),
-    )
+    _ = axis  # reserved for compatibility
+    cycles = _straight_bench_cycles()
+    leg = _straight_leg_sec()
+    settle = _straight_brake_settle_sec()
     prime = _straight_prime_timeout_sec()
-    pulse_body = (1.0 + 2.0 * float(n)) * eff_ramp + float(n) * (series_back + coast_init)
-    return prime + pulse_body
+    return prime + float(cycles) * (leg + settle)
 
 
 class HoverboardAxisDrive:
@@ -2457,7 +2447,8 @@ class HoverboardAxisDrive:
         self._post_prime_settle("fwd")
         self._last_straight_key = "fwd"
         thr = threading.Thread(
-            target=self._forward_drift_correct_loop,
+            target=self._drift_correct_loop,
+            args=(True,),
             name="nina_hover_fwd_straight",
             daemon=True,
         )
@@ -2465,33 +2456,55 @@ class HoverboardAxisDrive:
         thr.start()
 
     def start_pulse_straight_backward(self, speed_percent: int) -> None:
-        """Backward pulse series for manual D-pad / Straight bench back (when enabled).
+        """Drift-corrected backward motion (Straight back bench + D-pad back).
 
-        Separate timing from forward: ``pulse_series_back_sec`` hold at full reverse lean,
-        ``pulse_series_back_coast_initial_sec`` dwell at the near-brake pose,
-        ``pulse_backward_coast_blend`` (brake→reverse span), ramps
-        ``max(pulse_backward_return_ramp_sec, pulse_series_min_transition_sec)``.
-        If ``pulse_forward_enabled`` is False, falls back to ``backward()``.
+        Uses the **exact same algorithm** as
+        :meth:`start_pulse_straight_forward` — just with backward drive
+        goals — because at-standstill micro-step pivot correction is
+        direction-of-motion agnostic (in-place rotation) and the IMU
+        yaw integrator is direction-agnostic too. All
+        ``NINA_HOVER_STRAIGHT_*`` tuning knobs (leg duration, deadband,
+        residual, blend, active settle thresholds, swap_pivot) are
+        shared with the forward path.
+
+        1. Prime the lean stack at neutral
+           (``NINA_HOVER_STRAIGHT_PRIME_POS``).
+        2. Reset the IMU integrator ONCE
+           (``_imu_begin_straight``) — drift samples track CUMULATIVE
+           heading deviation from the operator-defined start heading.
+        3. Loop: backward lean for ``NINA_HOVER_STRAIGHT_LEG_SEC`` →
+           brake → active settle → sample cumulative drift → either
+           abort (>=90°), correct (>deadband), or continue.
+        4. Correction is identical to the forward path: iterative
+           proportional micro-step in-place pivots that drive
+           ``|drift|`` back inside
+           ``NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG`` of zero.
+
+        ``speed_percent`` is preserved for API compatibility but is
+        not used — the lean magnitude comes entirely from the
+        operator-validated ``backward_pos_*`` tune.
+
+        If ``pulse_forward_enabled`` is False, falls back to the
+        continuous ``backward()`` set-and-hold (no drift correction).
         """
         if not self._is_initialized:
             return
         if not self.is_forward_pulse_enabled():
             self.backward(speed_percent)
             return
-        sp = max(0, min(100, int(speed_percent)))
+        _ = speed_percent  # reserved; speed is encoded in the calibrated lean
         self._halt_pulse_series(wait=True)
         log.info(
-            "hover backward pulse: priming (goal=%s, lean before back/forward) ...",
+            "hover backward straight: priming (goal=%s, lean before drive) ...",
             _straight_prime_goal_ticks(),
         )
         self._prime_straight_neutral()
         self._post_prime_settle("back")
-        self._imu_begin_straight()
         self._last_straight_key = "back"
         thr = threading.Thread(
-            target=self._backward_pulse_loop,
-            args=(sp,),
-            name="nina_hover_back_pulse",
+            target=self._drift_correct_loop,
+            args=(False,),
+            name="nina_hover_bwd_straight",
             daemon=True,
         )
         self._pulse_series_thread = thr
@@ -2564,7 +2577,7 @@ class HoverboardAxisDrive:
             now = time.monotonic()
             if now >= deadline:
                 log.warning(
-                    "hover forward settle (%s): BAILED after %.2fs — "
+                    "hover settle (%s): BAILED after %.2fs — "
                     "chassis never went below %.1f deg/s (last rate "
                     "%+.2f deg/s). Skipping drift sample for this cycle.",
                     context,
@@ -2589,7 +2602,7 @@ class HoverboardAxisDrive:
                     elif now >= stable_until:
                         elapsed = now - started
                         log.debug(
-                            "hover forward settle (%s): settled in %.3fs "
+                            "hover settle (%s): settled in %.3fs "
                             "(last rate %+.2f deg/s, threshold %.2f)",
                             context, elapsed, last_rate, rate_thr,
                         )
@@ -2599,32 +2612,46 @@ class HoverboardAxisDrive:
             if halt.wait(timeout=poll_sec):
                 return ("halted", time.monotonic() - started, last_rate)
 
-    def _forward_drift_correct_loop(self) -> None:
-        """Drive-then-check forward loop with at-standstill drift correction.
+    def _drift_correct_loop(self, is_forward: bool) -> None:
+        """Drive-then-check loop with at-standstill drift correction.
+
+        Direction-agnostic implementation shared by both
+        :meth:`start_pulse_straight_forward` (``is_forward=True``) and
+        :meth:`start_pulse_straight_backward` (``is_forward=False``).
+        The two motions use the exact same algorithm — only the drive
+        direction (FWD vs BACK goals) differs. All tuning knobs
+        (``NINA_HOVER_STRAIGHT_*``) are shared because the chassis's
+        physical pivot geometry and IMU mount are direction-invariant.
 
         The IMU integrator starts ONCE at the top of the motion, so the
         drift samples taken at each cycle reflect CUMULATIVE heading
         deviation from the operator-defined start heading — not the
-        rotation accumulated during the last 0.5 s leg only. This is
-        what bounds the bot's maximum heading deviation to the deadband
-        regardless of how small the per-leg yaw bias is.
+        rotation accumulated during the last leg only. This bounds the
+        bot's maximum heading deviation to the deadband regardless of
+        how small the per-leg yaw bias is.
 
-        Each cycle: drive forward for ``leg_sec`` → brake → wait for the
-        chassis to actually stop (active settle on the IMU yaw rate, or
-        a fixed timer fallback if no rate hook is wired) → sample
-        cumulative drift → optionally correct with micro-steps that
-        rotate the chassis back toward the start heading → repeat. See
-        :meth:`start_pulse_straight_forward` for the full algorithm.
+        Each cycle: drive (forward or backward) for ``leg_sec`` →
+        brake → wait for the chassis to actually stop (active settle
+        on the IMU yaw rate, or a fixed timer fallback if no rate hook
+        is wired) → sample cumulative drift → optionally correct with
+        in-place micro-step pivots that rotate the chassis back toward
+        the start heading → repeat. See
+        :meth:`start_pulse_straight_forward` for the full algorithm
+        rationale.
         """
+        direction_label = "forward" if is_forward else "backward"
+        drive_dir = self.DIR_FORWARD if is_forward else self.DIR_BACKWARD
+        drive_short = "FWD" if is_forward else "REV"
+
         halt = self._pulse_halt
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
-        forward_goals = self._goals_for_wheels(
-            left_dir=self.DIR_FORWARD,
+        drive_goals = self._goals_for_wheels(
+            left_dir=drive_dir,
             left_speed=100,
-            right_dir=self.DIR_FORWARD,
+            right_dir=drive_dir,
             right_speed=100,
         )
 
@@ -2638,10 +2665,11 @@ class HoverboardAxisDrive:
         have_rate_hook = self._imu_yaw_rate_fn is not None
 
         log.info(
-            "hover forward straight loop: leg=%.2fs brake_settle=%.2fs "
+            "hover %s straight loop: leg=%.2fs brake_settle=%.2fs "
             "abort_drift=%.1f deg deadband=%.2f deg residual=%.2f deg "
             "active_settle=%s (rate_thr=%.1f dps stable=%.2fs max=%.2fs) | "
-            "FWD L(id%s)=%s R(id%s)=%s",
+            "%s L(id%s)=%s R(id%s)=%s",
+            direction_label,
             leg_sec,
             brake_settle,
             abort_deg,
@@ -2651,37 +2679,42 @@ class HoverboardAxisDrive:
             settle_rate,
             settle_stable,
             settle_max,
+            drive_short,
             self._left_id,
-            forward_goals[self._left_id],
+            drive_goals[self._left_id],
             self._right_id,
-            forward_goals[self._right_id],
+            drive_goals[self._right_id],
         )
 
         yaw_fn = self._imu_yaw_drift_fn
         cycle = 0
-        # Start the IMU integrator ONCE at the top of the entire forward
-        # motion. The post-leg drift samples then read CUMULATIVE drift
-        # from movement-start (the operator-defined "straight" heading),
-        # not per-leg drift. This catches small same-sign per-leg biases
-        # (e.g. +1° / leg) that otherwise compound across many cycles
-        # into a noticeable curve while each individual leg stays inside
-        # the per-leg deadband and never triggers correction.
+        # Start the IMU integrator ONCE at the top of the entire motion.
+        # The post-leg drift samples then read CUMULATIVE drift from
+        # movement-start (the operator-defined "straight" heading),
+        # not per-leg drift. This catches small same-sign per-leg
+        # biases (e.g. +1° / leg) that otherwise compound across many
+        # cycles into a noticeable curve while each individual leg
+        # stays inside the per-leg deadband and never triggers
+        # correction.
         self._imu_begin_straight()
         try:
             while not halt.is_set():
                 cycle += 1
 
                 log.info(
-                    "hover forward straight: cycle %d — forward leg %.2fs",
+                    "hover %s straight: cycle %d — %s leg %.2fs",
+                    direction_label,
                     cycle,
+                    direction_label,
                     leg_sec,
                 )
-                # 1. Forward leg
+                # 1. Drive leg (forward or backward)
                 try:
-                    self._apply_goals(forward_goals)
+                    self._apply_goals(drive_goals)
                 except Exception:
                     log.debug(
-                        "forward straight: leg apply failed", exc_info=True
+                        "%s straight: leg apply failed",
+                        direction_label, exc_info=True,
                     )
                 if halt.wait(timeout=leg_sec):
                     break
@@ -2697,10 +2730,11 @@ class HoverboardAxisDrive:
                     self._apply_goals(brake_goals)
                 except Exception:
                     log.debug(
-                        "forward straight: brake apply failed", exc_info=True
+                        "%s straight: brake apply failed",
+                        direction_label, exc_info=True,
                     )
                 status, elapsed, last_rate = self._active_settle_until_still(
-                    halt, context=f"cycle {cycle} post-leg"
+                    halt, context=f"{direction_label} cycle {cycle} post-leg"
                 )
                 if status == "halted":
                     break
@@ -2715,9 +2749,9 @@ class HoverboardAxisDrive:
                     continue
                 else:
                     log.info(
-                        "hover forward straight: cycle %d — settled in "
+                        "hover %s straight: cycle %d — settled in "
                         "%.3fs (last rate %+.2f deg/s)",
-                        cycle, elapsed, last_rate,
+                        direction_label, cycle, elapsed, last_rate,
                     )
 
                 # 3. Cumulative drift sample at standstill (heading
@@ -2725,15 +2759,16 @@ class HoverboardAxisDrive:
                 drift = yaw_fn() if yaw_fn is not None else None
                 if drift is None:
                     log.info(
-                        "hover forward straight: cycle %d — no IMU sample, "
+                        "hover %s straight: cycle %d — no IMU sample, "
                         "skipping drift check",
-                        cycle,
+                        direction_label, cycle,
                     )
                     continue
 
                 log.info(
-                    "hover forward straight: cycle %d — cumulative drift = "
+                    "hover %s straight: cycle %d — cumulative drift = "
                     "%+.2f deg (abort threshold %.1f deg)",
+                    direction_label,
                     cycle,
                     drift,
                     abort_deg,
@@ -2742,9 +2777,10 @@ class HoverboardAxisDrive:
                 # 4. Abort check — too much cumulative drift to recover
                 if abort_deg > 0.0 and abs(drift) >= abort_deg:
                     log.warning(
-                        "hover forward straight: cycle %d — drift %+.2f deg "
+                        "hover %s straight: cycle %d — drift %+.2f deg "
                         ">= %.1f deg ABORT threshold; halting and "
                         "announcing cant_move",
+                        direction_label,
                         cycle,
                         drift,
                         abort_deg,
@@ -2757,8 +2793,8 @@ class HoverboardAxisDrive:
                         maybe_speak_cant_move_alert()
                     except Exception:
                         log.debug(
-                            "forward straight: cant_move alert raised",
-                            exc_info=True,
+                            "%s straight: cant_move alert raised",
+                            direction_label, exc_info=True,
                         )
                     halt.set()
                     break
@@ -2767,15 +2803,20 @@ class HoverboardAxisDrive:
                 # standstill). With cumulative tracking, each correction
                 # physically rotates the chassis to drive the integrator
                 # back toward zero — restoring the original heading
-                # rather than zeroing the last 0.5 s of motion.
+                # rather than zeroing the last leg's motion. Pivot
+                # direction is direction-of-motion agnostic (in-place
+                # rotation), so the same correction logic works for
+                # both forward and backward.
                 if abs(drift) > deadband:
                     self._correct_drift_at_standstill(
-                        drift, brake_goals, halt
+                        drift, brake_goals, halt,
+                        direction_label=direction_label,
                     )
                 else:
                     log.info(
-                        "hover forward straight: cycle %d — drift %+.2f deg "
+                        "hover %s straight: cycle %d — drift %+.2f deg "
                         "within deadband %.2f deg, no correction needed",
+                        direction_label,
                         cycle,
                         drift,
                         deadband,
@@ -2800,11 +2841,20 @@ class HoverboardAxisDrive:
         initial_drift: float,
         brake_goals: Dict[int, int],
         halt: threading.Event,
+        *,
+        direction_label: str = "forward",
     ) -> None:
         """Iterative proportional micro-step pivot to drive ``|drift|`` to zero.
 
+        Direction-agnostic: the chassis is braked at standstill before
+        this routine is entered, so the in-place pivot geometry is
+        identical whether the previous leg drove forward or backward.
+        The ``direction_label`` is purely cosmetic, woven into log
+        messages so an operator reading the log can trace each
+        correction back to the motion that triggered it.
+
         Same step math as :meth:`_perform_pivot_correction` but driven
-        at standstill between forward legs (chassis is already braked
+        at standstill between drive legs (chassis is already braked
         when this is called). Each step:
 
         1. Choose pivot direction from the sign of the latest drift
@@ -2851,10 +2901,11 @@ class HoverboardAxisDrive:
 
         current = initial_drift
         log.info(
-            "hover forward drift-correct: start=%+.2f deg deadband=%.2f deg "
+            "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
             "residual=%.2f deg invert=%s swap_pivot=%s step_blend=%d%% "
             "step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
             "step_settle=%.2fs max_steps=%d",
+            direction_label,
             current,
             deadband,
             residual,
@@ -2873,9 +2924,10 @@ class HoverboardAxisDrive:
                 return
             if abs(current) <= residual:
                 log.info(
-                    "hover forward drift-correct: reached residual at step "
+                    "hover %s drift-correct: reached residual at step "
                     "%d (drift %+.2f deg within residual %.2f deg, "
                     "%d steps used)",
+                    direction_label,
                     step,
                     current,
                     residual,
@@ -2929,7 +2981,8 @@ class HoverboardAxisDrive:
                 self._apply_goals(step_goals)
             except Exception:
                 log.debug(
-                    "forward drift-correct: step apply failed", exc_info=True
+                    "%s drift-correct: step apply failed",
+                    direction_label, exc_info=True,
                 )
             if halt.wait(timeout=this_step_dur):
                 return
@@ -2942,7 +2995,7 @@ class HoverboardAxisDrive:
             # from the pivot we just commanded. Falls back to the legacy
             # step_settle timer when no yaw_rate_fn is wired.
             settle_status, settle_elapsed, _ = self._active_settle_until_still(
-                halt, context=f"corr step {step + 1}"
+                halt, context=f"{direction_label} corr step {step + 1}"
             )
             if settle_status == "halted":
                 return
@@ -2951,24 +3004,25 @@ class HoverboardAxisDrive:
                     return
             elif settle_status == "timeout":
                 log.warning(
-                    "hover forward drift-correct: step %d settle BAILED "
+                    "hover %s drift-correct: step %d settle BAILED "
                     "(elapsed %.2fs); exiting correction so the next "
                     "leg can sample fresh.",
-                    step + 1, settle_elapsed,
+                    direction_label, step + 1, settle_elapsed,
                 )
                 return
 
             sample = yaw_fn() if yaw_fn is not None else None
             if sample is None:
                 log.debug(
-                    "forward drift-correct: step %d IMU returned None, "
+                    "%s drift-correct: step %d IMU returned None, "
                     "holding previous drift estimate",
-                    step + 1,
+                    direction_label, step + 1,
                 )
                 continue
             log.info(
-                "hover forward drift-correct: step %d — decision=pivot %s "
+                "hover %s drift-correct: step %d — decision=pivot %s "
                 "applied=%s_goals this_dur=%.3fs drift was %+.2f → %+.2f deg",
+                direction_label,
                 step + 1,
                 "LEFT" if pivot_left_decision else "RIGHT",
                 "LEFT" if apply_left_goals else "RIGHT",
@@ -2981,16 +3035,17 @@ class HoverboardAxisDrive:
             # noise slop, the pivot is going the wrong way (operator has
             # the wrong INVERT_SIGN, the IMU just glitched, or a wheel
             # stalled while the other spun). Don't compound the error —
-            # exit immediately so the next forward leg can sample fresh
+            # exit immediately so the next drive leg can sample fresh
             # rather than keep spinning into a 400° runaway.
             wrong_dir_slop = max(0.5, deadband)
             if abs(sample) > abs(current) + wrong_dir_slop:
                 log.warning(
-                    "hover forward drift-correct: step %d INCREASED |drift| "
+                    "hover %s drift-correct: step %d INCREASED |drift| "
                     "(|%+.2f| -> |%+.2f|, slop=%.2f deg) — pivot direction "
                     "is wrong (check NINA_HOVER_IMU_CORR_INVERT_SIGN) or "
                     "sensor glitch. Aborting correction; next leg will "
                     "sample fresh.",
+                    direction_label,
                     step + 1,
                     current,
                     sample,
@@ -3001,115 +3056,12 @@ class HoverboardAxisDrive:
             current = sample
 
         log.warning(
-            "hover forward drift-correct: max steps (%d) reached, drift "
+            "hover %s drift-correct: max steps (%d) reached, drift "
             "now %+.2f deg (next leg will sample fresh)",
+            direction_label,
             max_steps,
             current,
         )
-
-    def _backward_pulse_loop(self, speed_pct: int) -> None:
-        """Backward-only pulse series: brake→coast blend→…→full brake (separate knobs from FWD)."""
-        halt = self._pulse_halt
-        brake_goals = {
-            self._left_id: self._brake_left,
-            self._right_id: self._brake_right,
-        }
-        ramp_sec = max(
-            0.0,
-            min(
-                10.0,
-                float(getattr(self._axis, "pulse_backward_return_ramp_sec", 0.0)),
-            ),
-        )
-        min_trans = max(
-            0.0,
-            min(
-                2.0,
-                float(getattr(self._axis, "pulse_series_min_transition_sec", 0.0)),
-            ),
-        )
-        eff_ramp = min(5.0, max(ramp_sec, min_trans))
-
-        series_max = int(getattr(self._axis, "pulse_series_max", 12))
-        series_max = max(1, min(20, series_max))
-        main_hold = max(
-            0.0,
-            min(10.0, float(getattr(self._axis, "pulse_series_back_sec", 0.9))),
-        )
-        coast_init = max(
-            0.0,
-            min(
-                10.0,
-                float(getattr(self._axis, "pulse_series_back_coast_initial_sec", 0.30)),
-            ),
-        )
-        coast_blend = max(
-            0.0,
-            min(
-                1.0,
-                float(getattr(self._axis, "pulse_backward_coast_blend", 0.2)),
-            ),
-        )
-
-        goals = self._goals_for_wheels(
-            left_dir=self.DIR_BACKWARD,
-            left_speed=speed_pct,
-            right_dir=self.DIR_BACKWARD,
-            right_speed=speed_pct,
-        )
-        coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
-
-        log.info(
-            "hover backward pulse series: n=%s back_hold=%.2fs coast_dwell=%.2fs "
-            "transition=%.2fs coast_blend=%.2f | REV L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
-            series_max,
-            main_hold,
-            coast_init,
-            eff_ramp,
-            coast_blend,
-            self._left_id,
-            goals[self._left_id],
-            self._right_id,
-            goals[self._right_id],
-            coast_goals[self._left_id],
-            coast_goals[self._right_id],
-        )
-
-        try:
-            if not halt.is_set():
-                self._pulse_ramp_goals_between(
-                    brake_goals, coast_goals, eff_ramp, halt
-                )
-            prev_coast: Dict[int, int] = dict(coast_goals)
-            for _ in range(series_max):
-                if halt.is_set():
-                    break
-                coast_dwell = coast_init
-                self._pulse_ramp_goals_between(
-                    prev_coast, goals, eff_ramp, halt
-                )
-                if halt.is_set():
-                    break
-                if self._imu_corrective_hold(
-                    goals, main_hold, halt, is_forward=False
-                ):
-                    break
-                self._pulse_ramp_goals_between(
-                    goals, coast_goals, eff_ramp, halt
-                )
-                if halt.is_set():
-                    break
-                if self._imu_corrective_hold(
-                    coast_goals, coast_dwell, halt, is_forward=False
-                ):
-                    break
-                prev_coast = dict(coast_goals)
-
-            if not halt.is_set():
-                self._apply_goals(brake_goals)
-        finally:
-            self._imu_end_straight()
-            self._sync_pulse_moving_speed()
 
     def _pulse_coast_goals(
         self,

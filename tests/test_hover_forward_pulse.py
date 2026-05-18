@@ -1085,47 +1085,188 @@ def test_forward_loop_no_imu_sampler_still_cycles() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backward pulse series — unchanged, still uses _backward_pulse_loop
+# Backward straight — uses the same drift-corrected algorithm as forward.
+#
+# start_pulse_straight_backward now shares ``_drift_correct_loop`` with the
+# forward path (passing ``is_forward=False`` so the drive leg uses backward
+# goals). Cumulative tracking, hysteresis, micro-step pivot correction,
+# active settle, and the 90° abort all behave identically — only the leg's
+# drive direction differs.
 # ---------------------------------------------------------------------------
 
 
-def test_estimate_backward_pulse_series_duration_sec_formula() -> None:
-    axis = replace(
-        _axis_pulse_fast(),
-        pulse_series_max=12,
-        pulse_backward_return_ramp_sec=0.0,
-        pulse_series_min_transition_sec=0.0,
-        pulse_series_back_sec=0.9,
-        pulse_series_back_coast_initial_sec=0.3,
-    )
-    with patch.dict(os.environ, {"NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05"}, clear=False):
-        got = estimate_backward_pulse_series_duration_sec(axis)
-    assert abs(got - (0.05 + 12.0 * (0.9 + 0.3))) < 1e-9
-
-
-def test_backward_pulse_alternates_reverse_and_brake() -> None:
-    dxl = FakeDxl()
+def test_estimate_backward_pulse_series_duration_sec_matches_forward_formula() -> None:
+    """Backward now uses the same drive-then-check algorithm as forward,
+    so its duration estimate must match the forward formula:
+    ``prime + cycles * (leg + brake_settle)``."""
     axis = _axis_pulse_fast()
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_backward(50)
-    time.sleep(0.2)
-    hb.stop()
-    assert len(dxl.goal_writes) >= 4
-    rev = {12: 2000, 13: 2000}
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05",
+            "NINA_HOVER_STRAIGHT_LEG_SEC": "0.5",
+            "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.3",
+            "NINA_HOVER_STRAIGHT_BENCH_CYCLES": "12",
+        },
+        clear=False,
+    ):
+        got = estimate_backward_pulse_series_duration_sec(axis)
+    # 0.05 + 12 * (0.5 + 0.3) = 0.05 + 9.6 = 9.65
+    assert abs(got - (0.05 + 12.0 * (0.5 + 0.3))) < 1e-9
+
+
+def test_backward_loop_cycles_drive_then_brake() -> None:
+    """``start_pulse_straight_backward`` must drive the wheels in
+    reverse, brake, then drive again — same drive-then-check cadence
+    as the forward loop, just with backward goals."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    rev = {12: 2000, 13: 2000}  # _axis_pulse_fast backward_pos_*
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
-    assert saw_rev and saw_brk
+    assert saw_rev, (
+        f"backward loop must command the reverse goals at least once; "
+        f"writes={dxl.goal_writes}"
+    )
+    assert saw_brk, (
+        f"backward loop must brake between legs; writes={dxl.goal_writes}"
+    )
+
+
+def test_backward_loop_ends_at_full_brake() -> None:
+    """The loop must leave the chassis at the calibrated brake pose on
+    exit (operator release)."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    brk = {12: 2048, 13: 2048}
+    assert dxl.goal_writes[-1] == brk, (
+        f"backward loop didn't brake on exit; last write={dxl.goal_writes[-1]}"
+    )
+
+
+def test_backward_loop_cumulative_drift_compounds_across_legs() -> None:
+    """A constant +5° cumulative drift (via the fixture's 1.5° deadband)
+    must trigger at least one in-place pivot correction during a
+    backward run — proving the SAME drift-correction algorithm fires
+    for backward motion."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    pivot_steps = sum(
+        1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
+    )
+    assert pivot_steps >= 1, (
+        f"backward cumulative drift of +5° must trigger at least one "
+        f"correction step; saw {pivot_steps} pivot writes in "
+        f"{dxl.goal_writes}"
+    )
+
+
+def test_backward_loop_starts_integrator_once_for_cumulative_tracking() -> None:
+    """Backward motion uses the same cumulative-tracking semantics as
+    forward: the IMU integrator starts ONCE at the top of the motion,
+    not at every leg."""
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    begin_calls = {"n": 0}
+    end_calls = {"n": 0}
+    hb.set_imu_hooks(
+        yaw_drift_fn=lambda: 0.0,
+        begin_straight_fn=lambda: begin_calls.__setitem__(
+            "n", begin_calls["n"] + 1
+        ),
+        end_straight_fn=lambda: end_calls.__setitem__(
+            "n", end_calls["n"] + 1
+        ),
+    )
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.45)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    assert begin_calls["n"] == 1, (
+        f"backward integrator should start exactly ONCE per motion "
+        f"(cumulative); saw {begin_calls['n']} begin calls"
+    )
+    assert end_calls["n"] >= 1, (
+        f"backward integrator must end at least once on motion stop; "
+        f"saw {end_calls['n']} end calls"
+    )
+
+
+def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
+    """|drift| >= abort threshold during backward → brake, play
+    cant_move, halt — same abort behavior as the forward loop."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 120.0)
+
+    spoken = {"n": 0}
+
+    def _fake_speak() -> None:
+        spoken["n"] += 1
+
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "90.0"}
+    with patch.dict(os.environ, env, clear=False):
+        with patch(
+            "nina.controllers.hoverboard_axis_drive."
+            "maybe_speak_cant_move_alert",
+            side_effect=_fake_speak,
+        ):
+            hb.start_pulse_straight_backward(50)
+            _wait_until_idle(hb, timeout_sec=2.0)
+
+    assert not hb.is_forward_pulse_active(), (
+        "backward loop should self-halt on 90° abort"
+    )
+    assert spoken["n"] >= 1, (
+        "cant_move alert was not invoked on backward abort"
+    )
+    brk = {12: 2048, 13: 2048}
+    assert dxl.goal_writes[-1] == brk, (
+        f"backward loop did not brake on abort; "
+        f"last write={dxl.goal_writes[-1]}"
+    )
 
 
 def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
+    """When ``pulse_forward_enabled`` is False, ``start_pulse_straight_backward``
+    falls back to the continuous ``backward()`` set-and-hold (no drift
+    correction, no priming loop)."""
     dxl = FakeDxl()
     axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
     cfg = SimpleNamespace(
@@ -1140,36 +1281,6 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
     assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
-    prime = {12: 2048, 13: 2048}
-    assert prime in dxl.goal_writes
-
-
-def test_backward_pulse_series_ends_at_full_brake() -> None:
-    dxl = FakeDxl()
-    axis = replace(
-        _axis_pulse_fast(),
-        pulse_series_max=3,
-        pulse_series_back_sec=0.02,
-        pulse_series_back_coast_initial_sec=0.01,
-        pulse_series_min_transition_sec=0.012,
-        pulse_backward_return_ramp_sec=0.02,
-        pulse_backward_coast_blend=0.2,
-    )
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_backward(50)
-    for _ in range(300):
-        if not hb.is_forward_pulse_active():
-            break
-        time.sleep(0.02)
-    assert not hb.is_forward_pulse_active()
-    assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
 
 
 # ---------------------------------------------------------------------------

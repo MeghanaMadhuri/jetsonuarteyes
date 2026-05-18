@@ -435,62 +435,28 @@ def test_pivot_after_straight_ends_then_resumes_on_next_straight() -> None:
 
 
 # ----------------------------------------------------------------------
-# Pulse loops actually trigger pause-pivot-resume during their main holds
+# Pulse-loop correction tests
 # ----------------------------------------------------------------------
-
-def test_backward_pulse_main_hold_pivots_when_drift_exceeds_threshold() -> None:
-    """Above-threshold drift inside the back-hold must surface a pivot lean write."""
-    dxl = FakeDxl()
-    drv = HoverboardAxisDrive(
-        dxl,
-        threading.RLock(),
-        replace(
-            _axis(),
-            pulse_series_max=1,
-            pulse_series_back_sec=0.20,
-            pulse_series_back_coast_initial_sec=0.0,
-        ),
-        _cfg(),
-    )
-    drv.initialize()
-    samples = {"calls": 0}
-
-    def fake_drift() -> float:
-        samples["calls"] += 1
-        # 7.0 is above both the forward 3.0 threshold (from _fast_correction_env)
-        # and the new backward 6.0 default threshold.
-        return 7.0
-
-    with patch.dict(os.environ, _fast_correction_env(), clear=False):
-        drv.set_imu_hooks(yaw_drift_fn=fake_drift)
-
-    drv.start_pulse_straight_backward(50)
-    for _ in range(200):
-        if not drv.is_forward_pulse_active():
-            break
-        time.sleep(0.02)
-    drv.stop()
-    assert samples["calls"] >= 2, "drift sampler should be polled in the main hold"
-    pivot_left = _pivot_left_goals_20pct()
-    assert any(g == pivot_left for g in dxl.goal_writes), (
-        f"expected pivot-left lean {pivot_left} during backward pulse, "
-        f"saw writes={dxl.goal_writes!r}"
-    )
-
-
-# NOTE: the legacy forward-path test
-# ``test_forward_pulse_main_hold_pivots_when_drift_exceeds_threshold``
-# was removed when the forward motion algorithm switched from the
+#
+# Both the legacy in-motion forward test
+# (``test_forward_pulse_main_hold_pivots_when_drift_exceeds_threshold``)
+# and its backward twin
+# (``test_backward_pulse_main_hold_pivots_when_drift_exceeds_threshold``)
+# were removed when forward and now backward both switched from the
 # legacy pulse-series + in-motion ``_imu_corrective_hold`` correction
-# to the at-standstill drift-correct loop. The forward
-# direction-of-correction is now covered by
-# :func:`tests.test_hover_forward_pulse.test_forward_loop_positive_drift_pivots_left`,
-# :func:`tests.test_hover_forward_pulse.test_forward_loop_negative_drift_pivots_right`,
-# and :func:`tests.test_hover_forward_pulse.test_forward_loop_invert_sign_flips_pivot_direction`,
-# which exercise the new standstill correction path at full calibrated
-# pivot lean. Backward motion still uses ``_imu_corrective_hold`` and
-# the in-motion 20%-blend pivot, which the tests below continue to
-# validate.
+# to the unified at-standstill ``_drift_correct_loop`` (with cumulative
+# IMU tracking and micro-step pivot corrections between drive legs).
+#
+# Direction-of-correction and trigger behavior for both axes is now
+# covered in :mod:`tests.test_hover_forward_pulse`:
+# - ``test_forward_loop_positive_drift_pivots_left``
+# - ``test_forward_loop_negative_drift_pivots_right``
+# - ``test_forward_loop_invert_sign_flips_pivot_direction``
+# - ``test_backward_loop_cumulative_drift_compounds_across_legs``
+# - ``test_backward_loop_cycles_drive_then_brake``
+#
+# ``_imu_corrective_hold`` is still consumed by the 90° turn closed
+# loop, which the tests below continue to validate.
 
 
 def test_pulse_main_hold_skips_pivot_when_drift_is_quiet() -> None:
