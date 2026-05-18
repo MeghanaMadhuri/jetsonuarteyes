@@ -1096,21 +1096,22 @@ def _straight_corr_step_rate_dps() -> float:
 def _straight_corr_deadband_deg() -> float:
     """Drift magnitude (deg) below which no correction step fires.
 
-    Default **3.5°**. Sized to skip the "near-noise-floor" band on
-    the reference chassis: steady-state per-leg drift is ±1–2°, and
-    correcting just-past-2.5° drifts produced ineffective 0.015 s
-    minimum-floor kicks that chased noise for 4–6 steps before
-    breaking stiction (and occasionally bailed at the active-settle
-    timeout). A 3.5° deadband:
+    Default **3.0°** — a compromise between responsiveness (catch
+    drifts before they're visible to the operator: steady-state
+    per-leg drift on the reference chassis is ±1–2°, so 3.0° is
+    well above noise) and not chasing noise.
 
-    * Skips every marginal correction the old 2.5° default fired in
-      field testing (cluster of −3.5°…+3.9° drifts that all
-      resolved after multiple tiny kicks).
-    * Keeps the big corrections — at 3.5° / 140 dps, the smallest
-      auto-computed step is 0.025 s (above the 0.015 s floor), so
-      anything that DOES fire is a single decisive kick.
-    * 90° abort is unchanged, so runaway drift still triggers
-      ``cant_move.mp3``.
+    Paired with the **target-zero** step-duration formula (aim to
+    land at zero drift, not at half-deadband short of zero) the
+    minimum auto-computed step duration at deadband-edge is now
+    3.0° / 140 dps = 0.021 s — comfortably above the 0.015 s floor,
+    so every correction that DOES fire is a single decisive kick
+    that overcomes chassis stiction. Slight overshoot past zero is
+    bounded by the deadband (next sample exits naturally).
+
+    Historical defaults: legacy in-motion 1.5°; this knob shipped at
+    2.5° (chased noise); then 3.5° (catch the wobble at fag-end);
+    now 3.0° + zero-target formula.
 
     The legacy ``NINA_HOVER_IMU_CORR_DEADBAND_DEG`` (1.5°) is **not**
     changed by this knob — backward and the in-motion correction
@@ -1122,12 +1123,12 @@ def _straight_corr_deadband_deg() -> float:
             min(
                 30.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG", "3.5")
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG", "3.0")
                 ),
             ),
         )
     except ValueError:
-        return 3.5
+        return 3.0
 
 
 def _straight_bench_cycles() -> int:
@@ -2799,10 +2800,16 @@ class HoverboardAxisDrive:
                     right_speed=step_blend,
                 )
 
-            # Proportional duration: aim to land ~0.5 deadband short of
-            # zero so the next sample exits via the deadband instead of
-            # always over-shooting.
-            target_rotation = max(0.5, abs(current) - 0.5 * deadband)
+            # Proportional duration: aim to land at **zero** drift. The
+            # old "land at ½ deadband short of zero" target weakens the
+            # per-step kick for drifts just past the deadband edge — a
+            # 3.6° drift with a 3.5° deadband targets only 1.85° of
+            # rotation, hits the 0.015 s step floor, and gets defeated
+            # by chassis stiction (the user-observed "bot doesn't seem
+            # to correct" pattern). Aiming for zero gives the step a
+            # full deadband-worth more torque budget; if it overshoots,
+            # the next leg's sample exits via the deadband.
+            target_rotation = max(0.5, abs(current))
             this_step_dur = max(
                 step_min, min(step_dur_cap, target_rotation / step_rate)
             )
