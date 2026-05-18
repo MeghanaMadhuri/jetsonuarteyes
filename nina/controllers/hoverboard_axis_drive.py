@@ -2400,26 +2400,36 @@ class HoverboardAxisDrive:
         a simpler "drive-then-check" cycle:
 
         1. Prime the lean stack at neutral (``NINA_HOVER_STRAIGHT_PRIME_POS``).
-        2. Reset the IMU integrator (``_imu_begin_straight``).
+        2. Reset the IMU integrator ONCE at the top of the entire
+           motion (``_imu_begin_straight``) so drift samples report
+           CUMULATIVE heading deviation from the operator-defined
+           start heading, not per-leg drift.
         3. Command full forward lean for ``NINA_HOVER_STRAIGHT_LEG_SEC``
-           (default **1.0 s**) using ``forward_pos_left`` /
+           (default **0.5 s**) using ``forward_pos_left`` /
            ``forward_pos_right`` + the ``_STRAIGHT_FWD_EXTRA_TICKS`` nudge.
-        4. Brake; wait ``NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC`` (default
-           **0.3 s**) so the chassis fully stops rotating.
-        5. Read drift from the IMU at standstill — the integrator now
-           reflects ONLY the yaw accumulated during this leg.
+        4. Brake; active-settle on the IMU yaw rate (or fall back to
+           ``NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC``) so the chassis is
+           truly still before sampling.
+        5. Read cumulative drift from the running IMU integrator — the
+           sample reflects yaw accumulated since the motion STARTED
+           (not since the last leg started).
         6. If ``|drift| >= NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG``
            (default **90°**), brake, play
            :func:`nina.services.sensor_alert_audio.maybe_speak_cant_move_alert`,
            halt the thread and return.
-        7. If ``|drift| > NINA_HOVER_IMU_CORR_DEADBAND_DEG``, run an
-           iterative proportional micro-step correction at standstill
-           (same step math as :meth:`_perform_pivot_correction`:
-           proportional duration clamped to ``[step_min, step_dur_cap]``,
-           brake settle between steps).
-        8. Loop back to step 2 — repeat until the operator releases the
+        7. If ``|drift| > NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG``, run
+           an iterative proportional micro-step correction at standstill
+           that drives the cumulative integrator back inside
+           ``NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG`` of zero (i.e. back
+           toward the operator's start heading).
+        8. Loop back to step 3 — repeat until the operator releases the
            button (which triggers ``_halt_pulse_series``) or the abort
            fires.
+
+        Cumulative tracking (steps 2 + 5) is what bounds the bot's
+        maximum heading deviation to the deadband regardless of how
+        small the per-leg yaw bias is. Per-leg tracking misses small
+        same-sign biases that accumulate over many cycles into a curve.
 
         Drift is sampled at STANDSTILL (not during motion) so the
         integrator isn't racing with active wheel rotation, which was
@@ -2592,10 +2602,18 @@ class HoverboardAxisDrive:
     def _forward_drift_correct_loop(self) -> None:
         """Drive-then-check forward loop with at-standstill drift correction.
 
+        The IMU integrator starts ONCE at the top of the motion, so the
+        drift samples taken at each cycle reflect CUMULATIVE heading
+        deviation from the operator-defined start heading — not the
+        rotation accumulated during the last 0.5 s leg only. This is
+        what bounds the bot's maximum heading deviation to the deadband
+        regardless of how small the per-leg yaw bias is.
+
         Each cycle: drive forward for ``leg_sec`` → brake → wait for the
         chassis to actually stop (active settle on the IMU yaw rate, or
-        a fixed timer fallback if no rate hook is wired) → sample drift
-        → optionally correct with micro-steps → repeat. See
+        a fixed timer fallback if no rate hook is wired) → sample
+        cumulative drift → optionally correct with micro-steps that
+        rotate the chassis back toward the start heading → repeat. See
         :meth:`start_pulse_straight_forward` for the full algorithm.
         """
         halt = self._pulse_halt
@@ -2641,13 +2659,17 @@ class HoverboardAxisDrive:
 
         yaw_fn = self._imu_yaw_drift_fn
         cycle = 0
+        # Start the IMU integrator ONCE at the top of the entire forward
+        # motion. The post-leg drift samples then read CUMULATIVE drift
+        # from movement-start (the operator-defined "straight" heading),
+        # not per-leg drift. This catches small same-sign per-leg biases
+        # (e.g. +1° / leg) that otherwise compound across many cycles
+        # into a noticeable curve while each individual leg stays inside
+        # the per-leg deadband and never triggers correction.
+        self._imu_begin_straight()
         try:
             while not halt.is_set():
                 cycle += 1
-
-                # Reset integrator so the post-leg sample reflects ONLY
-                # this leg's accumulated rotation.
-                self._imu_begin_straight()
 
                 log.info(
                     "hover forward straight: cycle %d — forward leg %.2fs",
@@ -2687,9 +2709,9 @@ class HoverboardAxisDrive:
                         break
                 elif status == "timeout":
                     # Chassis never settled — skip drift sample for this
-                    # cycle and try again on the next leg. Logged by the
-                    # helper as a WARNING.
-                    self._imu_end_straight()
+                    # cycle and try again on the next leg. The integrator
+                    # KEEPS RUNNING (we want cumulative drift to be
+                    # preserved across the skipped sample).
                     continue
                 else:
                     log.info(
@@ -2698,7 +2720,8 @@ class HoverboardAxisDrive:
                         cycle, elapsed, last_rate,
                     )
 
-                # 3. Drift sample at standstill
+                # 3. Cumulative drift sample at standstill (heading
+                # deviation from the operator-defined start heading).
                 drift = yaw_fn() if yaw_fn is not None else None
                 if drift is None:
                     log.info(
@@ -2706,18 +2729,17 @@ class HoverboardAxisDrive:
                         "skipping drift check",
                         cycle,
                     )
-                    self._imu_end_straight()
                     continue
 
                 log.info(
-                    "hover forward straight: cycle %d — drift after leg = "
+                    "hover forward straight: cycle %d — cumulative drift = "
                     "%+.2f deg (abort threshold %.1f deg)",
                     cycle,
                     drift,
                     abort_deg,
                 )
 
-                # 4. Abort check — too much drift to recover from in one cycle
+                # 4. Abort check — too much cumulative drift to recover
                 if abort_deg > 0.0 and abs(drift) >= abort_deg:
                     log.warning(
                         "hover forward straight: cycle %d — drift %+.2f deg "
@@ -2738,11 +2760,14 @@ class HoverboardAxisDrive:
                             "forward straight: cant_move alert raised",
                             exc_info=True,
                         )
-                    self._imu_end_straight()
                     halt.set()
                     break
 
-                # 5. Correct drift (micro-step pivot at standstill)
+                # 5. Correct cumulative drift (micro-step pivot at
+                # standstill). With cumulative tracking, each correction
+                # physically rotates the chassis to drive the integrator
+                # back toward zero — restoring the original heading
+                # rather than zeroing the last 0.5 s of motion.
                 if abs(drift) > deadband:
                     self._correct_drift_at_standstill(
                         drift, brake_goals, halt
@@ -2756,9 +2781,6 @@ class HoverboardAxisDrive:
                         deadband,
                     )
 
-                # End this leg's IMU tracking before the next begin.
-                self._imu_end_straight()
-
             # Final brake on exit (operator release or abort).
             if not halt.is_set():
                 try:
@@ -2766,8 +2788,8 @@ class HoverboardAxisDrive:
                 except Exception:
                     pass
         finally:
-            # Belt-and-suspenders: always end the integrator if it's
-            # still active when we exit.
+            # End the cumulative integrator that was started once at the
+            # top of the motion. Always runs (halt, abort, exception).
             try:
                 self._imu_end_straight()
             except Exception:

@@ -373,26 +373,88 @@ def test_forward_loop_no_drift_no_pivot_writes() -> None:
         assert g in (fwd, brk), f"unexpected goal during zero-drift run: {g}"
 
 
-def test_forward_loop_resets_integrator_each_cycle() -> None:
-    """``_imu_begin_straight`` should fire at least twice across multiple legs."""
+def test_forward_loop_starts_integrator_once_for_cumulative_tracking() -> None:
+    """The integrator starts ONCE at the top of the motion (not per-leg).
+
+    Per-leg integrator resets were the bug: small same-sign per-leg
+    biases (+1° / +2° / leg) never crossed the per-leg deadband but
+    compounded into a real-world curve. Switching to cumulative
+    tracking means the integrator runs from movement-start to
+    movement-end, and the drift sample after each leg is the total
+    heading deviation from the operator-defined start heading.
+
+    The end pair must also fire once (paired with begin) when the
+    motion terminates, so the integrator is cleaned up.
+    """
     axis = _axis_pulse_fast()
     hb, _dxl = _make_hb(axis)
     begin_calls = {"n": 0}
     end_calls = {"n": 0}
     hb.set_imu_hooks(
         yaw_drift_fn=lambda: 0.0,
-        begin_straight_fn=lambda: begin_calls.__setitem__("n", begin_calls["n"] + 1),
-        end_straight_fn=lambda: end_calls.__setitem__("n", end_calls["n"] + 1),
+        begin_straight_fn=lambda: begin_calls.__setitem__(
+            "n", begin_calls["n"] + 1
+        ),
+        end_straight_fn=lambda: end_calls.__setitem__(
+            "n", end_calls["n"] + 1
+        ),
     )
 
     with patch.dict(os.environ, _fast_straight_env(), clear=False):
         hb.start_pulse_straight_forward(50)
-        time.sleep(0.25)
+        # Run for ~5–6 legs (each leg is 0.05 s + brake settle).
+        time.sleep(0.45)
         hb.stop()
     _wait_until_idle(hb)
 
-    assert begin_calls["n"] >= 2, f"begin calls={begin_calls['n']}"
-    assert end_calls["n"] >= 2, f"end calls={end_calls['n']}"
+    assert begin_calls["n"] == 1, (
+        f"integrator should start exactly ONCE per forward motion "
+        f"(cumulative tracking); saw {begin_calls['n']} begin calls"
+    )
+    assert end_calls["n"] >= 1, (
+        f"integrator must end at least once when motion stops; "
+        f"saw {end_calls['n']} end calls"
+    )
+
+
+def test_forward_loop_cumulative_drift_compounds_across_legs() -> None:
+    """A consistent same-sign per-leg drift bias should eventually
+    trigger correction.
+
+    With per-leg reset semantics (the old buggy behavior), a yaw_fn
+    returning a constant +1° would have been "+1° per leg, within
+    deadband, no correction" forever — accumulating into a curve.
+
+    With cumulative tracking, the yaw_fn is what we ask it to be, and
+    once cumulative drift crosses the 1.5° deadband (the fixture's
+    trigger), correction fires. The behavioral lock: a constant
+    +5° (well above 1.5° deadband) must produce pivot writes.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 5.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    pivot_steps = sum(
+        1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
+    )
+    assert pivot_steps >= 1, (
+        f"cumulative drift of +5° must trigger at least one correction "
+        f"step; saw {pivot_steps} pivot writes in {dxl.goal_writes}"
+    )
 
 
 # ---------------------------------------------------------------------------
