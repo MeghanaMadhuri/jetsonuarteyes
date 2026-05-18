@@ -2475,6 +2475,28 @@ class HoverboardAxisDrive:
                 current,
                 sample,
             )
+
+            # Safety net: if this step INCREASED |drift| by more than a
+            # noise slop, the pivot is going the wrong way (operator has
+            # the wrong INVERT_SIGN, the IMU just glitched, or a wheel
+            # stalled while the other spun). Don't compound the error —
+            # exit immediately so the next forward leg can sample fresh
+            # rather than keep spinning into a 400° runaway.
+            wrong_dir_slop = max(0.5, deadband)
+            if abs(sample) > abs(current) + wrong_dir_slop:
+                log.warning(
+                    "hover forward drift-correct: step %d INCREASED |drift| "
+                    "(|%+.2f| -> |%+.2f|, slop=%.2f deg) — pivot direction "
+                    "is wrong (check NINA_HOVER_IMU_CORR_INVERT_SIGN) or "
+                    "sensor glitch. Aborting correction; next leg will "
+                    "sample fresh.",
+                    step + 1,
+                    current,
+                    sample,
+                    wrong_dir_slop,
+                )
+                return
+
             current = sample
 
         log.warning(

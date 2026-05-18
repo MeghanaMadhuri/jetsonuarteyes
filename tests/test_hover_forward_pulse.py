@@ -418,6 +418,40 @@ def test_forward_loop_correction_default_uses_full_pivot_pose() -> None:
     )
 
 
+def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
+    """If a correction step INCREASES |drift| (wrong pivot direction /
+    sensor glitch / wheel stall), the loop must bail after exactly one
+    bad step rather than compound the error into a runaway spin.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Sequence: post-leg sample is +5.0, then after step 1 it's WORSE
+    # (+12.0), then it keeps getting worse if we were to keep stepping.
+    # The loop must stop after the +5.0 → +12.0 step.
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([5.0, 12.0, 20.0, 30.0]))
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
+    assert pivot_steps <= 2, (
+        f"loop must bail after the first wrong-direction step within a "
+        f"single correction window; saw {pivot_steps} pivot writes in "
+        f"{dxl.goal_writes}"
+    )
+
+
 def test_forward_loop_drift_within_deadband_skips_correction() -> None:
     """Drift inside the deadband should NOT produce any pivot writes."""
     axis = _axis_pulse_fast()
