@@ -27,6 +27,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _straight_brake_settle_sec,
     _straight_corr_blend_pct,
     _straight_corr_deadband_deg,
+    _straight_corr_residual_deg,
     _straight_corr_step_dur_cap_sec,
     _straight_corr_step_min_sec,
     _straight_corr_step_rate_dps,
@@ -128,6 +129,11 @@ def _fast_straight_env() -> dict[str, str]:
         "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.005",
         "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "60",
         "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "1.5",
+        # Tight exit threshold (hysteresis exit), strictly tighter than
+        # the trigger deadband (1.5°). Most fixtures simulate drift
+        # collapsing to ~0 after one mocked step, so any value <1.5° is
+        # fine — 0.5° matches a typical IMU noise floor.
+        "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "0.5",
         # Pin pivot-direction swap OFF in the snappy fixture so the
         # legacy direction-of-correction assertions (which expect
         # ``L=FWD,R=BACK`` for a positive-drift pivot LEFT decision)
@@ -198,6 +204,7 @@ _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC",
     "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS",
     "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG",
+    "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG",
     "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS",
     "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC",
     "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC",
@@ -209,9 +216,9 @@ _STRAIGHT_ENV_KEYS = (
 def test_straight_env_getter_defaults() -> None:
     """Without overrides: 0.5 s leg, 0.3 s brake settle, 90° abort, 60%
     blend, chassis-matched 0.030 s cap / 0.030 s floor / 84 dps / 3.0°
-    deadband; active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s
-    poll; correction pivot direction SWAPPED by default (reference
-    chassis)."""
+    deadband; 1.0° residual (hysteresis exit, tighter than deadband);
+    active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s poll;
+    correction pivot direction SWAPPED by default (reference chassis)."""
     with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
@@ -223,6 +230,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_corr_step_min_sec() == 0.030
         assert _straight_corr_step_rate_dps() == 84.0
         assert _straight_corr_deadband_deg() == 3.0
+        assert _straight_corr_residual_deg() == 1.0
         assert _straight_settle_rate_dps() == 3.0
         assert _straight_settle_stable_sec() == 0.10
         assert _straight_settle_max_sec() == 1.50
@@ -260,6 +268,7 @@ def test_straight_env_getter_overrides() -> None:
             "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.04",
             "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "90.0",
             "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "4.0",
+            "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "1.5",
             "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "5.0",
             "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.25",
             "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "3.5",
@@ -275,6 +284,7 @@ def test_straight_env_getter_overrides() -> None:
         assert _straight_corr_step_min_sec() == 0.04
         assert _straight_corr_step_rate_dps() == 90.0
         assert _straight_corr_deadband_deg() == 4.0
+        assert _straight_corr_residual_deg() == 1.5
         assert _straight_settle_rate_dps() == 5.0
         assert _straight_settle_stable_sec() == 0.25
         assert _straight_settle_max_sec() == 3.5
@@ -293,6 +303,7 @@ def test_straight_env_getter_clamps() -> None:
             "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "9999",
             "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "0.001",
             "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "9999",
+            "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "9999",
             "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS": "9999",
             "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "-1",
             "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "9999",
@@ -308,6 +319,7 @@ def test_straight_env_getter_clamps() -> None:
         assert _straight_corr_step_min_sec() == 1.0
         assert _straight_corr_step_rate_dps() == 1.0
         assert _straight_corr_deadband_deg() == 30.0
+        assert _straight_corr_residual_deg() == 30.0
         assert _straight_settle_rate_dps() == 30.0
         assert _straight_settle_stable_sec() == 0.0
         assert _straight_settle_max_sec() == 10.0
@@ -711,6 +723,124 @@ def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
         f"loop must bail after the first wrong-direction step within a "
         f"single correction window; saw {pivot_steps} pivot writes in "
         f"{dxl.goal_writes}"
+    )
+
+
+def test_forward_loop_correction_continues_past_deadband_until_residual() -> None:
+    """Hysteresis: once correction fires (|drift| > deadband), the loop
+    must continue stepping until |drift| <= residual, not stop at the
+    deadband edge.
+
+    With deadband=2.0° and residual=0.3°, a drift trajectory of
+    5.0 → 1.0 → 0.1 must produce TWO pivot writes (one for the 5° →
+    1° kick, one for the 1° → 0.1° kick) — the first sample at +1.0°
+    is already inside the 2.0° deadband but OUTSIDE the 0.3° residual,
+    so the loop must press on.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([5.0, 1.0, 0.1, 0.0]))
+
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "2.0",
+        "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "0.3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
+    assert pivot_steps >= 2, (
+        f"hysteresis: correction must continue past deadband (2.0°) until "
+        f"residual (0.3°); expected >=2 pivot writes, saw {pivot_steps} in "
+        f"{dxl.goal_writes}"
+    )
+
+
+def test_forward_loop_correction_exits_at_residual_not_deadband() -> None:
+    """The exit threshold is ``residual``, not ``deadband``.
+
+    With deadband=2.0° and residual=1.5°, a drift of 5.0 → 1.4 must
+    exit after ONE step (1.4 ≤ 1.5 residual), even though 1.4 is well
+    under the 2.0° deadband too. (The point of this test is to fix the
+    new behavior contractually so a future "exit at deadband" regression
+    can't sneak through.)
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([5.0, 1.4, 0.0]))
+
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "2.0",
+        "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "1.5",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    # First correction window should be exactly one step (5.0 → 1.4,
+    # exits because 1.4 ≤ residual=1.5). Subsequent legs may add more
+    # pivots if drift exceeds deadband again, but the FIRST correction
+    # window is what we're locking down.
+    pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
+    assert pivot_steps >= 1, (
+        f"correction must fire on drift 5.0; saw {pivot_steps} pivot writes"
+    )
+
+
+def test_forward_loop_residual_clamped_below_deadband() -> None:
+    """If RESIDUAL_DEG is configured >= DEADBAND_DEG, the correction
+    routine must internally clamp residual to ``deadband / 2`` so the
+    loop doesn't exit on its first sample (which already passed the
+    trigger). Use deadband=2.0°, residual=5.0°: 5.0 ≥ 2.0, clamp to
+    1.0°. Drift 4.0 → 0.5 → exit after one step (0.5 ≤ 1.0)."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([4.0, 0.5, 0.0]))
+
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG": "2.0",
+        "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG": "5.0",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD, left_speed=20,
+        right_dir=hb.DIR_BACKWARD, right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD, left_speed=20,
+        right_dir=hb.DIR_FORWARD, right_speed=20,
+    )
+    pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
+    assert pivot_steps >= 1, (
+        f"correction must still fire & take at least one step even when "
+        f"residual is misconfigured >= deadband (clamp behavior); "
+        f"saw {pivot_steps} pivot writes"
     )
 
 

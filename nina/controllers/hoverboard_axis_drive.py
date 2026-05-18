@@ -1128,6 +1128,41 @@ def _straight_corr_step_rate_dps() -> float:
         return 84.0
 
 
+def _straight_corr_residual_deg() -> float:
+    """Drift magnitude (deg) at which the correction loop EXITS.
+
+    Decouples the *trigger* threshold (``deadband``) from the *exit*
+    threshold so the bot doesn't stop correcting at the deadband
+    edge and leave 2–3° of residual heading drift that compounds
+    cycle-after-cycle into a mild curve. Once correction fires
+    (because ``|drift| > deadband``), it continues until
+    ``|drift| <= residual`` — i.e. all the way back to near zero.
+
+    Default **1.0°**. This is hysteresis: drift can wander up to
+    ``deadband`` (3.0°) before correction fires, then is pulled
+    back inside ``residual`` (1.0°) — giving a 2° "buffer" before
+    the next correction can fire and preventing chattering at the
+    boundary.
+
+    Should be < ``deadband`` (otherwise correction enters then
+    immediately exits). Clamped to ``[0.1, 30.0]``.
+
+    Override via ``NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG=<deg>``.
+    """
+    try:
+        return max(
+            0.1,
+            min(
+                30.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG", "1.0")
+                ),
+            ),
+        )
+    except ValueError:
+        return 1.0
+
+
 def _straight_corr_deadband_deg() -> float:
     """Drift magnitude (deg) below which no correction step fires.
 
@@ -2586,13 +2621,14 @@ class HoverboardAxisDrive:
 
         log.info(
             "hover forward straight loop: leg=%.2fs brake_settle=%.2fs "
-            "abort_drift=%.1f deg deadband=%.2f deg active_settle=%s "
-            "(rate_thr=%.1f dps stable=%.2fs max=%.2fs) | "
+            "abort_drift=%.1f deg deadband=%.2f deg residual=%.2f deg "
+            "active_settle=%s (rate_thr=%.1f dps stable=%.2fs max=%.2fs) | "
             "FWD L(id%s)=%s R(id%s)=%s",
             leg_sec,
             brake_settle,
             abort_deg,
             deadband,
+            _straight_corr_residual_deg(),
             "ON" if have_rate_hook else "OFF (no yaw_rate_fn hook)",
             settle_rate,
             settle_stable,
@@ -2756,17 +2792,31 @@ class HoverboardAxisDrive:
         3. Apply the pivot goals via :meth:`_goals_for_wheels`, wait,
            brake, settle.
         4. Resample drift from the integrator and decide whether to
-           continue (deadband / max-steps cap).
+           continue (residual / max-steps cap).
 
-        Returns when ``|drift| <= deadband``, after ``max_steps``
+        Trigger and exit thresholds are decoupled via hysteresis: the
+        caller fires this routine when ``|drift| > deadband``, but the
+        loop continues until ``|drift| <= residual`` (typically much
+        tighter than the deadband). This drives drift back near zero
+        rather than just inside the deadband edge, eliminating the
+        cycle-after-cycle compounding residual that produces a mild
+        curve over time.
+
+        Returns when ``|drift| <= residual``, after ``max_steps``
         iterations, or when ``halt`` is set.
         """
         # Use the new dedicated standstill knobs so the backward + legacy
         # in-motion correction (which run at 20% blend) keep their own
-        # tuning. Full calibrated pivot lean here means each step actually
-        # rotates the chassis (the legacy 20% blend was a 6–8 tick nudge
-        # that static friction defeated).
+        # tuning. The "residual" threshold is the tight exit target;
+        # "deadband" is only relevant for the caller's trigger decision
+        # and the wrong-direction safety slop.
         deadband = _straight_corr_deadband_deg()
+        residual = _straight_corr_residual_deg()
+        # If residual >= deadband the loop would exit immediately on the
+        # first sample post-step (which already passes the trigger), so
+        # clamp residual to be strictly tighter than the deadband.
+        if residual >= deadband:
+            residual = max(0.1, deadband * 0.5)
         invert = _imu_corr_invert_sign()
         swap_pivot = _straight_corr_swap_pivot_dir()
         step_blend = _straight_corr_blend_pct()
@@ -2780,10 +2830,12 @@ class HoverboardAxisDrive:
         current = initial_drift
         log.info(
             "hover forward drift-correct: start=%+.2f deg deadband=%.2f deg "
-            "invert=%s swap_pivot=%s step_blend=%d%% step_rate=%.1fdps "
-            "step_dur_cap=%.2fs step_min=%.2fs step_settle=%.2fs max_steps=%d",
+            "residual=%.2f deg invert=%s swap_pivot=%s step_blend=%d%% "
+            "step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
+            "step_settle=%.2fs max_steps=%d",
             current,
             deadband,
+            residual,
             invert,
             swap_pivot,
             step_blend,
@@ -2797,12 +2849,14 @@ class HoverboardAxisDrive:
         for step in range(max_steps):
             if halt.is_set():
                 return
-            if abs(current) <= deadband:
+            if abs(current) <= residual:
                 log.info(
-                    "hover forward drift-correct: reached deadband at step "
-                    "%d (drift %+.2f deg, %d steps used)",
+                    "hover forward drift-correct: reached residual at step "
+                    "%d (drift %+.2f deg within residual %.2f deg, "
+                    "%d steps used)",
                     step,
                     current,
+                    residual,
                     step,
                 )
                 return
