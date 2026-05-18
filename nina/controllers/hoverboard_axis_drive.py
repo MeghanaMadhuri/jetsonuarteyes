@@ -824,17 +824,22 @@ def _straight_leg_sec() -> float:
     Each press of Straight forward (or D-pad forward in pulse mode)
     drives the chassis at full FWD lean for this duration, brakes,
     samples drift, optionally corrects, and repeats until the operator
-    releases the button. Default 1.0 s — short enough that drift over
-    one leg stays small (typically <5°), long enough that the bot
-    covers visible ground per cycle. Clamped to ``[0.1, 5.0]``.
+    releases the button.
+
+    Default 0.5 s. The reference chassis accumulates ~10–25° of drift
+    in a 1 s leg (the 0.5 s default halves the per-cycle drift the
+    correction loop has to chase, keeps each unsupervised excursion
+    short, and roughly doubles the rate of drift sampling). Clamped
+    to ``[0.1, 5.0]`` — override with
+    ``NINA_HOVER_STRAIGHT_LEG_SEC=<seconds>``.
     """
     try:
         return max(
             0.1,
-            min(5.0, float(os.environ.get("NINA_HOVER_STRAIGHT_LEG_SEC", "1.0"))),
+            min(5.0, float(os.environ.get("NINA_HOVER_STRAIGHT_LEG_SEC", "0.5"))),
         )
     except ValueError:
-        return 1.0
+        return 0.5
 
 
 def _straight_brake_settle_sec() -> float:

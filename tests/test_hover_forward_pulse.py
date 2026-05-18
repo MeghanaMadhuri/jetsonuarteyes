@@ -207,14 +207,15 @@ _STRAIGHT_ENV_KEYS = (
 
 
 def test_straight_env_getter_defaults() -> None:
-    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort, 100% pivot,
-    chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5° deadband;
-    active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s poll;
-    correction pivot direction SWAPPED by default (reference chassis)."""
+    """Without overrides: 0.5 s leg, 0.3 s brake settle, 90° abort, 100%
+    pivot, chassis-matched 0.05 s cap / 0.015 s floor / 140 dps / 2.5°
+    deadband; active settle 3 dps / 0.10 s stable / 1.5 s max / 0.02 s
+    poll; correction pivot direction SWAPPED by default (reference
+    chassis)."""
     with patch.dict(os.environ, {k: "" for k in _STRAIGHT_ENV_KEYS}, clear=False):
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
-        assert _straight_leg_sec() == 1.0
+        assert _straight_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
         assert _straight_corr_blend_pct() == 100
