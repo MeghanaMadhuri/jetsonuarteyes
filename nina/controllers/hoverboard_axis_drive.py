@@ -802,6 +802,101 @@ def _imu_corr_stuck_cooldown_sec() -> float:
         return 8.0
 
 
+# ----------------------------------------------------------------------
+# Drift-corrected straight forward (replaces the pulse-series + in-motion
+# realign for forward motion). The chassis drives in fixed-duration legs
+# (NINA_HOVER_STRAIGHT_LEG_SEC each) separated by brake + settle dwells.
+# Drift is read at standstill after every leg — much more reliable than
+# during motion because the integrator is no longer racing with active
+# wheel rotation. Above ABORT_DRIFT_DEG the bot speaks the cant_move
+# alert and halts.
+# ----------------------------------------------------------------------
+
+
+def _straight_leg_sec() -> float:
+    """Forward-leg duration (seconds) between brake + drift-check pauses.
+
+    Each press of Straight forward (or D-pad forward in pulse mode)
+    drives the chassis at full FWD lean for this duration, brakes,
+    samples drift, optionally corrects, and repeats until the operator
+    releases the button. Default 1.0 s — short enough that drift over
+    one leg stays small (typically <5°), long enough that the bot
+    covers visible ground per cycle. Clamped to ``[0.1, 5.0]``.
+    """
+    try:
+        return max(
+            0.1,
+            min(5.0, float(os.environ.get("NINA_HOVER_STRAIGHT_LEG_SEC", "1.0"))),
+        )
+    except ValueError:
+        return 1.0
+
+
+def _straight_brake_settle_sec() -> float:
+    """Brake settle dwell after each forward leg, before sampling drift.
+
+    Lets the chassis stop rotating from any residual motion so the IMU
+    integrator sample is a clean post-leg drift measurement. Default
+    0.30 s. Clamped to ``[0.0, 2.0]``.
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                2.0,
+                float(os.environ.get("NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC", "0.30")),
+            ),
+        )
+    except ValueError:
+        return 0.30
+
+
+def _straight_bench_cycles() -> int:
+    """Forward-leg cycle count used to size the Straight bench watchdog.
+
+    The drift-corrected forward loop has no natural upper bound — it
+    cycles for as long as the operator holds the button. The bench
+    "Straight forward" command still needs a max-duration watchdog,
+    so we cap it at ``NINA_HOVER_STRAIGHT_BENCH_CYCLES``
+    (default **12**) × ``(leg + brake_settle)``. Clamped to
+    ``[1, 60]``.
+    """
+    try:
+        return max(
+            1,
+            min(
+                60,
+                int(os.environ.get("NINA_HOVER_STRAIGHT_BENCH_CYCLES", "12")),
+            ),
+        )
+    except ValueError:
+        return 12
+
+
+def _straight_abort_drift_deg() -> float:
+    """Drift magnitude (deg) above which the straight loop halts + speaks.
+
+    When the post-leg drift sample crosses this threshold, the loop
+    brakes the chassis, queues the bundled ``cant_move.mp3`` alert via
+    :func:`nina.services.sensor_alert_audio.maybe_speak_cant_move_alert`,
+    sets the pulse halt event, and exits. The operator must issue a
+    fresh drive command to resume. Default 90° — the bot can't
+    realistically come back from a half-rotation accumulated in one
+    1 s leg, and continuing would only spin further. Set 0 to disable
+    the abort. Clamped to ``[0.0, 180.0]``.
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                180.0,
+                float(os.environ.get("NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG", "90.0")),
+            ),
+        )
+    except ValueError:
+        return 90.0
+
+
 def _imu_corr_abort_drift_deg() -> float:
     """Drift magnitude (deg) above which a pulse leg aborts with a spoken alert.
 
@@ -1028,32 +1123,31 @@ def _imu_turn_progress_min_deg() -> float:
 
 
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
-    """Upper-bound seconds for ``start_pulse_straight_forward`` until the pulse thread exits.
+    """Bench watchdog upper-bound for the drift-corrected forward loop.
 
-    Uses straight-line prime cap plus forward-only series timing (``pulse_forward_return_ramp_sec``,
-    ``pulse_series_fwd_sec``, ``pulse_series_coast_initial_sec``).
+    The new :meth:`HoverboardAxisDrive.start_pulse_straight_forward`
+    has no fixed series count — it cycles forward-leg → brake → drift
+    check until the operator releases the button (or the 90° abort
+    fires). For bench tests we still need a finite watchdog, so this
+    helper returns::
+
+        prime_timeout + bench_cycles × (leg_sec + brake_settle_sec)
+
+    using the new ``NINA_HOVER_STRAIGHT_*`` env getters. Increase
+    ``NINA_HOVER_STRAIGHT_BENCH_CYCLES`` (default 12) for a longer
+    run, or set ``NINA_STRAIGHT_TEST_MS`` to bypass this estimate
+    entirely from the bench UI.
+
+    The ``axis`` argument is unused (kept for signature compatibility
+    with :func:`estimate_backward_pulse_series_duration_sec`, which
+    still drives the legacy backward pulse series).
     """
-    ramp_sec = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_forward_return_ramp_sec", 0.0))),
-    )
-    min_trans = max(
-        0.0,
-        min(2.0, float(getattr(axis, "pulse_series_min_transition_sec", 0.0))),
-    )
-    eff_ramp = min(5.0, max(ramp_sec, min_trans))
-    n = max(1, min(20, int(getattr(axis, "pulse_series_max", 12))))
-    series_fwd = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_series_fwd_sec", 0.9))),
-    )
-    coast_init = max(
-        0.0,
-        min(10.0, float(getattr(axis, "pulse_series_coast_initial_sec", 0.30))),
-    )
+    _ = axis  # reserved for compatibility
+    cycles = _straight_bench_cycles()
+    leg = _straight_leg_sec()
+    settle = _straight_brake_settle_sec()
     prime = _straight_prime_timeout_sec()
-    pulse_body = (1.0 + 2.0 * float(n)) * eff_ramp + float(n) * (series_fwd + coast_init)
-    return prime + pulse_body
+    return prime + float(cycles) * (leg + settle)
 
 
 def estimate_backward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
@@ -1936,36 +2030,61 @@ class HoverboardAxisDrive:
         return self.is_straight_pulse_series_active()
 
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
-        """Forward pulse series for manual D-pad / Straight bench forward (when enabled).
+        """Drift-corrected forward motion (Straight bench + D-pad forward).
 
-        Runs ``pulse_series_max`` cycles: each cycle ramps from the prior near-brake pose to
-        full forward, holds forward for ``pulse_series_fwd_sec``, ramps back to a **fixed**
-        near-brake pose (``pulse_forward_coast_blend`` of the brake→forward span, default **0.2**).
-        Dwell at that near-brake for ``pulse_series_coast_initial_sec`` each cycle (constant).
-        Transition times use ``max(pulse_forward_return_ramp_sec,
-        pulse_series_min_transition_sec)``. After the last cycle, servos command **full brake**.
-        Cancelled by ``stop()`` / ``emergency_stop()`` / ``set_wheels`` /
-        ``drive_continuous``. If ``pulse_forward_enabled`` is False, falls back to ``forward()``.
+        Replaces the legacy pulse-series + in-motion IMU correction with
+        a simpler "drive-then-check" cycle:
+
+        1. Prime the lean stack at neutral (``NINA_HOVER_STRAIGHT_PRIME_POS``).
+        2. Reset the IMU integrator (``_imu_begin_straight``).
+        3. Command full forward lean for ``NINA_HOVER_STRAIGHT_LEG_SEC``
+           (default **1.0 s**) using ``forward_pos_left`` /
+           ``forward_pos_right`` + the ``_STRAIGHT_FWD_EXTRA_TICKS`` nudge.
+        4. Brake; wait ``NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC`` (default
+           **0.3 s**) so the chassis fully stops rotating.
+        5. Read drift from the IMU at standstill — the integrator now
+           reflects ONLY the yaw accumulated during this leg.
+        6. If ``|drift| >= NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG``
+           (default **90°**), brake, play
+           :func:`nina.services.sensor_alert_audio.maybe_speak_cant_move_alert`,
+           halt the thread and return.
+        7. If ``|drift| > NINA_HOVER_IMU_CORR_DEADBAND_DEG``, run an
+           iterative proportional micro-step correction at standstill
+           (same step math as :meth:`_perform_pivot_correction`:
+           proportional duration clamped to ``[step_min, step_dur_cap]``,
+           brake settle between steps).
+        8. Loop back to step 2 — repeat until the operator releases the
+           button (which triggers ``_halt_pulse_series``) or the abort
+           fires.
+
+        Drift is sampled at STANDSTILL (not during motion) so the
+        integrator isn't racing with active wheel rotation, which was
+        the root cause of the wrong-direction realigns the in-motion
+        algorithm produced. If the IMU sampler is unwired or returns
+        ``None``, the loop still cycles forward legs but skips the
+        correction step.
+
+        ``speed_percent`` is preserved for API compatibility but is
+        not used — the lean magnitude comes entirely from the
+        operator-validated ``forward_pos_*`` tune.
         """
         if not self._is_initialized:
             return
         if not self.is_forward_pulse_enabled():
             self.forward(speed_percent)
             return
-        sp = max(0, min(100, int(speed_percent)))
+        _ = speed_percent  # reserved; speed is encoded in the calibrated lean
         self._halt_pulse_series(wait=True)
         log.info(
-            "hover forward pulse: priming (goal=%s, lean before back/forward) ...",
+            "hover forward straight: priming (goal=%s, lean before drive) ...",
             _straight_prime_goal_ticks(),
         )
         self._prime_straight_neutral()
         self._post_prime_settle("fwd")
-        self._imu_begin_straight()
         self._last_straight_key = "fwd"
         thr = threading.Thread(
-            target=self._forward_pulse_loop,
-            args=(sp,),
-            name="nina_hover_fwd_pulse",
+            target=self._forward_drift_correct_loop,
+            name="nina_hover_fwd_straight",
             daemon=True,
         )
         self._pulse_series_thread = thr
@@ -2024,109 +2143,286 @@ class HoverboardAxisDrive:
         # Use the halt event so a fast stop() during settle still bails out quickly.
         self._pulse_halt.wait(timeout=dwell)
 
-    def _forward_pulse_loop(self, speed_pct: int) -> None:
-        """Forward-only pulse series: brake→coast blend→…→full brake (see module doc)."""
+    def _forward_drift_correct_loop(self) -> None:
+        """Drive-then-check forward loop with at-standstill drift correction.
+
+        Each cycle: drive forward for ``leg_sec`` → brake + settle →
+        sample drift → optionally correct with micro-steps → repeat.
+        See :meth:`start_pulse_straight_forward` for the full
+        algorithm.
+        """
         halt = self._pulse_halt
         brake_goals = {
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
-        ramp_sec = max(
-            0.0,
-            min(
-                10.0,
-                float(getattr(self._axis, "pulse_forward_return_ramp_sec", 0.0)),
-            ),
-        )
-        min_trans = max(
-            0.0,
-            min(
-                2.0,
-                float(getattr(self._axis, "pulse_series_min_transition_sec", 0.0)),
-            ),
-        )
-        eff_ramp = min(5.0, max(ramp_sec, min_trans))
-
-        series_max = int(getattr(self._axis, "pulse_series_max", 12))
-        series_max = max(1, min(20, series_max))
-        main_hold = max(
-            0.0,
-            min(10.0, float(getattr(self._axis, "pulse_series_fwd_sec", 0.9))),
-        )
-        coast_init = max(
-            0.0,
-            min(
-                10.0,
-                float(getattr(self._axis, "pulse_series_coast_initial_sec", 0.30)),
-            ),
-        )
-        coast_blend = max(
-            0.0,
-            min(
-                1.0,
-                float(getattr(self._axis, "pulse_forward_coast_blend", 0.2)),
-            ),
-        )
-
-        goals = self._goals_for_wheels(
+        forward_goals = self._goals_for_wheels(
             left_dir=self.DIR_FORWARD,
-            left_speed=speed_pct,
+            left_speed=100,
             right_dir=self.DIR_FORWARD,
-            right_speed=speed_pct,
+            right_speed=100,
         )
-        coast_goals = self._pulse_coast_goals(brake_goals, goals, coast_blend)
+
+        leg_sec = _straight_leg_sec()
+        brake_settle = _straight_brake_settle_sec()
+        abort_deg = _straight_abort_drift_deg()
+        deadband = _imu_corr_deadband_deg()
 
         log.info(
-            "hover forward pulse series: n=%s fwd_hold=%.2fs coast_dwell=%.2fs "
-            "transition=%.2fs coast_blend=%.2f | FWD L(id%s)=%s R(id%s)=%s | coast L=%s R=%s",
-            series_max,
-            main_hold,
-            coast_init,
-            eff_ramp,
-            coast_blend,
+            "hover forward straight loop: leg=%.2fs brake_settle=%.2fs "
+            "abort_drift=%.1f deg deadband=%.2f deg | FWD L(id%s)=%s R(id%s)=%s",
+            leg_sec,
+            brake_settle,
+            abort_deg,
+            deadband,
             self._left_id,
-            goals[self._left_id],
+            forward_goals[self._left_id],
             self._right_id,
-            goals[self._right_id],
-            coast_goals[self._left_id],
-            coast_goals[self._right_id],
+            forward_goals[self._right_id],
         )
 
+        yaw_fn = self._imu_yaw_drift_fn
+        cycle = 0
         try:
-            if not halt.is_set():
-                self._pulse_ramp_goals_between(
-                    brake_goals, coast_goals, eff_ramp, halt
-                )
-            prev_coast: Dict[int, int] = dict(coast_goals)
-            for _ in range(series_max):
-                if halt.is_set():
-                    break
-                coast_dwell = coast_init
-                self._pulse_ramp_goals_between(
-                    prev_coast, goals, eff_ramp, halt
-                )
-                if halt.is_set():
-                    break
-                if self._imu_corrective_hold(
-                    goals, main_hold, halt, is_forward=True
-                ):
-                    break
-                self._pulse_ramp_goals_between(
-                    goals, coast_goals, eff_ramp, halt
-                )
-                if halt.is_set():
-                    break
-                if self._imu_corrective_hold(
-                    coast_goals, coast_dwell, halt, is_forward=True
-                ):
-                    break
-                prev_coast = dict(coast_goals)
+            while not halt.is_set():
+                cycle += 1
 
+                # Reset integrator so the post-leg sample reflects ONLY
+                # this leg's accumulated rotation.
+                self._imu_begin_straight()
+
+                log.info(
+                    "hover forward straight: cycle %d — forward leg %.2fs",
+                    cycle,
+                    leg_sec,
+                )
+                # 1. Forward leg
+                try:
+                    self._apply_goals(forward_goals)
+                except Exception:
+                    log.debug(
+                        "forward straight: leg apply failed", exc_info=True
+                    )
+                if halt.wait(timeout=leg_sec):
+                    break
+
+                # 2. Brake + settle (chassis must be still before sampling)
+                try:
+                    self._apply_goals(brake_goals)
+                except Exception:
+                    log.debug(
+                        "forward straight: brake apply failed", exc_info=True
+                    )
+                if brake_settle > 0.0 and halt.wait(timeout=brake_settle):
+                    break
+
+                # 3. Drift sample at standstill
+                drift = yaw_fn() if yaw_fn is not None else None
+                if drift is None:
+                    log.info(
+                        "hover forward straight: cycle %d — no IMU sample, "
+                        "skipping drift check",
+                        cycle,
+                    )
+                    self._imu_end_straight()
+                    continue
+
+                log.info(
+                    "hover forward straight: cycle %d — drift after leg = "
+                    "%+.2f deg (abort threshold %.1f deg)",
+                    cycle,
+                    drift,
+                    abort_deg,
+                )
+
+                # 4. Abort check — too much drift to recover from in one cycle
+                if abort_deg > 0.0 and abs(drift) >= abort_deg:
+                    log.warning(
+                        "hover forward straight: cycle %d — drift %+.2f deg "
+                        ">= %.1f deg ABORT threshold; halting and "
+                        "announcing cant_move",
+                        cycle,
+                        drift,
+                        abort_deg,
+                    )
+                    try:
+                        self._apply_goals(brake_goals)
+                    except Exception:
+                        pass
+                    try:
+                        maybe_speak_cant_move_alert()
+                    except Exception:
+                        log.debug(
+                            "forward straight: cant_move alert raised",
+                            exc_info=True,
+                        )
+                    self._imu_end_straight()
+                    halt.set()
+                    break
+
+                # 5. Correct drift (micro-step pivot at standstill)
+                if abs(drift) > deadband:
+                    self._correct_drift_at_standstill(
+                        drift, brake_goals, halt
+                    )
+                else:
+                    log.info(
+                        "hover forward straight: cycle %d — drift %+.2f deg "
+                        "within deadband %.2f deg, no correction needed",
+                        cycle,
+                        drift,
+                        deadband,
+                    )
+
+                # End this leg's IMU tracking before the next begin.
+                self._imu_end_straight()
+
+            # Final brake on exit (operator release or abort).
             if not halt.is_set():
-                self._apply_goals(brake_goals)
+                try:
+                    self._apply_goals(brake_goals)
+                except Exception:
+                    pass
         finally:
-            self._imu_end_straight()
-            self._sync_pulse_moving_speed()
+            # Belt-and-suspenders: always end the integrator if it's
+            # still active when we exit.
+            try:
+                self._imu_end_straight()
+            except Exception:
+                pass
+
+    def _correct_drift_at_standstill(
+        self,
+        initial_drift: float,
+        brake_goals: Dict[int, int],
+        halt: threading.Event,
+    ) -> None:
+        """Iterative proportional micro-step pivot to drive ``|drift|`` to zero.
+
+        Same step math as :meth:`_perform_pivot_correction` but driven
+        at standstill between forward legs (chassis is already braked
+        when this is called). Each step:
+
+        1. Choose pivot direction from the sign of the latest drift
+           sample (respecting ``NINA_HOVER_IMU_CORR_INVERT_SIGN``).
+        2. Compute step duration ∝ ``|drift|``, clamped to
+           ``[step_min_sec, step_dur_cap]``.
+        3. Apply the pivot goals via :meth:`_goals_for_wheels`, wait,
+           brake, settle.
+        4. Resample drift from the integrator and decide whether to
+           continue (deadband / max-steps cap).
+
+        Returns when ``|drift| <= deadband``, after ``max_steps``
+        iterations, or when ``halt`` is set.
+        """
+        deadband = _imu_corr_deadband_deg()
+        invert = _imu_corr_invert_sign()
+        step_blend = _imu_corr_pivot_blend_pct()
+        step_dur_cap = _imu_corr_pivot_max_sec()
+        step_min = _imu_corr_step_min_sec()
+        step_settle = _imu_corr_step_settle_sec()
+        step_rate = _imu_corr_step_rate_deg_per_sec()
+        max_steps = _imu_corr_max_steps()
+        yaw_fn = self._imu_yaw_drift_fn
+
+        current = initial_drift
+        log.info(
+            "hover forward drift-correct: start=%+.2f deg deadband=%.2f deg "
+            "invert=%s step_blend=%d%% step_rate=%.1fdps step_dur_cap=%.2fs "
+            "step_min=%.2fs step_settle=%.2fs max_steps=%d",
+            current,
+            deadband,
+            invert,
+            step_blend,
+            step_rate,
+            step_dur_cap,
+            step_min,
+            step_settle,
+            max_steps,
+        )
+
+        for step in range(max_steps):
+            if halt.is_set():
+                return
+            if abs(current) <= deadband:
+                log.info(
+                    "hover forward drift-correct: reached deadband at step "
+                    "%d (drift %+.2f deg, %d steps used)",
+                    step,
+                    current,
+                    step,
+                )
+                return
+
+            # Pivot direction: positive drift = drifted right → pivot left
+            # (L=FWD, R=BACK); negative drift = drifted left → pivot right
+            # (L=BACK, R=FWD). ``invert`` flips this for chassis with
+            # opposite IMU mount conventions.
+            effective = -current if invert else current
+            pivot_left = effective > 0.0
+            if pivot_left:
+                step_goals = self._goals_for_wheels(
+                    left_dir=self.DIR_FORWARD,
+                    left_speed=step_blend,
+                    right_dir=self.DIR_BACKWARD,
+                    right_speed=step_blend,
+                )
+            else:
+                step_goals = self._goals_for_wheels(
+                    left_dir=self.DIR_BACKWARD,
+                    left_speed=step_blend,
+                    right_dir=self.DIR_FORWARD,
+                    right_speed=step_blend,
+                )
+
+            # Proportional duration: aim to land ~0.5 deadband short of
+            # zero so the next sample exits via the deadband instead of
+            # always over-shooting.
+            target_rotation = max(0.5, abs(current) - 0.5 * deadband)
+            this_step_dur = max(
+                step_min, min(step_dur_cap, target_rotation / step_rate)
+            )
+
+            try:
+                self._apply_goals(step_goals)
+            except Exception:
+                log.debug(
+                    "forward drift-correct: step apply failed", exc_info=True
+                )
+            if halt.wait(timeout=this_step_dur):
+                return
+            try:
+                self._apply_goals(brake_goals)
+            except Exception:
+                pass
+            if step_settle > 0.0 and halt.wait(timeout=step_settle):
+                return
+
+            sample = yaw_fn() if yaw_fn is not None else None
+            if sample is None:
+                log.debug(
+                    "forward drift-correct: step %d IMU returned None, "
+                    "holding previous drift estimate",
+                    step + 1,
+                )
+                continue
+            log.info(
+                "hover forward drift-correct: step %d — pivot %s "
+                "this_dur=%.3fs drift was %+.2f → %+.2f deg",
+                step + 1,
+                "LEFT" if pivot_left else "RIGHT",
+                this_step_dur,
+                current,
+                sample,
+            )
+            current = sample
+
+        log.warning(
+            "hover forward drift-correct: max steps (%d) reached, drift "
+            "now %+.2f deg (next leg will sample fresh)",
+            max_steps,
+            current,
+        )
 
     def _backward_pulse_loop(self, speed_pct: int) -> None:
         """Backward-only pulse series: brake→coast blend→…→full brake (separate knobs from FWD)."""

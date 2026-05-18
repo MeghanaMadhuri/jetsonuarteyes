@@ -1,4 +1,12 @@
-"""Hoverboard forward pulse: timed series of FWD / near-brake, then full brake."""
+"""Hoverboard forward + backward straight-line drive tests.
+
+Forward motion uses the **drift-corrected straight loop**: each cycle
+drives forward for ``NINA_HOVER_STRAIGHT_LEG_SEC``, brakes, samples
+drift at standstill, runs proportional micro-step pivots if drift
+exceeds the deadband, and repeats until ``stop()`` (or a 90° abort).
+Backward motion still uses the legacy pulse series (separate
+``pulse_series_back_*`` knobs).
+"""
 
 from __future__ import annotations
 
@@ -15,8 +23,10 @@ from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
+    _straight_abort_drift_deg,
+    _straight_brake_settle_sec,
+    _straight_leg_sec,
     estimate_backward_pulse_series_duration_sec,
-    estimate_forward_pulse_series_duration_sec,
 )
 
 
@@ -45,6 +55,11 @@ class FakeDxl:
 
 
 def _axis_pulse_fast() -> HoverboardAxisSettings:
+    """Tunable axis for snappy tests; backward knobs preserved for legacy series.
+
+    Forward straight knobs (``NINA_HOVER_STRAIGHT_*``) are sourced from env
+    in each test that needs them; the axis fields are left at defaults.
+    """
     return HoverboardAxisSettings(
         id_left=12,
         id_right=13,
@@ -83,19 +98,459 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
     )
 
 
-def test_estimate_forward_pulse_series_duration_sec_formula() -> None:
-    axis = replace(
-        _axis_pulse_fast(),
-        pulse_series_max=12,
-        pulse_forward_return_ramp_sec=0.0,
-        pulse_series_min_transition_sec=0.0,
-        pulse_series_fwd_sec=0.9,
-        pulse_series_coast_initial_sec=0.3,
+def _fast_straight_env() -> dict[str, str]:
+    """Snappy timings + IMU correction tuning for unit tests."""
+    return {
+        "NINA_HOVER_STRAIGHT_LEG_SEC": "0.05",
+        "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.02",
+        "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.01",
+        "NINA_HOVER_POST_TURN_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.5",
+        "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
+        "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.05",
+        "NINA_HOVER_IMU_CORR_STEP_MIN_SEC": "0.005",
+        "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.005",
+        "NINA_HOVER_IMU_CORR_STEP_RATE_DPS": "60",
+        "NINA_HOVER_IMU_CORR_MAX_STEPS": "5",
+        "NINA_HOVER_IMU_CORR_INVERT_SIGN": "0",
+    }
+
+
+def _make_hb(
+    axis: HoverboardAxisSettings, dxl: FakeDxl | None = None
+) -> tuple[HoverboardAxisDrive, FakeDxl]:
+    if dxl is None:
+        dxl = FakeDxl()
+    cfg = SimpleNamespace(
+        default_speed_percent=10,
+        settle_delay_sec=0.005,
+        invert_left_dir=False,
+        invert_right_dir=False,
     )
-    with patch.dict(os.environ, {"NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05"}, clear=False):
-        got = estimate_forward_pulse_series_duration_sec(axis)
-    # prime 0.05 + (1 + 2*12) * eff_ramp(0) + 12 * (0.9 + 0.3) = 0.05 + 14.4
-    assert abs(got - 14.45) < 1e-9
+    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
+    hb.initialize()
+    return hb, dxl
+
+
+def _expected_forward_goals() -> dict[int, int]:
+    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    return {12: fl, 13: fr}
+
+
+def _wait_until_idle(hb: HoverboardAxisDrive, timeout_sec: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if not hb.is_forward_pulse_active():
+            return
+        time.sleep(0.01)
+
+
+# ---------------------------------------------------------------------------
+# Env getter defaults
+# ---------------------------------------------------------------------------
+
+
+def test_straight_env_getter_defaults() -> None:
+    """Without overrides: 1 s leg, 0.3 s brake settle, 90° abort."""
+    with patch.dict(
+        os.environ,
+        {
+            k: ""
+            for k in (
+                "NINA_HOVER_STRAIGHT_LEG_SEC",
+                "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
+                "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
+            )
+        },
+        clear=False,
+    ):
+        for k in (
+            "NINA_HOVER_STRAIGHT_LEG_SEC",
+            "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
+            "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
+        ):
+            os.environ.pop(k, None)
+        assert _straight_leg_sec() == 1.0
+        assert _straight_brake_settle_sec() == 0.30
+        assert _straight_abort_drift_deg() == 90.0
+
+
+def test_straight_env_getter_overrides() -> None:
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_STRAIGHT_LEG_SEC": "0.5",
+            "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.1",
+            "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "45.0",
+        },
+        clear=False,
+    ):
+        assert _straight_leg_sec() == 0.5
+        assert _straight_brake_settle_sec() == 0.1
+        assert _straight_abort_drift_deg() == 45.0
+
+
+def test_straight_env_getter_clamps() -> None:
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_STRAIGHT_LEG_SEC": "999",
+            "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "-5",
+            "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "500",
+        },
+        clear=False,
+    ):
+        assert _straight_leg_sec() == 5.0
+        assert _straight_brake_settle_sec() == 0.0
+        assert _straight_abort_drift_deg() == 180.0
+
+
+# ---------------------------------------------------------------------------
+# Drive-then-check cycle
+# ---------------------------------------------------------------------------
+
+
+def test_forward_loop_drives_then_brakes_then_cycles() -> None:
+    """Each cycle: FWD goals applied, then brake goals, then FWD again."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Drift always zero so no correction steps are inserted between legs.
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        # Allow ~3 cycles to complete: 3 * (leg 0.05 + settle 0.02) = 0.21 s.
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    fwd = _expected_forward_goals()
+    brk = {12: 2048, 13: 2048}
+    # Both shapes should appear, and we should see at least 2 forward legs
+    # (i.e. the loop genuinely cycles rather than firing once).
+    forward_count = sum(1 for g in dxl.goal_writes if g == fwd)
+    brake_count = sum(1 for g in dxl.goal_writes if g == brk)
+    assert forward_count >= 2, f"forward legs={forward_count} writes={dxl.goal_writes}"
+    assert brake_count >= 2, f"brake stamps={brake_count}"
+
+
+def test_forward_loop_no_drift_no_pivot_writes() -> None:
+    """With drift==0 the loop should only emit FWD + brake goals — never pivot pairs."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    fwd = _expected_forward_goals()
+    brk = {12: 2048, 13: 2048}
+    for g in dxl.goal_writes:
+        assert g in (fwd, brk), f"unexpected goal during zero-drift run: {g}"
+
+
+def test_forward_loop_resets_integrator_each_cycle() -> None:
+    """``_imu_begin_straight`` should fire at least twice across multiple legs."""
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    begin_calls = {"n": 0}
+    end_calls = {"n": 0}
+    hb.set_imu_hooks(
+        yaw_drift_fn=lambda: 0.0,
+        begin_straight_fn=lambda: begin_calls.__setitem__("n", begin_calls["n"] + 1),
+        end_straight_fn=lambda: end_calls.__setitem__("n", end_calls["n"] + 1),
+    )
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    assert begin_calls["n"] >= 2, f"begin calls={begin_calls['n']}"
+    assert end_calls["n"] >= 2, f"end calls={end_calls['n']}"
+
+
+# ---------------------------------------------------------------------------
+# Drift correction direction
+# ---------------------------------------------------------------------------
+
+
+class _DriftSequence:
+    """Yaw sampler that returns a scripted drift series, then 0.0 forever.
+
+    First sample after each forward leg comes from the scripted list;
+    subsequent samples (during pivot correction) follow afterwards. When
+    the list is exhausted the sampler returns 0.0 (i.e. drift settled).
+    """
+
+    def __init__(self, drifts: list[float]) -> None:
+        self._drifts = list(drifts)
+
+    def __call__(self) -> float:
+        if self._drifts:
+            return self._drifts.pop(0)
+        return 0.0
+
+
+def test_forward_loop_positive_drift_pivots_left() -> None:
+    """Drift > 0 (drifted right) → first pivot step is L=FWD, R=BACK."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Big initial drift, then drift returns to 0 after one pivot step.
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([10.0, 0.0]))
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        # One leg + one correction step + a bit of slack.
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    # Expected pivot-left goals: left=FWD@20%, right=BACK@20%.
+    pivot_left = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD,
+        left_speed=20,
+        right_dir=hb.DIR_BACKWARD,
+        right_speed=20,
+    )
+    assert any(g == pivot_left for g in dxl.goal_writes), (
+        f"expected pivot-left goals {pivot_left} not found in {dxl.goal_writes}"
+    )
+
+
+def test_forward_loop_negative_drift_pivots_right() -> None:
+    """Drift < 0 (drifted left) → first pivot step is L=BACK, R=FWD."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([-10.0, 0.0]))
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_right = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD,
+        left_speed=20,
+        right_dir=hb.DIR_FORWARD,
+        right_speed=20,
+    )
+    assert any(g == pivot_right for g in dxl.goal_writes), (
+        f"expected pivot-right goals {pivot_right} not found"
+    )
+
+
+def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
+    """With INVERT_SIGN=1 positive drift should pivot RIGHT instead of LEFT."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([10.0, 0.0]))
+
+    env = _fast_straight_env() | {"NINA_HOVER_IMU_CORR_INVERT_SIGN": "1"}
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    pivot_right = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD,
+        left_speed=20,
+        right_dir=hb.DIR_FORWARD,
+        right_speed=20,
+    )
+    assert any(g == pivot_right for g in dxl.goal_writes), (
+        "with INVERT_SIGN=1, positive drift should produce a right pivot"
+    )
+
+
+def test_forward_loop_drift_within_deadband_skips_correction() -> None:
+    """Drift inside the deadband should NOT produce any pivot writes."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # 0.5° drift with a 1.5° deadband → no correction.
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.5)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    fwd = _expected_forward_goals()
+    brk = {12: 2048, 13: 2048}
+    pivot_l = hb._goals_for_wheels(
+        left_dir=hb.DIR_FORWARD,
+        left_speed=20,
+        right_dir=hb.DIR_BACKWARD,
+        right_speed=20,
+    )
+    pivot_r = hb._goals_for_wheels(
+        left_dir=hb.DIR_BACKWARD,
+        left_speed=20,
+        right_dir=hb.DIR_FORWARD,
+        right_speed=20,
+    )
+    for g in dxl.goal_writes:
+        assert g != pivot_l and g != pivot_r, (
+            f"unexpected pivot inside deadband: {g}"
+        )
+        assert g in (fwd, brk), f"unexpected goal shape: {g}"
+
+
+# ---------------------------------------------------------------------------
+# 90° abort
+# ---------------------------------------------------------------------------
+
+
+def test_forward_loop_aborts_above_threshold_and_speaks() -> None:
+    """|drift| ≥ abort threshold → brake, speak cant_move, halt loop."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 120.0)  # > 90° abort
+
+    spoken = {"n": 0}
+
+    def _fake_speak() -> None:
+        spoken["n"] += 1
+
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "90.0"}
+    with patch.dict(os.environ, env, clear=False):
+        with patch(
+            "nina.controllers.hoverboard_axis_drive."
+            "maybe_speak_cant_move_alert",
+            side_effect=_fake_speak,
+        ):
+            hb.start_pulse_straight_forward(50)
+            _wait_until_idle(hb, timeout_sec=2.0)
+
+    assert not hb.is_forward_pulse_active(), "loop should self-halt on abort"
+    assert spoken["n"] >= 1, "cant_move alert was not invoked on abort"
+    # Final goal must be the brake stamp.
+    brk = {12: 2048, 13: 2048}
+    assert dxl.goal_writes[-1] == brk, (
+        f"loop did not brake on abort; last write={dxl.goal_writes[-1]}"
+    )
+
+
+def test_forward_loop_zero_abort_disables_safety_stop() -> None:
+    """Setting abort to 0 should keep the loop running even at huge drift."""
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    # Constant huge drift; the loop must keep cycling until we stop it.
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 120.0)
+
+    spoken = {"n": 0}
+
+    def _fake_speak() -> None:
+        spoken["n"] += 1
+
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "0"}
+    with patch.dict(os.environ, env, clear=False):
+        with patch(
+            "nina.controllers.hoverboard_axis_drive."
+            "maybe_speak_cant_move_alert",
+            side_effect=_fake_speak,
+        ):
+            hb.start_pulse_straight_forward(50)
+            time.sleep(0.15)
+            still_running = hb.is_forward_pulse_active()
+            hb.stop()
+    _wait_until_idle(hb)
+    assert still_running, "abort=0 should keep loop alive at 120° drift"
+    assert spoken["n"] == 0, "no alert should fire when abort is disabled"
+
+
+# ---------------------------------------------------------------------------
+# Halt + cancellation paths (preserved from legacy tests)
+# ---------------------------------------------------------------------------
+
+
+def test_forward_loop_stops_after_stop() -> None:
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.15)
+        n_before = len(dxl.goal_writes)
+        hb.stop()
+        time.sleep(0.20)
+    n_after = len(dxl.goal_writes)
+    assert n_after <= n_before + 40, "loop kept writing long after stop()"
+    assert not hb.is_forward_pulse_active()
+
+
+def test_set_wheels_halts_loop() -> None:
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.08)
+        hb.set_wheels(
+            left_dir=hb.DIR_FORWARD,
+            left_speed=10,
+            right_dir=hb.DIR_FORWARD,
+            right_speed=10,
+        )
+        time.sleep(0.15)
+    assert not hb.is_forward_pulse_active()
+
+
+def test_start_pulse_disabled_falls_back_to_forward_goals() -> None:
+    axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
+    hb, dxl = _make_hb(axis)
+    dxl.goal_writes.clear()
+    hb.start_pulse_straight_forward(40)
+    assert not hb.is_forward_pulse_active()
+    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    assert dxl.goal_writes[-1] == {12: fl, 13: fr}
+
+
+def test_forward_loop_ends_at_full_brake_on_stop() -> None:
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.15)
+        hb.stop()
+        _wait_until_idle(hb)
+    assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
+
+
+def test_forward_loop_no_imu_sampler_still_cycles() -> None:
+    """Without IMU hooks the loop must still advance forward legs (no abort, no correction)."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Intentionally do NOT call set_imu_hooks: _imu_yaw_drift_fn is None.
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+    fwd = _expected_forward_goals()
+    forward_count = sum(1 for g in dxl.goal_writes if g == fwd)
+    assert forward_count >= 2, (
+        f"loop must keep cycling without IMU; forward legs={forward_count}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backward pulse series — unchanged, still uses _backward_pulse_loop
+# ---------------------------------------------------------------------------
 
 
 def test_estimate_backward_pulse_series_duration_sec_formula() -> None:
@@ -110,123 +565,6 @@ def test_estimate_backward_pulse_series_duration_sec_formula() -> None:
     with patch.dict(os.environ, {"NINA_HOVER_STRAIGHT_PRIME_SEC": "0.05"}, clear=False):
         got = estimate_backward_pulse_series_duration_sec(axis)
     assert abs(got - (0.05 + 12.0 * (0.9 + 0.3))) < 1e-9
-
-
-def test_forward_pulse_alternates_forward_and_brake() -> None:
-    dxl = FakeDxl()
-    axis = _axis_pulse_fast()
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_forward(50)
-    time.sleep(0.2)
-    hb.stop()
-    assert len(dxl.goal_writes) >= 4
-    # Symmetric straight FWD uses nudged goals past calibrated forward_pos_*.
-    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    fwd = {12: fl, 13: fr}
-    brk = {12: 2048, 13: 2048}
-    saw_fwd = any(g == fwd for g in dxl.goal_writes)
-    saw_brk = any(g == brk for g in dxl.goal_writes)
-    assert saw_fwd and saw_brk
-
-
-def test_forward_pulse_stops_after_stop() -> None:
-    dxl = FakeDxl()
-    axis = _axis_pulse_fast()
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_forward(50)
-    time.sleep(0.15)
-    n_before = len(dxl.goal_writes)
-    hb.stop()
-    time.sleep(0.15)
-    n_after = len(dxl.goal_writes)
-    assert n_after <= n_before + 80
-
-
-def test_set_wheels_halts_pulse() -> None:
-    dxl = FakeDxl()
-    axis = _axis_pulse_fast()
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_forward(50)
-    time.sleep(0.06)
-    hb.set_wheels(
-        left_dir=hb.DIR_FORWARD,
-        left_speed=10,
-        right_dir=hb.DIR_FORWARD,
-        right_speed=10,
-    )
-    time.sleep(0.1)
-    assert not hb.is_forward_pulse_active()
-
-
-def test_start_pulse_disabled_falls_back_to_forward_goals() -> None:
-    dxl = FakeDxl()
-    axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    dxl.goal_writes.clear()
-    hb.start_pulse_straight_forward(40)
-    assert not hb.is_forward_pulse_active()
-    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    assert dxl.goal_writes[-1] == {12: fl, 13: fr}
-    prime = {12: 2048, 13: 2048}
-    assert prime in dxl.goal_writes
-
-
-def test_forward_pulse_series_ends_at_full_brake() -> None:
-    dxl = FakeDxl()
-    axis = replace(
-        _axis_pulse_fast(),
-        pulse_series_max=3,
-        pulse_series_fwd_sec=0.02,
-        pulse_series_coast_initial_sec=0.01,
-        pulse_series_min_transition_sec=0.012,
-        pulse_forward_return_ramp_sec=0.02,
-        pulse_forward_coast_blend=0.2,
-    )
-    cfg = SimpleNamespace(
-        default_speed_percent=10,
-        settle_delay_sec=0.01,
-        invert_left_dir=False,
-        invert_right_dir=False,
-    )
-    hb = HoverboardAxisDrive(dxl, threading.RLock(), axis, cfg)
-    hb.initialize()
-    hb.start_pulse_straight_forward(50)
-    for _ in range(300):
-        if not hb.is_forward_pulse_active():
-            break
-        time.sleep(0.02)
-    assert not hb.is_forward_pulse_active()
-    assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
 
 
 def test_backward_pulse_alternates_reverse_and_brake() -> None:
@@ -296,6 +634,11 @@ def test_backward_pulse_series_ends_at_full_brake() -> None:
         time.sleep(0.02)
     assert not hb.is_forward_pulse_active()
     assert dxl.goal_writes[-1] == {12: 2048, 13: 2048}
+
+
+# ---------------------------------------------------------------------------
+# Ramp helper (unrelated to forward changes; kept as a quick sanity check)
+# ---------------------------------------------------------------------------
 
 
 def test_pulse_ramp_blend_profiles_are_monotonic() -> None:
