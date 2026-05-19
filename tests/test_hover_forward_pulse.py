@@ -27,6 +27,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
     _straight_abort_drift_deg,
+    _straight_back_leg_sec,
     _straight_brake_settle_sec,
     _straight_corr_back_step_dur_cap_sec,
     _straight_corr_back_step_min_sec,
@@ -127,6 +128,10 @@ def _fast_straight_env() -> dict[str, str]:
     """
     return {
         "NINA_HOVER_STRAIGHT_LEG_SEC": "0.05",
+        # Backward leg has its own knob (production default 1.0 s) —
+        # without this override the backward unit tests would wait
+        # 20× longer than forward tests per cycle and timeout.
+        "NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "0.05",
         "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.02",
         "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.01",
         "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "20",
@@ -202,6 +207,7 @@ def _wait_until_idle(hb: HoverboardAxisDrive, timeout_sec: float = 5.0) -> None:
 
 _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_LEG_SEC",
+    "NINA_HOVER_STRAIGHT_BACK_LEG_SEC",
     "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
     "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
     "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT",
@@ -230,6 +236,9 @@ def test_straight_env_getter_defaults() -> None:
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
         assert _straight_leg_sec() == 0.5
+        # Backward leg is intentionally longer than forward — the
+        # chassis travels less per second backward at the same lean.
+        assert _straight_back_leg_sec() == 1.0
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
         assert _straight_corr_blend_pct() == 60
@@ -310,6 +319,144 @@ def test_straight_corr_back_step_dur_garbage_falls_back_to_default() -> None:
     ):
         assert _straight_corr_back_step_dur_cap_sec() == 0.020
         assert _straight_corr_back_step_min_sec() == 0.015
+
+
+def test_straight_back_leg_sec_default_is_one_second() -> None:
+    """Backward leg default is 1.0 s vs forward's 0.5 s. Operators
+    want a perceptible amount of backward travel between standstill
+    drift samples on the reference build (backward
+    travel-per-second is lower than forward at the same lean
+    magnitude).
+    """
+    os.environ.pop("NINA_HOVER_STRAIGHT_BACK_LEG_SEC", None)
+    assert _straight_back_leg_sec() == 1.0
+
+
+def test_straight_back_leg_sec_override_clamps_and_fallback() -> None:
+    """Env override is honored; out-of-range clamps to ``[0.1, 5.0]``;
+    garbage falls back to the documented 1.0 s default.
+    """
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "1.5"},
+        clear=False,
+    ):
+        assert _straight_back_leg_sec() == 1.5
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "999"},
+        clear=False,
+    ):
+        assert _straight_back_leg_sec() == 5.0
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "0.001"},
+        clear=False,
+    ):
+        assert _straight_back_leg_sec() == 0.1
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "garbage"},
+        clear=False,
+    ):
+        assert _straight_back_leg_sec() == 1.0
+
+
+def test_straight_back_leg_sec_independent_from_forward() -> None:
+    """Forward and backward leg durations must be independently
+    configurable — overriding one must not bleed into the other.
+    """
+    for k in (
+        "NINA_HOVER_STRAIGHT_LEG_SEC",
+        "NINA_HOVER_STRAIGHT_BACK_LEG_SEC",
+    ):
+        os.environ.pop(k, None)
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_LEG_SEC": "0.25"},
+        clear=False,
+    ):
+        assert _straight_leg_sec() == 0.25
+        assert _straight_back_leg_sec() == 1.0  # untouched
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "2.0"},
+        clear=False,
+    ):
+        assert _straight_leg_sec() == 0.5  # untouched
+        assert _straight_back_leg_sec() == 2.0
+
+
+def test_drift_correct_loop_forward_uses_forward_leg_getter_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward path must call ``_straight_leg_sec`` and never the
+    backward leg getter. Locks the "forward path is bit-identical"
+    contract.
+    """
+    calls = {"fwd": 0, "back": 0}
+    monkeypatch.setattr(
+        "nina.controllers.hoverboard_axis_drive._straight_leg_sec",
+        lambda: (calls.__setitem__("fwd", calls["fwd"] + 1) or 0.05),
+    )
+    monkeypatch.setattr(
+        "nina.controllers.hoverboard_axis_drive._straight_back_leg_sec",
+        lambda: (calls.__setitem__("back", calls["back"] + 1) or 0.05),
+    )
+
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0, yaw_rate_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    assert calls["fwd"] >= 1, (
+        f"forward path must call _straight_leg_sec; saw {calls}"
+    )
+    assert calls["back"] == 0, (
+        f"forward path must NOT touch _straight_back_leg_sec "
+        f"(forward = bit-identical to before this change); saw {calls}"
+    )
+
+
+def test_drift_correct_loop_backward_uses_backward_leg_getter_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward path must call ``_straight_back_leg_sec`` and never
+    the forward leg getter — otherwise forward overrides would bleed
+    into backward and defeat the per-direction tuning surface.
+    """
+    calls = {"fwd": 0, "back": 0}
+    monkeypatch.setattr(
+        "nina.controllers.hoverboard_axis_drive._straight_leg_sec",
+        lambda: (calls.__setitem__("fwd", calls["fwd"] + 1) or 0.05),
+    )
+    monkeypatch.setattr(
+        "nina.controllers.hoverboard_axis_drive._straight_back_leg_sec",
+        lambda: (calls.__setitem__("back", calls["back"] + 1) or 0.05),
+    )
+
+    axis = _axis_pulse_fast()
+    hb, _dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0, yaw_rate_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.20)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    assert calls["back"] >= 1, (
+        f"backward path must call _straight_back_leg_sec; saw {calls}"
+    )
+    assert calls["fwd"] == 0, (
+        f"backward path must NOT touch _straight_leg_sec "
+        f"(otherwise forward tuning bleeds into backward); saw {calls}"
+    )
 
 
 def test_drift_correction_forward_uses_forward_step_getters_only(

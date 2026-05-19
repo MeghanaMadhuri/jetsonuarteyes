@@ -897,6 +897,38 @@ def _straight_leg_sec() -> float:
         return 0.5
 
 
+def _straight_back_leg_sec() -> float:
+    """Backward-leg duration (seconds) between brake + drift-check pauses.
+
+    Mirror of :func:`_straight_leg_sec` but scoped to *backward*
+    motion. Default **1.0 s** vs forward's 0.5 s — backward needs a
+    longer leg because the chassis covers less ground per second at
+    the same lean magnitude (BLDC-side mechanical asymmetry on the
+    reference build) and the operator wants a perceptible amount of
+    travel between standstill drift checks. Each press of Straight
+    back / D-pad reverse drives at the bare calibrated backward lean
+    for this duration, brakes, samples drift, optionally corrects,
+    and repeats.
+
+    Independent of :func:`_straight_leg_sec` — the forward path is
+    unaffected by overrides here and vice versa. Clamped to
+    ``[0.1, 5.0]``. Override with
+    ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC=<seconds>``.
+    """
+    try:
+        return max(
+            0.1,
+            min(
+                5.0,
+                float(
+                    os.environ.get("NINA_HOVER_STRAIGHT_BACK_LEG_SEC", "1.0")
+                ),
+            ),
+        )
+    except ValueError:
+        return 1.0
+
+
 def _straight_brake_settle_sec() -> float:
     """Brake settle dwell after each forward leg, before sampling drift.
 
@@ -2634,19 +2666,30 @@ class HoverboardAxisDrive:
         :meth:`start_pulse_straight_forward` — just with backward drive
         goals — because at-standstill micro-step pivot correction is
         direction-of-motion agnostic (in-place rotation) and the IMU
-        yaw integrator is direction-agnostic too. All
-        ``NINA_HOVER_STRAIGHT_*`` tuning knobs (leg duration, deadband,
-        residual, blend, active settle thresholds, swap_pivot) are
-        shared with the forward path.
+        yaw integrator is direction-agnostic too. Most
+        ``NINA_HOVER_STRAIGHT_*`` tuning knobs (deadband, residual,
+        blend, active settle thresholds, swap_pivot) are shared with
+        the forward path; a handful are direction-specific:
+
+        - Leg duration: ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC`` (default
+          1.0 s; forward is ``NINA_HOVER_STRAIGHT_LEG_SEC=0.5 s``).
+        - Correction step caps: ``NINA_HOVER_STRAIGHT_CORR_BACK_STEP_*``
+          (softer defaults for the chassis-asymmetric backward
+          pre-pivot momentum profile).
+        - Extra push past calibration:
+          ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` (default 0; opt-in
+          if the chassis can't break stiction at the bare calibrated
+          lean).
 
         1. Prime the lean stack at neutral
            (``NINA_HOVER_STRAIGHT_PRIME_POS``).
         2. Reset the IMU integrator ONCE
            (``_imu_begin_straight``) — drift samples track CUMULATIVE
            heading deviation from the operator-defined start heading.
-        3. Loop: backward lean for ``NINA_HOVER_STRAIGHT_LEG_SEC`` →
-           brake → active settle → sample cumulative drift → either
-           abort (>=90°), correct (>deadband), or continue.
+        3. Loop: backward lean for
+           ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC`` → brake → active
+           settle → sample cumulative drift → either abort (>=90°),
+           correct (>deadband), or continue.
         4. Correction is identical to the forward path: iterative
            proportional micro-step in-place pivots that drive
            ``|drift|`` back inside
@@ -2827,7 +2870,17 @@ class HoverboardAxisDrive:
             right_speed=100,
         )
 
-        leg_sec = _straight_leg_sec()
+        # Forward and backward have independent leg durations. The
+        # reference build wants a longer backward leg (default 1.0 s
+        # vs forward's 0.5 s) because backward travel-per-second is
+        # lower at the same lean magnitude and operators want a
+        # perceptible amount of motion between standstill drift
+        # samples. Forward path stays bit-identical — the
+        # ``is_forward=True`` branch resolves the same getter it
+        # always did.
+        leg_sec = (
+            _straight_leg_sec() if is_forward else _straight_back_leg_sec()
+        )
         brake_settle = _straight_brake_settle_sec()
         abort_deg = _straight_abort_drift_deg()
         deadband = _straight_corr_deadband_deg()
