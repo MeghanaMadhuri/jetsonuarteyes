@@ -1509,10 +1509,11 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
     _wait_until_idle(hb)
 
     # Per-side asymmetric trim defaults: backward_pos_* (2000 each)
-    # + LEFT offset (+2) → 2002 on motor 12, + RIGHT offset (+3) →
-    # 2003 on motor 13. These trims compensate for the BLDC wheel
-    # asymmetry the operator observed at the bare calibrated lean.
-    rev = {12: 2002, 13: 2003}
+    # + LEFT offset (+7) → 2007 on motor 12, + RIGHT offset (+8) →
+    # 2008 on motor 13. These trims compensate for the BLDC wheel
+    # asymmetry the operator observed at the bare calibrated lean
+    # (iterated to +7 / +8 over a couple bench rounds).
+    rev = {12: 2007, 13: 2008}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1738,8 +1739,8 @@ def test_backward_loop_default_applies_per_side_asymmetric_trim() -> None:
         12: int(axis.backward_pos_left) + _STRAIGHT_BACK_LEFT_TICKS_OFFSET,
         13: int(axis.backward_pos_right) + _STRAIGHT_BACK_RIGHT_TICKS_OFFSET,
     }
-    # Fast-fixture chassis: 2000 + 2 = 2002, 2000 + 3 = 2003.
-    assert expected == {12: 2002, 13: 2003}, expected
+    # Fast-fixture chassis: 2000 + 7 = 2007, 2000 + 8 = 2008.
+    assert expected == {12: 2007, 13: 2008}, expected
     saw_expected = any(g == expected for g in dxl.goal_writes)
     assert saw_expected, (
         f"backward loop must apply per-side offsets ({expected}); "
@@ -1747,22 +1748,23 @@ def test_backward_loop_default_applies_per_side_asymmetric_trim() -> None:
     )
 
 
-def test_straight_back_left_ticks_offset_default_is_two() -> None:
-    """Lock the left-side default — +2 ticks added raw to
+def test_straight_back_left_ticks_offset_default_is_seven() -> None:
+    """Lock the left-side default — +7 ticks added raw to
     ``backward_pos_left``. Dialed in to compensate for the LEFT wheel
-    running slower than RIGHT on the reference chassis.
+    running slower than RIGHT on the reference chassis; iterated from
+    +2 in two 5-tick bench bumps as the asymmetry kept showing up.
     """
-    assert _STRAIGHT_BACK_LEFT_TICKS_OFFSET == 2
+    assert _STRAIGHT_BACK_LEFT_TICKS_OFFSET == 7
 
 
-def test_straight_back_right_ticks_offset_default_is_three() -> None:
-    """Lock the right-side default — +3 ticks added raw to
-    ``backward_pos_right``. Asymmetric vs the LEFT-side +2 specifically
-    to bias against the BLDC-side wheel asymmetry the operator
-    observed; on a different chassis these may need to differ in
-    magnitude AND in sign.
+def test_straight_back_right_ticks_offset_default_is_eight() -> None:
+    """Lock the right-side default — +8 ticks added raw to
+    ``backward_pos_right``. Asymmetric vs the LEFT-side +7 (1-tick
+    bias) specifically to bias against the BLDC-side wheel asymmetry
+    the operator observed; on a different chassis these may need to
+    differ in magnitude AND in sign.
     """
-    assert _STRAIGHT_BACK_RIGHT_TICKS_OFFSET == 3
+    assert _STRAIGHT_BACK_RIGHT_TICKS_OFFSET == 8
 
 
 def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
@@ -1889,11 +1891,11 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    # Per-side asymmetric trim defaults: 2000+2 / 2000+3 = 2002 / 2003.
+    # Per-side asymmetric trim defaults: 2000+7 / 2000+8 = 2007 / 2008.
     # Both the disabled-pulse ``backward()`` fallback AND the live
     # drift-corrected loop go through the same ``_goals_for_wheels``
     # backward branch, so both apply the same per-side trim.
-    assert dxl.goal_writes[-1] == {12: 2002, 13: 2003}
+    assert dxl.goal_writes[-1] == {12: 2007, 13: 2008}
 
 
 # ---------------------------------------------------------------------------

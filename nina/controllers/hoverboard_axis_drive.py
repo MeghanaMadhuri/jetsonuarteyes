@@ -327,20 +327,21 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 #
 # Concretely on the reference chassis (``backward_pos_left=2068``,
 # ``backward_pos_right=2028``, ``brake=2048``):
-# - Motor 12 (left) gets ``+2`` → 2070 (further above brake = more
+# - Motor 12 (left) gets ``+7`` → 2075 (further above brake = more
 #   left-side backward lean).
-# - Motor 13 (right) gets ``+3`` → 2031 (CLOSER to brake = less
+# - Motor 13 (right) gets ``+8`` → 2036 (CLOSER to brake = less
 #   right-side backward lean).
 # That's the asymmetric trim the operator dialed in to make backward
-# drive in a straight line on this chassis.
+# drive in a straight line on this chassis (iterated from initial +2 /
+# +3 in 5-tick bumps as the bench tuning converged).
 #
 # Operators can re-tune per-bot via
 # ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
 # ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed, clamped to
 # ``[-50, 50]``). Setting both to 0 reverts to the bare calibrated
 # lean.
-_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 2
-_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 3
+_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 7
+_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 8
 
 
 def _straight_back_left_ticks_offset() -> int:
@@ -2704,7 +2705,7 @@ class HoverboardAxisDrive:
           ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` /
           ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed raw
           tick offsets added to the calibrated ``backward_pos_*``;
-          defaults +2 / +3 on the reference build to compensate for
+          defaults +7 / +8 on the reference build to compensate for
           BLDC wheel asymmetry that yawed the chassis at the bare
           calibrated lean).
 
