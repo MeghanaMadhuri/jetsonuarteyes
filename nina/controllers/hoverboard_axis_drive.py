@@ -344,24 +344,20 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 # which is exactly the bug that produced the "motor 12 leans, motor 13
 # doesn't get pushed, chassis spins" symptom in the field.
 #
-# Concretely on the reference chassis (``backward_pos_left=2068``,
-# ``backward_pos_right=2028``, ``brake=2048``):
-# - Motor 12 (left, ABOVE brake) with offset +7 → 2068 + 7 = 2075
-#   (further above brake = more left-side backward lean).
-# - Motor 13 (right, BELOW brake) with offset +8 → 2028 - 8 = 2020
-#   (further below brake = more right-side backward lean).
-# Both motors get MORE lean. The 1-tick asymmetry between the two
-# sides (R nudge magnitude > L by 1) biases against the observed
-# BLDC wheel asymmetry.
+# Defaults are 0 / 0 — i.e. the bare calibrated backward lean is used
+# as-is, no per-side trim. The earlier iterated values (L+7 / R+8)
+# were dialed against the now-fixed raw-add bug; on the corrected
+# nudge-from-brake semantics they were too aggressive and the
+# operator reset back to 0 to re-tune from a known-clean baseline.
 #
 # Operators can re-tune per-bot via
 # ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
 # ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed, clamped to
-# ``[-50, 50]``). Setting both to 0 reverts to the bare calibrated
-# lean; negative values trim the calibrated lean closer to neutral
-# without re-tuning ``backward_pos_*`` itself.
-_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 7
-_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 8
+# ``[-50, 50]``). Positive values add lean (further from brake);
+# negative trim the calibrated lean closer to neutral without
+# re-tuning ``backward_pos_*`` itself.
+_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 0
+_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 0
 
 
 def _straight_back_left_ticks_offset() -> int:
