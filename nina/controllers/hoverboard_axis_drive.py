@@ -314,18 +314,52 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
-# Extra raw ticks past calibrated ``backward_pos_*`` toward drive (symmetric
-# straight BACK only). Smaller than ``_STRAIGHT_FWD_EXTRA_TICKS`` because the
-# calibrated ``backward_pos_*`` is closer to the chassis travel limit on the
-# reference build and the unified drift-corrected backward leg was observed in
-# the field to "try" to move but not break loose at the bare calibrated pose.
-# Five ticks past the calibrated lean is enough push to overcome the
-# pre-rolling stiction the operator reported (MX-28s visibly torquing but
-# chassis not translating) without inflating into the lean stack's
-# travel-limit. Mirrors the forward branch's nudge philosophy — added by
-# :func:`_nudge_goal_from_brake` in the BACK-direction, not blindly subtracted,
-# so chassis with ``backward_pos_* > brake_pos_*`` get the correct sign.
-_STRAIGHT_BACK_EXTRA_TICKS = 5
+# Default extra raw ticks past calibrated ``backward_pos_*`` toward drive
+# (symmetric straight BACK only). Smaller than ``_STRAIGHT_FWD_EXTRA_TICKS``
+# because the calibrated ``backward_pos_*`` already sits closer to the
+# chassis travel limit on the reference build, AND because field-observed
+# wheel asymmetry on the BLDC side means a too-aggressive backward push
+# breaks the lower-stiction wheel loose first and the chassis yaws into a
+# runaway spin (operator-confirmed at 5 ticks: chassis spun out and only
+# stopped via the 90° abort). Two ticks is the smallest push that's still
+# nudge-shaped (not a no-op clamp) — operator can dial in via the
+# :func:`_straight_back_extra_ticks` env override below if 2 still
+# over-pushes or fails to break stiction on a given chassis.
+#
+# Mirrors the forward branch's nudge philosophy — added by
+# :func:`_nudge_goal_from_brake` in the BACK direction, not blindly
+# subtracted, so chassis with ``backward_pos_* > brake_pos_*`` get the
+# correct sign.
+_STRAIGHT_BACK_EXTRA_TICKS = 2
+
+
+def _straight_back_extra_ticks() -> int:
+    """Tunable backward-push override (``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS``).
+
+    Returns the per-side nudge magnitude that the backward branch of
+    :meth:`HoverboardAxisDrive._goals_for_wheels` adds via
+    :func:`_nudge_goal_from_brake`. Default
+    :data:`_STRAIGHT_BACK_EXTRA_TICKS` (2). Clamped to ``[0, 50]`` so
+    operators can experimentally zero out the nudge (=0 reproduces the
+    bare-calibrated-lean behavior the chassis exhibited before this knob
+    was wired in) or bump it up (e.g. =4) if 2 doesn't break stiction —
+    without recompiling or shipping a new build.
+    """
+    try:
+        return max(
+            0,
+            min(
+                50,
+                int(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS",
+                        str(_STRAIGHT_BACK_EXTRA_TICKS),
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return _STRAIGHT_BACK_EXTRA_TICKS
 
 # Pivot only (L/R yaw): extra nudge away from each side's brake (after
 # ``turn_push_ticks``). Must use directional nudge — a raw +Δ on both goals
@@ -2868,15 +2902,28 @@ class HoverboardAxisDrive:
                 )
                 if status == "halted":
                     break
+                # Track whether the chassis settled cleanly. Even when it
+                # didn't (timeout — usually a runaway-spin caused by
+                # wheel asymmetry past the lean-stack stiction breakaway
+                # point), we still want to sample drift and evaluate the
+                # ABORT threshold so the loop self-halts the runaway
+                # instead of silently launching another drive leg. We
+                # just won't attempt fine correction on a chassis that's
+                # still rotating (the brief pivot can't punch through
+                # ongoing rotation).
+                unsettled = False
                 if status == "no_rate":
                     if brake_settle > 0.0 and halt.wait(timeout=brake_settle):
                         break
                 elif status == "timeout":
-                    # Chassis never settled — skip drift sample for this
-                    # cycle and try again on the next leg. The integrator
-                    # KEEPS RUNNING (we want cumulative drift to be
-                    # preserved across the skipped sample).
-                    continue
+                    log.warning(
+                        "hover %s straight: cycle %d — settle TIMEOUT "
+                        "(%.2fs, last rate %+.2f deg/s); sampling "
+                        "cumulative drift anyway for abort check "
+                        "(correction skipped — chassis not still)",
+                        direction_label, cycle, elapsed, last_rate,
+                    )
+                    unsettled = True
                 else:
                     log.info(
                         "hover %s straight: cycle %d — settled in "
@@ -2884,8 +2931,11 @@ class HoverboardAxisDrive:
                         direction_label, cycle, elapsed, last_rate,
                     )
 
-                # 3. Cumulative drift sample at standstill (heading
-                # deviation from the operator-defined start heading).
+                # 3. Cumulative drift sample (heading deviation from the
+                # operator-defined start heading). The integrator runs
+                # continuously so this value is meaningful even when
+                # the chassis hasn't fully settled — we just can't
+                # trust it for FINE correction in the unsettled case.
                 drift = yaw_fn() if yaw_fn is not None else None
                 if drift is None:
                     log.info(
@@ -2897,23 +2947,30 @@ class HoverboardAxisDrive:
 
                 log.info(
                     "hover %s straight: cycle %d — cumulative drift = "
-                    "%+.2f deg (abort threshold %.1f deg)",
+                    "%+.2f deg%s (abort threshold %.1f deg)",
                     direction_label,
                     cycle,
                     drift,
+                    " (UNSETTLED)" if unsettled else "",
                     abort_deg,
                 )
 
-                # 4. Abort check — too much cumulative drift to recover
+                # 4. Abort check — too much cumulative drift to recover.
+                # Evaluated whether or not the chassis settled cleanly:
+                # the 90° default is coarse enough to be reliable even
+                # during a runaway-spin, and the whole purpose of this
+                # check is to catch runaways BEFORE launching another
+                # drive leg that would compound the spin.
                 if abort_deg > 0.0 and abs(drift) >= abort_deg:
                     log.warning(
                         "hover %s straight: cycle %d — drift %+.2f deg "
-                        ">= %.1f deg ABORT threshold; halting and "
+                        ">= %.1f deg ABORT threshold%s; halting and "
                         "announcing cant_move",
                         direction_label,
                         cycle,
                         drift,
                         abort_deg,
+                        " (caught during unsettled spin)" if unsettled else "",
                     )
                     try:
                         self._apply_goals(brake_goals)
@@ -2928,6 +2985,15 @@ class HoverboardAxisDrive:
                         )
                     halt.set()
                     break
+
+                # If we got here from a settle TIMEOUT (chassis still
+                # rotating, but drift below abort threshold), skip the
+                # correction step — the standstill micro-step pivot
+                # can't make a clean correction on a rotating chassis,
+                # and attempting it can compound the rotation. Next leg
+                # gets a fresh settle attempt.
+                if unsettled:
+                    continue
 
                 # 5. Correct cumulative drift (micro-step pivot at
                 # standstill). With cumulative tracking, each correction
@@ -3588,18 +3654,19 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
+            back_push = _straight_back_extra_ticks()
             bl = self._dxl._clamp_pos(
                 _nudge_goal_from_brake(
                     int(self._axis.backward_pos_left),
                     nl,
-                    _STRAIGHT_BACK_EXTRA_TICKS,
+                    back_push,
                 )
             )
             br = self._dxl._clamp_pos(
                 _nudge_goal_from_brake(
                     int(self._axis.backward_pos_right),
                     nr,
-                    _STRAIGHT_BACK_EXTRA_TICKS,
+                    back_push,
                 )
             )
             return {self._left_id: bl, self._right_id: br}

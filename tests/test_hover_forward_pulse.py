@@ -920,19 +920,28 @@ def test_active_settle_falls_back_to_timer_when_no_rate_hook() -> None:
     )
 
 
-def test_active_settle_timeout_skips_drift_sample() -> None:
-    """If the chassis never settles within SETTLE_MAX_SEC, the loop
-    must skip the drift sample for this cycle (no correction fires)
-    rather than sample stale drift while the chassis is still spinning.
+def test_active_settle_timeout_skips_correction_but_still_checks_abort() -> None:
+    """If the chassis never settles within SETTLE_MAX_SEC, the loop:
+
+    1. MUST still sample drift, so the cumulative-drift abort threshold
+       can fire and halt a runaway-spin (the field-observed bug was
+       precisely that the old ``continue`` skipped the abort check,
+       letting the bot keep driving while spinning out).
+    2. MUST NOT attempt the standstill micro-step pivot correction —
+       pivoting a chassis that's already rotating can't make a clean
+       correction and risks compounding the rotation.
+
+    This test simulates a chassis stuck rotating at 50 dps but with
+    drift below the 90° abort (5°), so the loop should sample drift,
+    skip the correction, and continue to the next leg.
     """
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
-    # Rate sampler that always returns a high value -> never settles.
     drift_calls = {"n": 0}
 
     def drift_fn() -> float:
         drift_calls["n"] += 1
-        return 5.0  # Would normally trigger correction.
+        return 5.0  # > deadband but well below abort threshold
 
     hb.set_imu_hooks(yaw_drift_fn=drift_fn, yaw_rate_fn=lambda: 50.0)
 
@@ -947,13 +956,15 @@ def test_active_settle_timeout_skips_drift_sample() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # Drift must NOT have been sampled (active settle bailed before
-    # the sample point).
-    assert drift_calls["n"] == 0, (
-        "active-settle timeout must skip the drift sample; "
-        f"drift_fn was called {drift_calls['n']} times"
+    # Drift MUST be sampled (the abort threshold gates on it) — this
+    # is the post-fix contract. The OLD behavior (drift_calls == 0)
+    # was the runaway-spin bug.
+    assert drift_calls["n"] >= 1, (
+        "post-fix: active-settle timeout must still sample drift for "
+        f"the abort check; drift_fn called {drift_calls['n']} times"
     )
-    # No pivot writes either (no correction fired).
+    # But correction must NOT fire — no pivot writes despite the 5°
+    # drift being above the deadband.
     pivot_l = hb._goals_for_wheels(
         left_dir=hb.DIR_FORWARD, left_speed=20,
         right_dir=hb.DIR_BACKWARD, right_speed=20,
@@ -963,7 +974,9 @@ def test_active_settle_timeout_skips_drift_sample() -> None:
         right_dir=hb.DIR_FORWARD, right_speed=20,
     )
     assert all(g != pivot_l and g != pivot_r for g in dxl.goal_writes), (
-        "active-settle timeout should prevent any correction step"
+        "active-settle timeout must skip the standstill micro-step "
+        "correction even though drift exceeds deadband — chassis is "
+        "still rotating, pivot can't make a clean correction"
     )
 
 
@@ -1342,10 +1355,14 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # _axis_pulse_fast backward_pos_* = 2000 each, nudged 5 ticks past
-    # the brake pose (2048) → 1995 each. The nudge is the new
-    # ``_STRAIGHT_BACK_EXTRA_TICKS`` push.
-    rev = {12: 1995, 13: 1995}
+    # _axis_pulse_fast backward_pos_* = 2000 each, nudged
+    # ``_STRAIGHT_BACK_EXTRA_TICKS`` (default 2) past the brake pose
+    # (2048) → 1998 each. The default got dialed back from 5 → 2 after
+    # field-observed wheel asymmetry caused a runaway spin at +5 on
+    # the reference chassis; the env var
+    # ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` is now the tunable
+    # surface.
+    rev = {12: 1998, 13: 1998}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1444,6 +1461,71 @@ def test_backward_loop_starts_integrator_once_for_cumulative_tracking() -> None:
     )
 
 
+def test_backward_loop_aborts_during_settle_timeout_when_drift_above_threshold() -> None:
+    """Runaway-spin path: the chassis is rotating too fast for active
+    settle to ever confirm stillness (settle TIMEOUT), AND the
+    cumulative drift is past the abort threshold. The loop must
+    sample drift anyway and fire ``cant_move`` instead of silently
+    launching another drive leg.
+
+    This was the field-observed bug at +5 ticks: wheel asymmetry
+    spun the chassis fast enough that active settle timed out every
+    cycle, the old ``continue`` skipped the abort check, and the
+    bot kept driving backward (compounding the spin) for ~6 s before
+    a lucky settle finally allowed the abort to fire at ~668°.
+    Post-fix, the abort fires on the first cycle where the runaway
+    drift breaches threshold.
+    """
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # yaw_rate_fn always returns a high rate → active settle never
+    # confirms stillness → settle times out at settle_max_sec.
+    # yaw_drift_fn returns 150° (well past the 90° abort threshold) so
+    # the loop must halt the moment it samples drift during the
+    # unsettled cycle.
+    hb.set_imu_hooks(
+        yaw_drift_fn=lambda: 150.0,
+        yaw_rate_fn=lambda: 60.0,
+    )
+
+    spoken = {"n": 0}
+
+    def _fake_speak() -> None:
+        spoken["n"] += 1
+
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG": "90.0",
+        # Tight settle cap so the test resolves quickly — irrelevant
+        # to the assertion since yaw_rate=60 dps > rate_thr=3 dps
+        # means settle never confirms regardless.
+        "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.05",
+        "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.01",
+        "NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC": "0.005",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        with patch(
+            "nina.controllers.hoverboard_axis_drive."
+            "maybe_speak_cant_move_alert",
+            side_effect=_fake_speak,
+        ):
+            hb.start_pulse_straight_backward(50)
+            _wait_until_idle(hb, timeout_sec=2.0)
+
+    assert not hb.is_forward_pulse_active(), (
+        "backward loop must self-halt on settle-timeout-with-high-drift "
+        "(runaway-spin path)"
+    )
+    assert spoken["n"] >= 1, (
+        "cant_move alert was not invoked when settle timed out + drift "
+        "exceeded threshold — runaway-spin abort regressed"
+    )
+    brk = {12: 2048, 13: 2048}
+    assert dxl.goal_writes[-1] == brk, (
+        f"backward loop did not brake on runaway-spin abort; "
+        f"last write={dxl.goal_writes[-1]}"
+    )
+
+
 def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
     """|drift| >= abort threshold during backward → brake, play
     cant_move, halt — same abort behavior as the forward loop."""
@@ -1481,18 +1563,18 @@ def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
 
 def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
     """Backward straight legs must drive past the raw ``backward_pos_*``
-    by exactly ``_STRAIGHT_BACK_EXTRA_TICKS`` in the
+    by exactly :func:`_straight_back_extra_ticks` ticks in the
     away-from-brake direction.
 
     The field-observed failure mode: at the bare calibrated
     ``backward_pos_*`` the MX-28 lean stack visibly torques the chassis
-    but doesn't break it loose into rolling (pre-rolling stiction wins).
-    This nudge matches the forward path's
-    ``_STRAIGHT_FWD_EXTRA_TICKS`` pattern (forward gets 14, backward
-    gets a smaller 5 because backward's calibrated pose sits closer to
-    the chassis travel limit on the reference build) and is what the
-    operator confirmed gets the chassis moving without overshooting
-    the lean stack.
+    but doesn't break it loose into rolling (pre-rolling stiction
+    wins). This nudge mirrors the forward path's
+    ``_STRAIGHT_FWD_EXTRA_TICKS`` pattern; the magnitude (2 by default)
+    is smaller than forward's 14 because the reference build's
+    backward lean sits closer to both the chassis travel limit AND the
+    BLDC-side wheel asymmetry breakaway point (operator-confirmed: 5
+    ticks caused a runaway spin, 2 ticks does not).
     """
     axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
     hb, dxl = _make_hb(axis)
@@ -1504,8 +1586,8 @@ def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # backward_pos_left=2000 < brake (2048) → nudge subtracts 5.
-    # _nudge_goal_from_brake(2000, 2048, 5) = 2000 - 5 = 1995.
+    # backward_pos_left=2000 < brake (2048) → nudge subtracts 2.
+    # _nudge_goal_from_brake(2000, 2048, 2) = 2000 - 2 = 1998.
     expected_l = _nudge_goal_from_brake(
         int(axis.backward_pos_left), int(axis.brake_pos_left),
         _STRAIGHT_BACK_EXTRA_TICKS,
@@ -1514,8 +1596,8 @@ def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
         int(axis.backward_pos_right), int(axis.brake_pos_right),
         _STRAIGHT_BACK_EXTRA_TICKS,
     )
-    assert expected_l == 1995, expected_l
-    assert expected_r == 1995, expected_r
+    assert expected_l == 1998, expected_l
+    assert expected_r == 1998, expected_r
 
     expected = {12: expected_l, 13: expected_r}
     raw = {12: int(axis.backward_pos_left), 13: int(axis.backward_pos_right)}
@@ -1531,26 +1613,105 @@ def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
     )
 
 
-def test_straight_back_extra_ticks_default_is_five() -> None:
-    """Lock the magnitude — five raw ticks of extra push past the
-    calibrated backward lean. If a future edit needs to retune this,
-    update both the constant and this test in lockstep.
+def test_straight_back_extra_ticks_default_is_two() -> None:
+    """Lock the default magnitude — two raw ticks of extra push past
+    the calibrated backward lean. Dialed back from 5 after the
+    field-observed runaway-spin at higher pushes on the reference
+    chassis. If a different chassis needs more, use the
+    ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` env override rather than
+    edit this constant.
     """
-    assert _STRAIGHT_BACK_EXTRA_TICKS == 5
+    assert _STRAIGHT_BACK_EXTRA_TICKS == 2
 
 
 def test_back_extra_ticks_smaller_than_forward_extra_ticks() -> None:
-    """Backward nudge is intentionally smaller than the forward nudge.
+    """Backward nudge default is intentionally smaller than the
+    forward nudge.
 
     Forward's calibrated lean sits ~50 ticks short of the lean stack
     limit on the reference build, so 14 extra ticks is safe. Backward's
-    calibrated lean sits much closer to the limit on the same build, so
-    only 5 ticks of headroom is available before the lean stack would
-    saturate. If a chassis ever needs the backward push >= forward,
-    the right fix is to re-tune ``backward_pos_*``, not to crank this
-    constant.
+    calibrated lean sits much closer to the limit AND past it the BLDC
+    motors' asymmetry breakaway threshold gets crossed; only 2 ticks
+    of headroom is available on the reference build before either
+    failure mode kicks in.
     """
     assert _STRAIGHT_BACK_EXTRA_TICKS < _STRAIGHT_FWD_EXTRA_TICKS
+
+
+def test_straight_back_extra_ticks_env_override_honored() -> None:
+    """Env override ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` lets the
+    operator dial the nudge without rebuilding. Clamps to ``[0, 50]``.
+    """
+    from nina.controllers.hoverboard_axis_drive import _straight_back_extra_ticks
+
+    # Default (unset) = the documented module-level constant.
+    os.environ.pop("NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS", None)
+    assert _straight_back_extra_ticks() == _STRAIGHT_BACK_EXTRA_TICKS
+
+    # Override to 0 (operator wants to revert to bare calibrated lean
+    # — useful for diagnosing whether the chassis can move at all).
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "0"},
+        clear=False,
+    ):
+        assert _straight_back_extra_ticks() == 0
+
+    # Override to a custom mid-value.
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "4"},
+        clear=False,
+    ):
+        assert _straight_back_extra_ticks() == 4
+
+    # Out-of-range clamps to [0, 50].
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "999"},
+        clear=False,
+    ):
+        assert _straight_back_extra_ticks() == 50
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "-5"},
+        clear=False,
+    ):
+        assert _straight_back_extra_ticks() == 0
+
+    # Garbage falls back to default.
+    with patch.dict(
+        os.environ,
+        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "garbage"},
+        clear=False,
+    ):
+        assert _straight_back_extra_ticks() == _STRAIGHT_BACK_EXTRA_TICKS
+
+
+def test_backward_loop_honors_back_extra_ticks_env_override() -> None:
+    """End-to-end: setting the env var changes the goals the backward
+    loop actually commands. Locks the operator-facing tunable surface.
+    """
+    axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "0"}
+    with patch.dict(os.environ, env, clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    # With push=0, the loop must command the bare calibrated lean (no
+    # nudge). This is the "is my chassis stuck?" diagnostic mode.
+    bare = {12: 2000, 13: 2000}
+    saw_bare = any(g == bare for g in dxl.goal_writes)
+    assert saw_bare, (
+        f"with NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS=0 the loop must "
+        f"command the bare backward_pos_* ({bare}); writes="
+        f"{dxl.goal_writes}"
+    )
 
 
 def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
@@ -1570,11 +1731,11 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    # backward_pos_* (2000) nudged 5 ticks past brake (2048) → 1995. Same
-    # ``_STRAIGHT_BACK_EXTRA_TICKS`` nudge as the drift-corrected loop, so
-    # the disabled-pulse fallback and the live backward loop apply the
-    # same lean magnitude.
-    assert dxl.goal_writes[-1] == {12: 1995, 13: 1995}
+    # backward_pos_* (2000) nudged ``_STRAIGHT_BACK_EXTRA_TICKS`` (default
+    # 2) past brake (2048) → 1998. Same nudge as the drift-corrected
+    # loop, so the disabled-pulse fallback and the live backward loop
+    # apply the same lean magnitude.
+    assert dxl.goal_writes[-1] == {12: 1998, 13: 1998}
 
 
 # ---------------------------------------------------------------------------
