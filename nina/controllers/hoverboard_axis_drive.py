@@ -1095,6 +1095,82 @@ def _straight_corr_step_min_sec() -> float:
         return 0.030
 
 
+def _straight_corr_back_step_dur_cap_sec() -> float:
+    """Per-step pivot duration cap (seconds) for **backward** drift correction.
+
+    Mirror of :func:`_straight_corr_step_dur_cap_sec` but scoped to
+    correction cycles that fire after a *backward* leg. Default
+    **0.020 s** vs the forward default **0.030 s** — field testing
+    on the reference chassis showed the same 0.030 s kick that
+    produces a clean ~2.5° rotation when correcting from a forward
+    leg produces 5–8° of rotation when correcting from a backward
+    leg (same step blend, step rate, brake settle — only the prior
+    leg direction differs). The mechanical explanation: the
+    pre-pivot momentum profile is asymmetric on this chassis, so
+    the calibrated 84 dps step rate underestimates the actual
+    backward-correction rotation rate, and the empirical floor of
+    0.030 s ends up over-pushing per step on backward.
+
+    Independent of :func:`_straight_corr_step_dur_cap_sec` so the
+    operator can tune forward and backward correction separately —
+    the forward path is unaffected by overrides to this knob, and
+    vice versa. Forward defaults stay 0.030 s; backward defaults
+    drop to 0.020 s.
+
+    Pair with :func:`_straight_corr_back_step_min_sec` (default
+    0.015 s) so the proportional formula
+    ``max(min, min(cap, |drift|/rate))`` actually shrinks for small
+    drifts on backward (with the forward 0.030/0.030 the formula
+    floors and caps at the same value, defeating proportional
+    scaling). Clamped to ``[0.005, 1.0]``.
+    """
+    try:
+        return max(
+            0.005,
+            min(
+                1.0,
+                float(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_CORR_BACK_STEP_DUR_CAP_SEC", "0.020"
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return 0.020
+
+
+def _straight_corr_back_step_min_sec() -> float:
+    """Per-step pivot duration floor (seconds) for **backward** drift correction.
+
+    Mirror of :func:`_straight_corr_step_min_sec` but scoped to
+    correction cycles that fire after a *backward* leg. Default
+    **0.015 s** vs the forward default **0.030 s**. See
+    :func:`_straight_corr_back_step_dur_cap_sec` for the chassis-
+    asymmetry rationale; in short, the backward correction
+    over-pushes at the forward floor, so backward needs a lower
+    floor to let the proportional formula actually scale small
+    drifts down.
+
+    Independent of :func:`_straight_corr_step_min_sec` — the forward
+    path is unaffected by overrides here. Clamped to ``[0.005, 1.0]``.
+    """
+    try:
+        return max(
+            0.005,
+            min(
+                1.0,
+                float(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_CORR_BACK_STEP_MIN_SEC", "0.015"
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return 0.015
+
+
 def _straight_corr_step_rate_dps() -> float:
     """Expected chassis pivot rate (deg/s) used to size each step's duration.
 
@@ -2933,8 +3009,21 @@ class HoverboardAxisDrive:
         invert = _imu_corr_invert_sign()
         swap_pivot = _straight_corr_swap_pivot_dir()
         step_blend = _straight_corr_blend_pct()
-        step_dur_cap = _straight_corr_step_dur_cap_sec()
-        step_min = _straight_corr_step_min_sec()
+        # Step duration cap + floor diverge between forward and backward:
+        # the same 0.030 s kick that produces ~2.5° clean rotation when
+        # correcting after a forward leg over-pushes (5–8°) when
+        # correcting after a backward leg on the reference chassis
+        # (chassis-asymmetric pre-pivot momentum profile). Backward gets
+        # softer defaults (0.020 s cap / 0.015 s floor) so the
+        # proportional formula actually shrinks per-step rotation for
+        # small drifts. Forward path is bit-identical to before — its
+        # branch resolves the same two getters it always did.
+        if direction_label == "backward":
+            step_dur_cap = _straight_corr_back_step_dur_cap_sec()
+            step_min = _straight_corr_back_step_min_sec()
+        else:
+            step_dur_cap = _straight_corr_step_dur_cap_sec()
+            step_min = _straight_corr_step_min_sec()
         step_rate = _straight_corr_step_rate_dps()
         step_settle = _imu_corr_step_settle_sec()
         max_steps = _imu_corr_max_steps()
