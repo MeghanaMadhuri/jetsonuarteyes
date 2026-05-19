@@ -56,6 +56,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _imu_turn_progress_min_deg,
     _imu_turn_step_blend_pct,
     _imu_turn_step_rate_deg_per_sec,
+    _imu_turn_swap_pivot_dir,
     _imu_turn_target_deg,
 )
 
@@ -145,6 +146,10 @@ def _fast_turn_env(**extras: str) -> dict[str, str]:
     healthy step rate so the proportional clamp falls onto the
     explicitly-configured PIVOT_MAX_SEC cap (matches the test pattern
     in ``test_hover_imu_correction.py``).
+
+    ``NINA_HOVER_TURN_SWAP_PIVOT_DIR=0`` keeps the legacy geometry
+    contract (turn-right → L=BACK, R=FWD) valid for the existing
+    direction tests; a dedicated test exercises swap=True separately.
     """
     env = {
         "NINA_HOVER_TURN_PRE_SETTLE_SEC": "0.0",
@@ -162,6 +167,10 @@ def _fast_turn_env(**extras: str) -> dict[str, str]:
         "NINA_HOVER_TURN_PROGRESS_CHECK_STEPS": "0",
         "NINA_HOVER_TURN_PROGRESS_MIN_DEG": "100.0",
         "NINA_HOVER_IMU_CORR_INVERT_SIGN": "0",
+        # Keep the conventional label-to-geometry mapping for the
+        # baseline direction / sign tests. Swap-enabled behaviour is
+        # covered by its own test.
+        "NINA_HOVER_TURN_SWAP_PIVOT_DIR": "0",
     }
     env.update(extras)
     return env
@@ -718,6 +727,7 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "NINA_HOVER_TURN_POST_SETTLE_SEC",
         "NINA_HOVER_TURN_PROGRESS_CHECK_STEPS",
         "NINA_HOVER_TURN_PROGRESS_MIN_DEG",
+        "NINA_HOVER_TURN_SWAP_PIVOT_DIR",
         # Reuse-from-forward defaults shouldn't bleed test overrides in.
         "NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC",
         "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT",
@@ -733,6 +743,11 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _imu_turn_post_settle_sec() == 0.30
     assert _imu_turn_progress_check_steps() == 6
     assert _imu_turn_progress_min_deg() == 3.0
+    # Swap defaults to True — same chassis-physics fix as the
+    # standstill correction swap. Operator overrides via
+    # NINA_HOVER_TURN_SWAP_PIVOT_DIR=0 on a chassis where the
+    # conventional mapping is correct.
+    assert _imu_turn_swap_pivot_dir() is True
 
 
 def test_turn_env_overrides_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -753,3 +768,286 @@ def test_turn_env_overrides_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _imu_turn_step_blend_pct() == 100
     monkeypatch.setenv("NINA_HOVER_TURN_STEP_BLEND_PCT", "0")
     assert _imu_turn_step_blend_pct() == 1
+
+
+# ----------------------------------------------------------------------
+# Swap-pivot: chassis-physics fix for the reference chassis
+# ----------------------------------------------------------------------
+
+
+def test_turn_swap_pivot_dir_truthy_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Common truthy / falsy spellings of the turn swap env var."""
+    for falsy in ("0", "false", "FALSE", "no", "off", ""):
+        monkeypatch.setenv("NINA_HOVER_TURN_SWAP_PIVOT_DIR", falsy)
+        assert _imu_turn_swap_pivot_dir() is False, falsy
+    for truthy in ("1", "true", "yes", "ON", "anything"):
+        monkeypatch.setenv("NINA_HOVER_TURN_SWAP_PIVOT_DIR", truthy)
+        assert _imu_turn_swap_pivot_dir() is True, truthy
+
+
+def test_right_turn_under_swap_uses_pivot_left_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With SWAP_PIVOT_DIR=1, a "right" command must apply the
+    L=FWD/R=BACK goals (the field-tested mapping on the reference
+    chassis where the conventional L=BACK,R=FWD mechanically rotates
+    the bot to the **left**). This is the same physics fix the
+    standstill drift correction relies on; the closed-loop turn
+    couldn't take advantage of it before because it ran the
+    conventional mapping unconditionally.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    # On the swapped chassis the chassis-frame "right" turn rotates
+    # the IMU NEGATIVELY (L=FWD/R=BACK rotates the swapped chassis
+    # right, but the integrator measures yaw with the conventional
+    # sign, so a chassis-frame right rotation accumulates the
+    # opposite sign that target_intent expects)... wait — the
+    # integrator's sign convention is also chassis-frame. So a
+    # chassis-frame right rotation accumulates POSITIVE yaw exactly
+    # like the un-swapped case. Use the same converge target as the
+    # baseline test.
+    imu = _FakeImuIntegrator(
+        mode="converge", target_yaw_deg=90.0, step_deg=20.0
+    )
+    drv = _make_drive(yaw_fn=imu.yaw_fn, begin_fn=imu.begin, end_fn=imu.end)
+    with patch.dict(
+        os.environ,
+        _fast_turn_env(NINA_HOVER_TURN_SWAP_PIVOT_DIR="1"),
+        clear=False,
+    ):
+        drv.pulse_turn_90("right")
+    pivot = _first_pivot_goal(drv._dxl.goal_writes)
+    # Under swap=1, "right" applies the LEFT geometry.
+    assert pivot == _pivot_left_goals_20pct(), (
+        f"first step for 'right' under swap=1 must use the L=FWD/R=BACK "
+        f"geometry (the inverted label mapping); saw {pivot}"
+    )
+
+
+def test_left_turn_under_swap_uses_pivot_right_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirror of the swap-enabled right-turn contract: with swap=1, a
+    "left" command applies the L=BACK/R=FWD geometry.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    imu = _FakeImuIntegrator(
+        mode="converge", target_yaw_deg=-90.0, step_deg=20.0
+    )
+    drv = _make_drive(yaw_fn=imu.yaw_fn, begin_fn=imu.begin, end_fn=imu.end)
+    with patch.dict(
+        os.environ,
+        _fast_turn_env(NINA_HOVER_TURN_SWAP_PIVOT_DIR="1"),
+        clear=False,
+    ):
+        drv.pulse_turn_90("left")
+    pivot = _first_pivot_goal(drv._dxl.goal_writes)
+    assert pivot == _pivot_right_goals_20pct(), (
+        f"first step for 'left' under swap=1 must use the L=BACK/R=FWD "
+        f"geometry (the inverted label mapping); saw {pivot}"
+    )
+
+
+def _timed_turn_env(**extras: str) -> dict[str, str]:
+    """Env for the timed turn_left / turn_right tests.
+
+    Forces the timed-pivot blend to 20% so the recorded Dynamixel
+    goals match the ``_pivot_*_goals_20pct()`` helpers. The
+    timed-turn path defaults to 17% via ``NINA_DRIVE_TURN_PIVOT_DEG=15``
+    (15° of nominal 90°); ``18`` degrees lands exactly on 20%.
+    """
+    env = {
+        "NINA_DRIVE_TURN_PIVOT_DEG": "18",
+    }
+    env.update(extras)
+    return env
+
+
+def test_timed_turn_left_honours_swap_pivot_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timed-pivot fallback :meth:`HoverboardAxisDrive.turn_left`
+    must honour the same swap. Otherwise pressing Turn Left on a
+    chassis whose IMU is paused (and falls back to the timed pivot)
+    would still rotate the wrong direction.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    drv = _make_drive()
+    with patch.dict(
+        os.environ,
+        _timed_turn_env(NINA_HOVER_TURN_SWAP_PIVOT_DIR="1"),
+        clear=False,
+    ):
+        drv.turn_left(duration=0.0)
+    pivot = _first_pivot_goal(drv._dxl.goal_writes)
+    # Under swap=1, "turn_left" must mechanically rotate the
+    # swapped chassis LEFT — that's the L=BACK, R=FWD geometry.
+    assert pivot == _pivot_right_goals_20pct(), (
+        f"timed turn_left under swap=1 must use the L=BACK/R=FWD "
+        f"geometry; saw {pivot}"
+    )
+
+
+def test_timed_turn_right_honours_swap_pivot_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirror for :meth:`HoverboardAxisDrive.turn_right` — under
+    swap=1, a "turn right" request must apply the L=FWD/R=BACK
+    geometry (the mechanical right-rotation on the swapped chassis).
+    """
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    drv = _make_drive()
+    with patch.dict(
+        os.environ,
+        _timed_turn_env(NINA_HOVER_TURN_SWAP_PIVOT_DIR="1"),
+        clear=False,
+    ):
+        drv.turn_right(duration=0.0)
+    pivot = _first_pivot_goal(drv._dxl.goal_writes)
+    assert pivot == _pivot_left_goals_20pct(), (
+        f"timed turn_right under swap=1 must use the L=FWD/R=BACK "
+        f"geometry; saw {pivot}"
+    )
+
+
+def test_timed_turn_left_swap_zero_uses_conventional_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With swap=0, the timed fallback keeps the legacy mapping
+    (turn_left → L=FWD, R=BACK). Required for chassis where the
+    conventional mapping is correct.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    drv = _make_drive()
+    with patch.dict(
+        os.environ,
+        _timed_turn_env(NINA_HOVER_TURN_SWAP_PIVOT_DIR="0"),
+        clear=False,
+    ):
+        drv.turn_left(duration=0.0)
+    pivot = _first_pivot_goal(drv._dxl.goal_writes)
+    assert pivot == _pivot_left_goals_20pct()
+
+
+# ----------------------------------------------------------------------
+# Aim-at-zero target formula
+# ----------------------------------------------------------------------
+
+
+def test_turn_step_duration_aims_at_zero_not_half_deadband_short(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-step proportional duration must scale with |remaining|
+    directly (aim-at-zero) — not with ``|remaining| - 0.5·deadband``
+    as the old formula did. Concretely: when the remaining yaw is
+    just past the deadband, the step duration should reflect the
+    full remaining magnitude, not a deadband-shrunk surrogate that
+    underdrives the chassis.
+
+    Verified by recording the per-step ``time.sleep`` call: with
+    deadband=10°, step_rate=10dps, step_min=0.001, step_dur_cap=10s,
+    a stuck-at-12° chassis with target=24° produces
+    remaining=12° → aim-at-zero step_dur = 12/10 = 1.20 s. The old
+    "0.5·deadband short" formula would have produced
+    (12 - 5)/10 = 0.70 s.
+    """
+    sleeps: List[float] = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(float(s)))
+
+    class _StuckAt12:
+        """IMU stub that reports +12° on every yaw_fn call.
+
+        Can't use ``_FakeImuIntegrator(mode="stuck")`` directly because
+        its ``begin`` hook resets the accumulator to 0; the closed-
+        loop turn calls begin first, so the test would see remaining =
+        target_intent − 0 = 24°, not 12°.
+        """
+
+        def __init__(self) -> None:
+            self.begin_calls = 0
+            self.end_calls = 0
+
+        def begin(self) -> None:
+            self.begin_calls += 1
+
+        def end(self) -> None:
+            self.end_calls += 1
+
+        def yaw_fn(self) -> Optional[float]:
+            return 12.0
+
+    imu = _StuckAt12()
+    drv = _make_drive(yaw_fn=imu.yaw_fn, begin_fn=imu.begin, end_fn=imu.end)
+    env = _fast_turn_env(
+        NINA_HOVER_TURN_TARGET_DEG="24.0",
+        NINA_HOVER_IMU_CORR_DEADBAND_DEG="10.0",
+        NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="10.0",
+        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="10.0",
+        NINA_HOVER_IMU_CORR_STEP_MIN_SEC="0.001",
+        NINA_HOVER_TURN_MAX_STEPS="1",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.pulse_turn_90("right")
+    pivot_sleep = max(sleeps) if sleeps else 0.0
+    assert pivot_sleep == pytest.approx(1.20, abs=1e-3), (
+        f"aim-at-zero expects step_dur ≈ 1.20s for |remaining|=12 at "
+        f"10dps; saw {pivot_sleep}. Did the formula regress to the "
+        f"old 'land 0.5·deadband short' target?"
+    )
+
+
+# ----------------------------------------------------------------------
+# Active settle integration
+# ----------------------------------------------------------------------
+
+
+def test_turn_uses_active_settle_when_yaw_rate_fn_wired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a yaw_rate_fn is wired, the per-step settle must come from
+    ``_active_settle_until_still`` (which returns "settled" the
+    moment the rate is below threshold), not from the fixed
+    NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC timer.
+    """
+    sleeps: List[float] = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(float(s)))
+    imu = _FakeImuIntegrator(
+        mode="converge", target_yaw_deg=90.0, step_deg=20.0
+    )
+    drv = _make_drive(yaw_fn=imu.yaw_fn, begin_fn=imu.begin, end_fn=imu.end)
+    # Constant near-zero yaw rate — active settle should return
+    # "settled" on the first sample inside its stable window. Pass
+    # the existing drift / begin / end hooks too because
+    # ``set_imu_hooks`` is a full-replace (None resets).
+    drv.set_imu_hooks(
+        yaw_drift_fn=imu.yaw_fn,
+        begin_straight_fn=imu.begin,
+        end_straight_fn=imu.end,
+        yaw_rate_fn=lambda: 0.0,
+    )
+    env = _fast_turn_env(
+        # Make the legacy step settle large so we can detect whether
+        # it was actually used: 1 s is way bigger than active settle
+        # could ever take with a 0.0-dps rate.
+        NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC="1.0",
+        # Active settle envelope: snappy stable window so the test
+        # doesn't hang on the default.
+        NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS="0.5",
+        NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC="0.001",
+        NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC="0.5",
+        NINA_HOVER_STRAIGHT_SETTLE_POLL_SEC="0.001",
+        NINA_HOVER_TURN_MAX_STEPS="3",
+    )
+    with patch.dict(os.environ, env, clear=False):
+        drv.pulse_turn_90("right")
+    # The legacy 1.0 s step settle must not appear in the recorded
+    # sleeps — the active settle path returns without firing it.
+    legacy_settle_seen = any(
+        abs(s - 1.0) < 1e-6 for s in sleeps
+    )
+    assert not legacy_settle_seen, (
+        f"active settle should preempt the legacy fixed-timer step "
+        f"settle when yaw_rate_fn is wired; saw sleeps={sleeps}"
+    )

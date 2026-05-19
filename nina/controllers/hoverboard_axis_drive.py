@@ -1472,6 +1472,47 @@ def _imu_turn_progress_min_deg() -> float:
         return 3.0
 
 
+def _imu_turn_swap_pivot_dir() -> bool:
+    """Swap the pivot-direction-to-goals mapping in the closed-loop 90° turn.
+
+    Same chassis-physics fix as :func:`_straight_corr_swap_pivot_dir`,
+    but scoped to :meth:`HoverboardAxisDrive.pulse_turn_90` and the
+    timed :meth:`HoverboardAxisDrive.turn_left` /
+    :meth:`HoverboardAxisDrive.turn_right` fallback. On the reference
+    chassis, commanding what the code labels "pivot LEFT" (L=FWD,
+    R=BACK at the dynamixel-lean level) physically rotates the
+    chassis to the **RIGHT** (CW), not the left as the label
+    suggests. The 90° turn is in-place, so the same mapping question
+    applies — without the swap, pressing "Turn Left" on the operator
+    UI commands ``L=FWD, R=BACK`` and the chassis rotates right
+    (then the no-progress safeguard bails the turn).
+
+    When True (default), a turn-LEFT request applies ``L=BACK, R=FWD``
+    goals and a turn-RIGHT request applies ``L=FWD, R=BACK`` goals —
+    i.e. the label-to-goals mapping is inverted relative to the
+    conventional convention. This is the right setting for the
+    reference chassis.
+
+    Set ``NINA_HOVER_TURN_SWAP_PIVOT_DIR=0`` on a chassis where the
+    conventional mapping is correct (turn-left request rotates the
+    chassis left under the L=FWD,R=BACK geometry).
+
+    Independent of :func:`_straight_corr_swap_pivot_dir` so the
+    operator can tune turn vs standstill correction separately;
+    defaults match because the same chassis-physics fix applies to
+    both.
+
+    Unrelated to ``NINA_HOVER_IMU_CORR_INVERT_SIGN`` — that knob
+    flips the **integrator sign interpretation** (whether positive
+    yaw means CW or CCW). This knob flips the **pivot command
+    mapping** (whether a chassis-frame "right" turn uses one set of
+    goals or the other). On chassis with both inversions you'd set
+    both.
+    """
+    val = os.environ.get("NINA_HOVER_TURN_SWAP_PIVOT_DIR", "1")
+    return val.strip().lower() not in ("0", "false", "no", "off", "")
+
+
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
     """Bench watchdog upper-bound for the drift-corrected forward loop.
 
@@ -3597,6 +3638,11 @@ class HoverboardAxisDrive:
 
         Blend toward calibrated pivot goals via ``_timed_turn_pivot_blend_pct``
         (not full 90° lean). Held D-pad pivots use asymmetric duties separately.
+
+        Honours :func:`_imu_turn_swap_pivot_dir`: under the swapped
+        mapping (the reference-chassis default) a "turn left" request
+        applies ``L=BACK, R=FWD`` geometry — that's what physically
+        rotates the swapped chassis to the left.
         """
         _ = speed_percent  # reserved; excursion is angle blend, not duty
         blend = _timed_turn_pivot_blend_pct()
@@ -3605,10 +3651,14 @@ class HoverboardAxisDrive:
             if duration is not None
             else getattr(self.config, "turn_duration_sec", 0.0)
         )
+        if _imu_turn_swap_pivot_dir():
+            left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
+        else:
+            left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
         self.set_wheels(
-            left_dir=self.DIR_FORWARD,
+            left_dir=left_dir,
             left_speed=blend,
-            right_dir=self.DIR_BACKWARD,
+            right_dir=right_dir,
             right_speed=blend,
         )
         if dur > 0.0:
@@ -3620,7 +3670,13 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: partial pivot lean; mirror of :meth:`turn_left`."""
+        """Timed yaw: partial pivot lean; mirror of :meth:`turn_left`.
+
+        Honours :func:`_imu_turn_swap_pivot_dir`: under the swapped
+        mapping (the reference-chassis default) a "turn right" request
+        applies ``L=FWD, R=BACK`` geometry — that's what physically
+        rotates the swapped chassis to the right.
+        """
         _ = speed_percent
         blend = _timed_turn_pivot_blend_pct()
         dur = float(
@@ -3628,10 +3684,14 @@ class HoverboardAxisDrive:
             if duration is not None
             else getattr(self.config, "turn_duration_sec", 0.0)
         )
+        if _imu_turn_swap_pivot_dir():
+            left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
+        else:
+            left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
         self.set_wheels(
-            left_dir=self.DIR_BACKWARD,
+            left_dir=left_dir,
             left_speed=blend,
-            right_dir=self.DIR_FORWARD,
+            right_dir=right_dir,
             right_speed=blend,
         )
         if dur > 0.0:
@@ -3642,21 +3702,27 @@ class HoverboardAxisDrive:
         """Closed-loop ~90° in-place turn driven by the IMU yaw integrator.
 
         Reuses the iterative proportional micro-step machinery that
-        :meth:`_perform_pivot_correction` uses for straight-leg drift
+        :meth:`_correct_drift_at_standstill` uses for straight-leg drift
         correction, but anchored to a yaw BUDGET (±``NINA_HOVER_TURN_TARGET_DEG``)
         instead of correcting a small drift back to zero. Each step:
 
         1. Sample remaining yaw (target − current).
         2. Choose pivot direction from the sign of remaining (positive
-           remaining in intent frame → pivot right, i.e. L=BACKWARD,
-           R=FORWARD).
-        3. Compute step duration ∝ |remaining|, clamped to
-           ``[step_min_sec, step_dur_cap]`` so big remainings get the
-           full cap and the last few degrees fall through small,
-           precise pulses.
+           remaining in intent frame → "pivot right" decision); the
+           label-to-goals mapping then honours
+           ``NINA_HOVER_TURN_SWAP_PIVOT_DIR`` so the geometry is
+           correct on the reference chassis (where the conventional
+           L=FWD,R=BACK → rotate-LEFT mapping is inverted).
+        3. Compute step duration ∝ |remaining| (aim-at-zero), clamped
+           to ``[step_min_sec, step_dur_cap]`` so big remainings get
+           the full cap and the last few degrees fall through small,
+           precise pulses. The next sample exits via the deadband if
+           the step overshoots zero.
         4. Apply the pivot goals (built via :meth:`_goals_for_wheels`
            so they honour the operator's tuned forward / backward lean
-           positions), wait, brake, settle, re-sample.
+           positions), wait, brake, wait for the chassis to actually
+           stop (yaw-rate active settle, same mechanism the drift-
+           corrected straight loop uses), re-sample.
 
         Halts any in-flight straight-pulse series first, brackets the
         turn with :meth:`_imu_begin_straight` / :meth:`_imu_end_straight`
@@ -3676,7 +3742,9 @@ class HoverboardAxisDrive:
         Falls back to the legacy timed :meth:`turn_left` /
         :meth:`turn_right` open-loop pivot when the IMU yaw sampler is
         not wired or is returning ``None`` (integrator paused) so the
-        Drive button is never functionally dead.
+        Drive button is never functionally dead. The timed fallback
+        honours the same ``SWAP_PIVOT_DIR`` knob so the chassis-frame
+        direction matches across both paths.
         """
         if not self._is_initialized:
             return False
@@ -3697,16 +3765,38 @@ class HoverboardAxisDrive:
             self._left_id: self._brake_left,
             self._right_id: self._brake_right,
         }
-        # 2. Brake and let the chassis bleed off momentum before we
-        # anchor the integrator. The pre-settle is also what gives the
-        # MX-28 servos enough time to actually land on brake.
+        # 2. Brake and wait for the chassis to actually stop before
+        # we anchor the integrator. Yaw-rate active settle (same
+        # mechanism the drift-corrected straight loop uses) ensures
+        # the integrator zero corresponds to a genuinely stationary
+        # chassis; the legacy fixed-timer settle is the fallback
+        # when no yaw_rate_fn is wired (dev hosts without an IMU).
         try:
             self._apply_goals(brake_goals)
         except Exception:
             log.debug("pulse_turn_90: pre-brake apply failed", exc_info=True)
-        pre_settle = _imu_turn_pre_settle_sec()
-        if pre_settle > 0.0:
-            time.sleep(pre_settle)
+        # ``pulse_turn_90`` is synchronous (no daemon thread, no
+        # external halt mechanism) — use a never-set local Event so
+        # the active settle helper's halt-aware sleeps still work
+        # without sharing the pulse halt event.
+        turn_halt = threading.Event()
+        pre_status, pre_elapsed, pre_rate = self._active_settle_until_still(
+            turn_halt, context=f"turn ({direction}) pre"
+        )
+        if pre_status == "no_rate":
+            pre_settle = _imu_turn_pre_settle_sec()
+            if pre_settle > 0.0:
+                time.sleep(pre_settle)
+        elif pre_status == "settled":
+            log.debug(
+                "hover IMU turn (%s): pre-settle done in %.3fs "
+                "(last rate %+.2f deg/s)",
+                direction, pre_elapsed, pre_rate,
+            )
+        # "timeout" / "halted" still proceed — at worst we anchor the
+        # integrator on a slowly-rotating chassis (the active settle
+        # itself is best-effort; the no-progress safeguard catches
+        # the case where the chassis is actually stuck).
 
         yaw_fn = self._imu_yaw_drift_fn
         if yaw_fn is None:
@@ -3748,6 +3838,7 @@ class HoverboardAxisDrive:
             step_settle = _imu_corr_step_settle_sec()
             deadband = _imu_corr_deadband_deg()
             invert = _imu_corr_invert_sign()
+            swap_pivot = _imu_turn_swap_pivot_dir()
             progress_check = _imu_turn_progress_check_steps()
             progress_min = _imu_turn_progress_min_deg()
 
@@ -3766,12 +3857,13 @@ class HoverboardAxisDrive:
             current = -float(initial) if invert else float(initial)
             log.info(
                 "hover IMU turn (%s): begin target=%+.1f deg (intent frame, "
-                "invert=%s), step_blend=%d%%, step_rate=%.1fdps, "
+                "invert=%s, swap_pivot=%s), step_blend=%d%%, step_rate=%.1fdps, "
                 "step_dur_cap=%.2fs, step_min=%.2fs, step_settle=%.2fs, "
                 "deadband=%.2f deg, max_steps=%d, progress_check=%d/%.2f deg",
                 direction,
                 target_intent,
                 invert,
+                swap_pivot,
                 step_blend,
                 step_rate,
                 step_dur_cap,
@@ -3818,8 +3910,18 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-                pivot_right_intent = remaining > 0.0
-                if pivot_right_intent:
+                # Decide chassis-frame pivot direction from the sign of
+                # remaining yaw budget. ``swap_pivot`` then flips the
+                # label-to-goals mapping for chassis where the
+                # conventional "L=BACK,R=FWD → rotate RIGHT" doesn't
+                # hold (field-observed default on the reference
+                # chassis is the swapped mapping; see
+                # :func:`_imu_turn_swap_pivot_dir`).
+                pivot_right_decision = remaining > 0.0
+                apply_right_goals = (
+                    not pivot_right_decision if swap_pivot else pivot_right_decision
+                )
+                if apply_right_goals:
                     step_goals = self._goals_for_wheels(
                         left_dir=self.DIR_BACKWARD,
                         left_speed=step_blend,
@@ -3834,11 +3936,15 @@ class HoverboardAxisDrive:
                         right_speed=step_blend,
                     )
 
-                # Proportional duration — same formula as
-                # ``_perform_pivot_correction``: aim to land ~0.5 deadband
-                # short of the target so the next sample exits via the
-                # deadband instead of always overshooting.
-                rotation_target = max(0.5, abs(remaining) - 0.5 * deadband)
+                # Proportional duration: aim to land at **zero**
+                # remaining (same change we made to standstill drift
+                # correction). The old "land at ½ deadband short of
+                # target" formula weakens the per-step kick for the
+                # last few degrees of the budget; aiming for zero
+                # gives the step a full deadband-worth more torque
+                # budget and the next sample exits via the deadband
+                # if it overshoots.
+                rotation_target = max(0.5, abs(remaining))
                 this_step_dur = max(
                     step_min,
                     min(step_dur_cap, rotation_target / step_rate),
@@ -3853,13 +3959,29 @@ class HoverboardAxisDrive:
                     )
                 time.sleep(this_step_dur)
 
-                # Brake between steps so the IMU re-samples on a still bot.
+                # Brake then wait for the chassis to actually stop
+                # before sampling. Active settle on the yaw rate
+                # avoids the "brief pivot can't punch through the
+                # ongoing rotation" failure mode that bit the straight
+                # drift correction. Falls back to the legacy fixed
+                # step_settle timer when no yaw_rate_fn is wired.
                 try:
                     self._apply_goals(brake_goals)
                 except Exception:
                     pass
-                if step_settle > 0.0:
-                    time.sleep(step_settle)
+                settle_status, settle_elapsed, _ = self._active_settle_until_still(
+                    turn_halt, context=f"turn ({direction}) step {step + 1}"
+                )
+                if settle_status == "no_rate":
+                    if step_settle > 0.0:
+                        time.sleep(step_settle)
+                elif settle_status == "settled":
+                    log.debug(
+                        "hover IMU turn (%s): step %d settled in %.3fs",
+                        direction, step + 1, settle_elapsed,
+                    )
+                # "timeout" continues to the sample anyway — the loop's
+                # next iteration will re-evaluate progress / max_steps.
 
                 sample = yaw_intent()
                 if sample is None:
@@ -3904,16 +4026,25 @@ class HoverboardAxisDrive:
             # 4. Always brake + post-settle so the bot is left
             # stationary, then end the integrator. The ``_imu_end_straight``
             # call leaves the snapshot's last yaw intact in case the
-            # autonomy stack wants to inspect it.
+            # autonomy stack wants to inspect it. Active settle
+            # confirms the chassis actually came to rest before we
+            # hand control back to the caller; falls back to the
+            # legacy fixed-timer post-settle when no yaw_rate_fn is
+            # wired.
             try:
                 self._apply_goals(brake_goals)
             except Exception:
                 log.debug(
                     "pulse_turn_90: post-brake apply failed", exc_info=True
                 )
-            post_settle = _imu_turn_post_settle_sec()
-            if post_settle > 0.0:
-                time.sleep(post_settle)
+            post_halt = threading.Event()
+            post_status, _, _ = self._active_settle_until_still(
+                post_halt, context=f"turn ({direction}) post"
+            )
+            if post_status == "no_rate":
+                post_settle = _imu_turn_post_settle_sec()
+                if post_settle > 0.0:
+                    time.sleep(post_settle)
             self._imu_end_straight()
 
     def _poll_yaw_until_ready(
