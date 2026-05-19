@@ -287,8 +287,26 @@ def _pulse_ramp_blend_u(t: float, profile: str, trap_edge: float) -> float:
 
 
 def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
-    """Move *goal* *push* raw ticks away from *brake* (if they differ)."""
-    if push <= 0:
+    """Move *goal* *push* raw ticks away from *brake* (signed).
+
+    Positive *push* moves further from brake (i.e. MORE lean, in
+    whichever direction *goal* already sits relative to *brake*).
+    Negative *push* pulls back toward brake (LESS lean). ``push == 0``
+    is a no-op. If *goal* is exactly at *brake* there's no defined
+    "away" direction so we return *goal* unchanged regardless of
+    *push*.
+
+    Used by:
+    - the forward straight branch (always positive
+      ``_STRAIGHT_FWD_EXTRA_TICKS``, "more forward lean"),
+    - the turn pivot helper (positive ``turn_push_ticks`` /
+      ``_TURN_PIVOT_GOAL_OFFSET_TICKS``),
+    - the backward straight branch (signed per-side
+      ``_STRAIGHT_BACK_{LEFT,RIGHT}_TICKS_OFFSET`` — operator can
+      either reinforce the calibrated lean (positive) or trim it back
+      toward neutral (negative) without re-tuning ``backward_pos_*``).
+    """
+    if push == 0:
         return goal
     if goal > brake:
         return goal + push
@@ -314,32 +332,34 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
-# Per-side signed raw tick offsets added to the calibrated
-# ``backward_pos_*`` for straight BACK only. Unlike the forward
-# branch's :func:`_nudge_goal_from_brake` (which always pushes
-# *further from brake*), backward needs SIGNED offsets to compensate
-# for the field-observed BLDC-side wheel asymmetry on the reference
-# build: at the bare calibrated lean, the right wheel was running
-# faster than the left and yawing the chassis. The fix is to give
-# the slower (left) wheel slightly *more* lean and the faster (right)
-# wheel slightly *less* lean — which requires asymmetric, signed
-# per-motor offsets, not a single "extra push" magnitude.
+# Per-side SIGNED nudge magnitudes for the straight BACK leg, applied
+# via :func:`_nudge_goal_from_brake` (same mechanism the forward branch
+# uses, just with independent per-side magnitudes). Positive value =
+# MORE backward lean for that side; negative = LESS lean (pulled
+# toward brake). This direction-of-lean-aware nudge is required
+# because ``backward_pos_left`` and ``backward_pos_right`` can sit on
+# OPPOSITE sides of brake on the same chassis — a raw integer
+# ``goal + offset`` would push one side's lean further out and the
+# other side's lean closer to neutral for the SAME positive offset,
+# which is exactly the bug that produced the "motor 12 leans, motor 13
+# doesn't get pushed, chassis spins" symptom in the field.
 #
 # Concretely on the reference chassis (``backward_pos_left=2068``,
 # ``backward_pos_right=2028``, ``brake=2048``):
-# - Motor 12 (left) gets ``+7`` → 2075 (further above brake = more
-#   left-side backward lean).
-# - Motor 13 (right) gets ``+8`` → 2036 (CLOSER to brake = less
-#   right-side backward lean).
-# That's the asymmetric trim the operator dialed in to make backward
-# drive in a straight line on this chassis (iterated from initial +2 /
-# +3 in 5-tick bumps as the bench tuning converged).
+# - Motor 12 (left, ABOVE brake) with offset +7 → 2068 + 7 = 2075
+#   (further above brake = more left-side backward lean).
+# - Motor 13 (right, BELOW brake) with offset +8 → 2028 - 8 = 2020
+#   (further below brake = more right-side backward lean).
+# Both motors get MORE lean. The 1-tick asymmetry between the two
+# sides (R nudge magnitude > L by 1) biases against the observed
+# BLDC wheel asymmetry.
 #
 # Operators can re-tune per-bot via
 # ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
 # ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed, clamped to
 # ``[-50, 50]``). Setting both to 0 reverts to the bare calibrated
-# lean.
+# lean; negative values trim the calibrated lean closer to neutral
+# without re-tuning ``backward_pos_*`` itself.
 _STRAIGHT_BACK_LEFT_TICKS_OFFSET = 7
 _STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 8
 
@@ -3743,20 +3763,30 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            # Per-side SIGNED raw tick offsets — see the
+            # Per-side SIGNED nudges away from brake (see the
             # :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET` block for the
-            # wheel-asymmetry rationale. The offsets are added
-            # straight onto the calibrated backward goals (NOT pushed
-            # away from brake like the forward branch does) so the
-            # operator can independently trim each motor by a small
-            # signed amount to compensate for asymmetric BLDC response.
+            # wheel-asymmetry rationale). Positive = MORE backward
+            # lean for that side regardless of whether the calibrated
+            # ``backward_pos_*`` sits above or below brake; negative
+            # = LESS lean (pulled toward brake). This is the same
+            # nudge mechanism the forward branch uses, just with
+            # independent per-side magnitudes so the operator can
+            # bias against BLDC wheel asymmetry. (The earlier raw
+            # ``goal + offset`` model was a bug: on a chassis where
+            # ``backward_pos_right < brake`` it produced LESS lean
+            # for a positive offset, leaving one wheel un-pushed and
+            # spinning the chassis on the other wheel only.)
             bl_offset = _straight_back_left_ticks_offset()
             br_offset = _straight_back_right_ticks_offset()
             bl = self._dxl._clamp_pos(
-                int(self._axis.backward_pos_left) + bl_offset
+                _nudge_goal_from_brake(
+                    int(self._axis.backward_pos_left), nl, bl_offset
+                )
             )
             br = self._dxl._clamp_pos(
-                int(self._axis.backward_pos_right) + br_offset
+                _nudge_goal_from_brake(
+                    int(self._axis.backward_pos_right), nr, br_offset
+                )
             )
             return {self._left_id: bl, self._right_id: br}
 
