@@ -1355,14 +1355,14 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # _axis_pulse_fast backward_pos_* = 2000 each, nudged
-    # ``_STRAIGHT_BACK_EXTRA_TICKS`` (default 2) past the brake pose
-    # (2048) → 1998 each. The default got dialed back from 5 → 2 after
-    # field-observed wheel asymmetry caused a runaway spin at +5 on
-    # the reference chassis; the env var
-    # ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` is now the tunable
-    # surface.
-    rev = {12: 1998, 13: 1998}
+    # Default ``_STRAIGHT_BACK_EXTRA_TICKS=0`` (no nudge), so the loop
+    # commands the bare ``backward_pos_*`` (2000 each from
+    # ``_axis_pulse_fast``). Field-observed wheel asymmetry caused a
+    # runaway spin at the +5 tick push; the default got dialed back to
+    # 0 so the conservative baseline matches the operator-tuned
+    # ``backward_pos_*`` exactly. Operators whose chassis needs extra
+    # push opt in via ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS``.
+    rev = {12: 2000, 13: 2000}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1561,67 +1561,44 @@ def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
     )
 
 
-def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
-    """Backward straight legs must drive past the raw ``backward_pos_*``
-    by exactly :func:`_straight_back_extra_ticks` ticks in the
-    away-from-brake direction.
+def test_backward_loop_default_uses_bare_calibrated_lean_no_nudge() -> None:
+    """With the default ``_STRAIGHT_BACK_EXTRA_TICKS=0``, the backward
+    loop must command the bare ``backward_pos_*`` — no nudge — so the
+    operator's calibrated lean magnitude is preserved exactly.
 
-    The field-observed failure mode: at the bare calibrated
-    ``backward_pos_*`` the MX-28 lean stack visibly torques the chassis
-    but doesn't break it loose into rolling (pre-rolling stiction
-    wins). This nudge mirrors the forward path's
-    ``_STRAIGHT_FWD_EXTRA_TICKS`` pattern; the magnitude (2 by default)
-    is smaller than forward's 14 because the reference build's
-    backward lean sits closer to both the chassis travel limit AND the
-    BLDC-side wheel asymmetry breakaway point (operator-confirmed: 5
-    ticks caused a runaway spin, 2 ticks does not).
+    Operators whose chassis needs extra push opt in via
+    ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` (covered by the dedicated
+    override test below). This test locks the conservative default:
+    "obey the calibrated tune, don't push past it."
     """
     axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
 
+    os.environ.pop("NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS", None)
     with patch.dict(os.environ, _fast_straight_env(), clear=False):
         hb.start_pulse_straight_backward(50)
         time.sleep(0.30)
         hb.stop()
     _wait_until_idle(hb)
 
-    # backward_pos_left=2000 < brake (2048) → nudge subtracts 2.
-    # _nudge_goal_from_brake(2000, 2048, 2) = 2000 - 2 = 1998.
-    expected_l = _nudge_goal_from_brake(
-        int(axis.backward_pos_left), int(axis.brake_pos_left),
-        _STRAIGHT_BACK_EXTRA_TICKS,
-    )
-    expected_r = _nudge_goal_from_brake(
-        int(axis.backward_pos_right), int(axis.brake_pos_right),
-        _STRAIGHT_BACK_EXTRA_TICKS,
-    )
-    assert expected_l == 1998, expected_l
-    assert expected_r == 1998, expected_r
-
-    expected = {12: expected_l, 13: expected_r}
-    raw = {12: int(axis.backward_pos_left), 13: int(axis.backward_pos_right)}
-    saw_nudged = any(g == expected for g in dxl.goal_writes)
-    saw_raw = any(g == raw for g in dxl.goal_writes)
-    assert saw_nudged, (
-        f"backward loop must apply the {_STRAIGHT_BACK_EXTRA_TICKS}-tick "
-        f"nudge ({expected}); writes={dxl.goal_writes}"
-    )
-    assert not saw_raw, (
-        f"backward loop must NOT command the bare backward_pos_* "
-        f"({raw}) — the nudge is mandatory; writes={dxl.goal_writes}"
+    bare = {12: int(axis.backward_pos_left), 13: int(axis.backward_pos_right)}
+    saw_bare = any(g == bare for g in dxl.goal_writes)
+    assert saw_bare, (
+        f"with default nudge=0 the backward loop must command the "
+        f"bare backward_pos_* ({bare}); writes={dxl.goal_writes}"
     )
 
 
-def test_straight_back_extra_ticks_default_is_two() -> None:
-    """Lock the default magnitude — two raw ticks of extra push past
-    the calibrated backward lean. Dialed back from 5 after the
-    field-observed runaway-spin at higher pushes on the reference
-    chassis. If a different chassis needs more, use the
-    ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` env override rather than
-    edit this constant.
+def test_straight_back_extra_ticks_default_is_zero() -> None:
+    """Lock the conservative default — no nudge past the calibrated
+    backward lean. Dialed back from 5 → 2 → 0 after the field-observed
+    runaway-spin (5 spun out; 2 still surfaced asymmetry). Operators
+    whose chassis needs extra push set the env override; editing this
+    constant should be a deliberate fleet-wide decision, not a chassis-
+    specific tune.
     """
-    assert _STRAIGHT_BACK_EXTRA_TICKS == 2
+    assert _STRAIGHT_BACK_EXTRA_TICKS == 0
 
 
 def test_back_extra_ticks_smaller_than_forward_extra_ticks() -> None:
@@ -1630,10 +1607,11 @@ def test_back_extra_ticks_smaller_than_forward_extra_ticks() -> None:
 
     Forward's calibrated lean sits ~50 ticks short of the lean stack
     limit on the reference build, so 14 extra ticks is safe. Backward's
-    calibrated lean sits much closer to the limit AND past it the BLDC
-    motors' asymmetry breakaway threshold gets crossed; only 2 ticks
-    of headroom is available on the reference build before either
-    failure mode kicks in.
+    calibrated lean is more constrained — both because it sits closer
+    to the lean stack limit AND because past it the BLDC motors'
+    asymmetry breakaway threshold gets crossed. Default backward push
+    is 0 to leave the calibrated tune alone; even with the env
+    override the operator should keep it small.
     """
     assert _STRAIGHT_BACK_EXTRA_TICKS < _STRAIGHT_FWD_EXTRA_TICKS
 
@@ -1644,12 +1622,12 @@ def test_straight_back_extra_ticks_env_override_honored() -> None:
     """
     from nina.controllers.hoverboard_axis_drive import _straight_back_extra_ticks
 
-    # Default (unset) = the documented module-level constant.
+    # Default (unset) = the documented module-level constant (0).
     os.environ.pop("NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS", None)
     assert _straight_back_extra_ticks() == _STRAIGHT_BACK_EXTRA_TICKS
 
-    # Override to 0 (operator wants to revert to bare calibrated lean
-    # — useful for diagnosing whether the chassis can move at all).
+    # Explicit ``=0`` matches the default (operator can be explicit
+    # in their service env without changing behavior).
     with patch.dict(
         os.environ,
         {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "0"},
@@ -1657,7 +1635,8 @@ def test_straight_back_extra_ticks_env_override_honored() -> None:
     ):
         assert _straight_back_extra_ticks() == 0
 
-    # Override to a custom mid-value.
+    # Override to a nonzero mid-value (the operator's "my chassis
+    # can't break stiction at calibration" dial).
     with patch.dict(
         os.environ,
         {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "4"},
@@ -1696,21 +1675,28 @@ def test_backward_loop_honors_back_extra_ticks_env_override() -> None:
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
 
-    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "0"}
+    # Operator opts in to a 3-tick nudge — backward_pos_left=2000 <
+    # brake=2048, so the nudge subtracts → 1997 on both sides.
+    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "3"}
     with patch.dict(os.environ, env, clear=False):
         hb.start_pulse_straight_backward(50)
         time.sleep(0.30)
         hb.stop()
     _wait_until_idle(hb)
 
-    # With push=0, the loop must command the bare calibrated lean (no
-    # nudge). This is the "is my chassis stuck?" diagnostic mode.
+    nudged = {12: 1997, 13: 1997}
+    saw_nudged = any(g == nudged for g in dxl.goal_writes)
+    assert saw_nudged, (
+        f"with NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS=3 the loop must "
+        f"command the 3-tick-nudged backward goals ({nudged}); writes="
+        f"{dxl.goal_writes}"
+    )
     bare = {12: 2000, 13: 2000}
     saw_bare = any(g == bare for g in dxl.goal_writes)
-    assert saw_bare, (
-        f"with NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS=0 the loop must "
-        f"command the bare backward_pos_* ({bare}); writes="
-        f"{dxl.goal_writes}"
+    assert not saw_bare, (
+        f"with a nonzero nudge the loop must NOT also command the "
+        f"bare backward_pos_* ({bare}) — every backward write is the "
+        f"nudged value; writes={dxl.goal_writes}"
     )
 
 
@@ -1731,11 +1717,12 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    # backward_pos_* (2000) nudged ``_STRAIGHT_BACK_EXTRA_TICKS`` (default
-    # 2) past brake (2048) → 1998. Same nudge as the drift-corrected
-    # loop, so the disabled-pulse fallback and the live backward loop
-    # apply the same lean magnitude.
-    assert dxl.goal_writes[-1] == {12: 1998, 13: 1998}
+    # Default ``_STRAIGHT_BACK_EXTRA_TICKS=0`` (no nudge) → bare
+    # calibrated ``backward_pos_*`` (2000). The disabled-pulse fallback
+    # and the live backward loop share the same nudge mechanism, so
+    # both apply the same lean magnitude regardless of the operator's
+    # ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` choice.
+    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
 
 
 # ---------------------------------------------------------------------------

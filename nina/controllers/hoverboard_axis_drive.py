@@ -315,22 +315,29 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
 # Default extra raw ticks past calibrated ``backward_pos_*`` toward drive
-# (symmetric straight BACK only). Smaller than ``_STRAIGHT_FWD_EXTRA_TICKS``
-# because the calibrated ``backward_pos_*`` already sits closer to the
-# chassis travel limit on the reference build, AND because field-observed
-# wheel asymmetry on the BLDC side means a too-aggressive backward push
-# breaks the lower-stiction wheel loose first and the chassis yaws into a
-# runaway spin (operator-confirmed at 5 ticks: chassis spun out and only
-# stopped via the 90° abort). Two ticks is the smallest push that's still
-# nudge-shaped (not a no-op clamp) — operator can dial in via the
-# :func:`_straight_back_extra_ticks` env override below if 2 still
-# over-pushes or fails to break stiction on a given chassis.
+# (symmetric straight BACK only). Asymmetric vs forward
+# (``_STRAIGHT_FWD_EXTRA_TICKS=14``) because field-observed wheel
+# asymmetry on the BLDC side means a too-aggressive backward push
+# breaks the lower-stiction wheel loose first and the chassis yaws into
+# a runaway spin (operator-confirmed: 5 ticks spun the chassis out and
+# only stopped via the 90° abort; 2 ticks was still surfacing the
+# asymmetry on the reference build). Default **0** = "use the bare
+# calibrated ``backward_pos_*`` lean as the operator tuned it" —
+# matches the conservative default we shipped before this knob was
+# introduced and gives the cleanest baseline for chassis-asymmetry
+# diagnostics.
 #
-# Mirrors the forward branch's nudge philosophy — added by
+# Operators whose chassis genuinely needs extra push past calibration
+# to break stiction can bump the value via the
+# :func:`_straight_back_extra_ticks` env override below — that's the
+# operator-facing tunable surface. (Re-tuning ``backward_pos_*`` itself
+# is usually a better answer than cranking this constant.)
+#
+# Mirrors the forward branch's nudge mechanism — added by
 # :func:`_nudge_goal_from_brake` in the BACK direction, not blindly
 # subtracted, so chassis with ``backward_pos_* > brake_pos_*`` get the
-# correct sign.
-_STRAIGHT_BACK_EXTRA_TICKS = 2
+# correct sign when the operator does opt in to a nonzero nudge.
+_STRAIGHT_BACK_EXTRA_TICKS = 0
 
 
 def _straight_back_extra_ticks() -> int:
@@ -339,11 +346,12 @@ def _straight_back_extra_ticks() -> int:
     Returns the per-side nudge magnitude that the backward branch of
     :meth:`HoverboardAxisDrive._goals_for_wheels` adds via
     :func:`_nudge_goal_from_brake`. Default
-    :data:`_STRAIGHT_BACK_EXTRA_TICKS` (2). Clamped to ``[0, 50]`` so
-    operators can experimentally zero out the nudge (=0 reproduces the
-    bare-calibrated-lean behavior the chassis exhibited before this knob
-    was wired in) or bump it up (e.g. =4) if 2 doesn't break stiction —
-    without recompiling or shipping a new build.
+    :data:`_STRAIGHT_BACK_EXTRA_TICKS` (0 — no nudge, bare calibrated
+    lean). Clamped to ``[0, 50]`` so operators can bump it up (e.g.
+    ``=2`` or ``=4``) if the chassis can't break stiction at the
+    calibrated lean — without recompiling or shipping a new build.
+    Setting back to ``=0`` (or unset) restores the conservative
+    default.
     """
     try:
         return max(
