@@ -314,60 +314,86 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
-# Default extra raw ticks past calibrated ``backward_pos_*`` toward drive
-# (symmetric straight BACK only). Asymmetric vs forward
-# (``_STRAIGHT_FWD_EXTRA_TICKS=14``) because field-observed wheel
-# asymmetry on the BLDC side means a too-aggressive backward push
-# breaks the lower-stiction wheel loose first and the chassis yaws into
-# a runaway spin (operator-confirmed: 5 ticks spun the chassis out and
-# only stopped via the 90° abort; 2 ticks was still surfacing the
-# asymmetry on the reference build). Default **0** = "use the bare
-# calibrated ``backward_pos_*`` lean as the operator tuned it" —
-# matches the conservative default we shipped before this knob was
-# introduced and gives the cleanest baseline for chassis-asymmetry
-# diagnostics.
+# Per-side signed raw tick offsets added to the calibrated
+# ``backward_pos_*`` for straight BACK only. Unlike the forward
+# branch's :func:`_nudge_goal_from_brake` (which always pushes
+# *further from brake*), backward needs SIGNED offsets to compensate
+# for the field-observed BLDC-side wheel asymmetry on the reference
+# build: at the bare calibrated lean, the right wheel was running
+# faster than the left and yawing the chassis. The fix is to give
+# the slower (left) wheel slightly *more* lean and the faster (right)
+# wheel slightly *less* lean — which requires asymmetric, signed
+# per-motor offsets, not a single "extra push" magnitude.
 #
-# Operators whose chassis genuinely needs extra push past calibration
-# to break stiction can bump the value via the
-# :func:`_straight_back_extra_ticks` env override below — that's the
-# operator-facing tunable surface. (Re-tuning ``backward_pos_*`` itself
-# is usually a better answer than cranking this constant.)
+# Concretely on the reference chassis (``backward_pos_left=2068``,
+# ``backward_pos_right=2028``, ``brake=2048``):
+# - Motor 12 (left) gets ``+2`` → 2070 (further above brake = more
+#   left-side backward lean).
+# - Motor 13 (right) gets ``+3`` → 2031 (CLOSER to brake = less
+#   right-side backward lean).
+# That's the asymmetric trim the operator dialed in to make backward
+# drive in a straight line on this chassis.
 #
-# Mirrors the forward branch's nudge mechanism — added by
-# :func:`_nudge_goal_from_brake` in the BACK direction, not blindly
-# subtracted, so chassis with ``backward_pos_* > brake_pos_*`` get the
-# correct sign when the operator does opt in to a nonzero nudge.
-_STRAIGHT_BACK_EXTRA_TICKS = 0
+# Operators can re-tune per-bot via
+# ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
+# ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed, clamped to
+# ``[-50, 50]``). Setting both to 0 reverts to the bare calibrated
+# lean.
+_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 2
+_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 3
 
 
-def _straight_back_extra_ticks() -> int:
-    """Tunable backward-push override (``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS``).
+def _straight_back_left_ticks_offset() -> int:
+    """Signed raw tick offset added to ``backward_pos_left`` for the
+    straight BACK leg (env: ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET``,
+    default :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET`).
 
-    Returns the per-side nudge magnitude that the backward branch of
-    :meth:`HoverboardAxisDrive._goals_for_wheels` adds via
-    :func:`_nudge_goal_from_brake`. Default
-    :data:`_STRAIGHT_BACK_EXTRA_TICKS` (0 — no nudge, bare calibrated
-    lean). Clamped to ``[0, 50]`` so operators can bump it up (e.g.
-    ``=2`` or ``=4``) if the chassis can't break stiction at the
-    calibrated lean — without recompiling or shipping a new build.
-    Setting back to ``=0`` (or unset) restores the conservative
-    default.
+    Clamped to ``[-50, 50]`` so a typo can't drive the lean stack into
+    a saturated corner. Garbage falls back to the documented default.
+    See the module-level comment near
+    :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET` for the wheel-asymmetry
+    rationale.
     """
     try:
         return max(
-            0,
+            -50,
             min(
                 50,
                 int(
                     os.environ.get(
-                        "NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS",
-                        str(_STRAIGHT_BACK_EXTRA_TICKS),
+                        "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET",
+                        str(_STRAIGHT_BACK_LEFT_TICKS_OFFSET),
                     )
                 ),
             ),
         )
     except ValueError:
-        return _STRAIGHT_BACK_EXTRA_TICKS
+        return _STRAIGHT_BACK_LEFT_TICKS_OFFSET
+
+
+def _straight_back_right_ticks_offset() -> int:
+    """Signed raw tick offset added to ``backward_pos_right`` for the
+    straight BACK leg (env: ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET``,
+    default :data:`_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`).
+
+    Clamped to ``[-50, 50]``. See the per-side asymmetric-trim notes
+    near :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET`.
+    """
+    try:
+        return max(
+            -50,
+            min(
+                50,
+                int(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET",
+                        str(_STRAIGHT_BACK_RIGHT_TICKS_OFFSET),
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return _STRAIGHT_BACK_RIGHT_TICKS_OFFSET
 
 # Pivot only (L/R yaw): extra nudge away from each side's brake (after
 # ``turn_push_ticks``). Must use directional nudge — a raw +Δ on both goals
@@ -901,19 +927,16 @@ def _straight_back_leg_sec() -> float:
     """Backward-leg duration (seconds) between brake + drift-check pauses.
 
     Mirror of :func:`_straight_leg_sec` but scoped to *backward*
-    motion. Default **1.0 s** vs forward's 0.5 s — backward needs a
-    longer leg because the chassis covers less ground per second at
-    the same lean magnitude (BLDC-side mechanical asymmetry on the
-    reference build) and the operator wants a perceptible amount of
-    travel between standstill drift checks. Each press of Straight
-    back / D-pad reverse drives at the bare calibrated backward lean
-    for this duration, brakes, samples drift, optionally corrects,
-    and repeats.
+    motion. Default **0.5 s** (matches forward) — once the per-side
+    asymmetric trim
+    (:func:`_straight_back_left_ticks_offset` /
+    :func:`_straight_back_right_ticks_offset`) compensates for the
+    BLDC-side wheel asymmetry, backward travels at a similar
+    rate to forward and there's no reason to make legs longer.
 
-    Independent of :func:`_straight_leg_sec` — the forward path is
-    unaffected by overrides here and vice versa. Clamped to
-    ``[0.1, 5.0]``. Override with
-    ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC=<seconds>``.
+    Independent of :func:`_straight_leg_sec` — overriding one direction
+    must not bleed into the other. Clamped to ``[0.1, 5.0]``. Override
+    with ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC=<seconds>``.
     """
     try:
         return max(
@@ -921,12 +944,12 @@ def _straight_back_leg_sec() -> float:
             min(
                 5.0,
                 float(
-                    os.environ.get("NINA_HOVER_STRAIGHT_BACK_LEG_SEC", "1.0")
+                    os.environ.get("NINA_HOVER_STRAIGHT_BACK_LEG_SEC", "0.5")
                 ),
             ),
         )
     except ValueError:
-        return 1.0
+        return 0.5
 
 
 def _straight_brake_settle_sec() -> float:
@@ -2672,14 +2695,18 @@ class HoverboardAxisDrive:
         the forward path; a handful are direction-specific:
 
         - Leg duration: ``NINA_HOVER_STRAIGHT_BACK_LEG_SEC`` (default
-          1.0 s; forward is ``NINA_HOVER_STRAIGHT_LEG_SEC=0.5 s``).
+          0.5 s; independent from forward's
+          ``NINA_HOVER_STRAIGHT_LEG_SEC``).
         - Correction step caps: ``NINA_HOVER_STRAIGHT_CORR_BACK_STEP_*``
           (softer defaults for the chassis-asymmetric backward
           pre-pivot momentum profile).
-        - Extra push past calibration:
-          ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` (default 0; opt-in
-          if the chassis can't break stiction at the bare calibrated
-          lean).
+        - Per-side asymmetric trim:
+          ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` /
+          ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`` (signed raw
+          tick offsets added to the calibrated ``backward_pos_*``;
+          defaults +2 / +3 on the reference build to compensate for
+          BLDC wheel asymmetry that yawed the chassis at the bare
+          calibrated lean).
 
         1. Prime the lean stack at neutral
            (``NINA_HOVER_STRAIGHT_PRIME_POS``).
@@ -3715,20 +3742,20 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            back_push = _straight_back_extra_ticks()
+            # Per-side SIGNED raw tick offsets — see the
+            # :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET` block for the
+            # wheel-asymmetry rationale. The offsets are added
+            # straight onto the calibrated backward goals (NOT pushed
+            # away from brake like the forward branch does) so the
+            # operator can independently trim each motor by a small
+            # signed amount to compensate for asymmetric BLDC response.
+            bl_offset = _straight_back_left_ticks_offset()
+            br_offset = _straight_back_right_ticks_offset()
             bl = self._dxl._clamp_pos(
-                _nudge_goal_from_brake(
-                    int(self._axis.backward_pos_left),
-                    nl,
-                    back_push,
-                )
+                int(self._axis.backward_pos_left) + bl_offset
             )
             br = self._dxl._clamp_pos(
-                _nudge_goal_from_brake(
-                    int(self._axis.backward_pos_right),
-                    nr,
-                    back_push,
-                )
+                int(self._axis.backward_pos_right) + br_offset
             )
             return {self._left_id: bl, self._right_id: br}
 

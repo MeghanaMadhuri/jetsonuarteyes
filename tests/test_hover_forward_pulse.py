@@ -23,11 +23,14 @@ from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
-    _STRAIGHT_BACK_EXTRA_TICKS,
+    _STRAIGHT_BACK_LEFT_TICKS_OFFSET,
+    _STRAIGHT_BACK_RIGHT_TICKS_OFFSET,
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
     _straight_abort_drift_deg,
+    _straight_back_left_ticks_offset,
     _straight_back_leg_sec,
+    _straight_back_right_ticks_offset,
     _straight_brake_settle_sec,
     _straight_corr_back_step_dur_cap_sec,
     _straight_corr_back_step_min_sec,
@@ -208,6 +211,8 @@ def _wait_until_idle(hb: HoverboardAxisDrive, timeout_sec: float = 5.0) -> None:
 _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_LEG_SEC",
     "NINA_HOVER_STRAIGHT_BACK_LEG_SEC",
+    "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET",
+    "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET",
     "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC",
     "NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG",
     "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT",
@@ -236,9 +241,11 @@ def test_straight_env_getter_defaults() -> None:
         for k in _STRAIGHT_ENV_KEYS:
             os.environ.pop(k, None)
         assert _straight_leg_sec() == 0.5
-        # Backward leg is intentionally longer than forward — the
-        # chassis travels less per second backward at the same lean.
-        assert _straight_back_leg_sec() == 1.0
+        # Backward leg matches forward (0.5 s) — the per-side asymmetric
+        # trim ``_STRAIGHT_BACK_{LEFT,RIGHT}_TICKS_OFFSET`` does the
+        # heavy lifting of compensating for BLDC wheel asymmetry, so
+        # backward no longer needs a longer leg to feel responsive.
+        assert _straight_back_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
         assert _straight_corr_blend_pct() == 60
@@ -321,15 +328,14 @@ def test_straight_corr_back_step_dur_garbage_falls_back_to_default() -> None:
         assert _straight_corr_back_step_min_sec() == 0.015
 
 
-def test_straight_back_leg_sec_default_is_one_second() -> None:
-    """Backward leg default is 1.0 s vs forward's 0.5 s. Operators
-    want a perceptible amount of backward travel between standstill
-    drift samples on the reference build (backward
-    travel-per-second is lower than forward at the same lean
-    magnitude).
+def test_straight_back_leg_sec_default_matches_forward() -> None:
+    """Backward leg default is 0.5 s — same as forward. The
+    per-side asymmetric trim does the compensation for BLDC wheel
+    imbalance, so backward no longer needs a longer leg to feel
+    responsive between drift checks.
     """
     os.environ.pop("NINA_HOVER_STRAIGHT_BACK_LEG_SEC", None)
-    assert _straight_back_leg_sec() == 1.0
+    assert _straight_back_leg_sec() == 0.5
 
 
 def test_straight_back_leg_sec_override_clamps_and_fallback() -> None:
@@ -359,7 +365,7 @@ def test_straight_back_leg_sec_override_clamps_and_fallback() -> None:
         {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "garbage"},
         clear=False,
     ):
-        assert _straight_back_leg_sec() == 1.0
+        assert _straight_back_leg_sec() == 0.5
 
 
 def test_straight_back_leg_sec_independent_from_forward() -> None:
@@ -377,13 +383,13 @@ def test_straight_back_leg_sec_independent_from_forward() -> None:
         clear=False,
     ):
         assert _straight_leg_sec() == 0.25
-        assert _straight_back_leg_sec() == 1.0  # untouched
+        assert _straight_back_leg_sec() == 0.5  # default, untouched
     with patch.dict(
         os.environ,
         {"NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "2.0"},
         clear=False,
     ):
-        assert _straight_leg_sec() == 0.5  # untouched
+        assert _straight_leg_sec() == 0.5  # default, untouched
         assert _straight_back_leg_sec() == 2.0
 
 
@@ -1502,14 +1508,11 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # Default ``_STRAIGHT_BACK_EXTRA_TICKS=0`` (no nudge), so the loop
-    # commands the bare ``backward_pos_*`` (2000 each from
-    # ``_axis_pulse_fast``). Field-observed wheel asymmetry caused a
-    # runaway spin at the +5 tick push; the default got dialed back to
-    # 0 so the conservative baseline matches the operator-tuned
-    # ``backward_pos_*`` exactly. Operators whose chassis needs extra
-    # push opt in via ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS``.
-    rev = {12: 2000, 13: 2000}
+    # Per-side asymmetric trim defaults: backward_pos_* (2000 each)
+    # + LEFT offset (+2) → 2002 on motor 12, + RIGHT offset (+3) →
+    # 2003 on motor 13. These trims compensate for the BLDC wheel
+    # asymmetry the operator observed at the bare calibrated lean.
+    rev = {12: 2002, 13: 2003}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1708,142 +1711,164 @@ def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
     )
 
 
-def test_backward_loop_default_uses_bare_calibrated_lean_no_nudge() -> None:
-    """With the default ``_STRAIGHT_BACK_EXTRA_TICKS=0``, the backward
-    loop must command the bare ``backward_pos_*`` — no nudge — so the
-    operator's calibrated lean magnitude is preserved exactly.
-
-    Operators whose chassis needs extra push opt in via
-    ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` (covered by the dedicated
-    override test below). This test locks the conservative default:
-    "obey the calibrated tune, don't push past it."
+def test_backward_loop_default_applies_per_side_asymmetric_trim() -> None:
+    """Backward loop must add the per-side signed offsets
+    (:data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET` for motor 12,
+    :data:`_STRAIGHT_BACK_RIGHT_TICKS_OFFSET` for motor 13) directly
+    onto the calibrated ``backward_pos_*`` — not the brake-relative
+    nudge the forward path uses. This is the asymmetric BLDC-wheel
+    compensation the operator dialed in on the reference build.
     """
     axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
 
-    os.environ.pop("NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS", None)
+    for k in (
+        "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET",
+        "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET",
+    ):
+        os.environ.pop(k, None)
     with patch.dict(os.environ, _fast_straight_env(), clear=False):
         hb.start_pulse_straight_backward(50)
         time.sleep(0.30)
         hb.stop()
     _wait_until_idle(hb)
 
-    bare = {12: int(axis.backward_pos_left), 13: int(axis.backward_pos_right)}
-    saw_bare = any(g == bare for g in dxl.goal_writes)
-    assert saw_bare, (
-        f"with default nudge=0 the backward loop must command the "
-        f"bare backward_pos_* ({bare}); writes={dxl.goal_writes}"
+    expected = {
+        12: int(axis.backward_pos_left) + _STRAIGHT_BACK_LEFT_TICKS_OFFSET,
+        13: int(axis.backward_pos_right) + _STRAIGHT_BACK_RIGHT_TICKS_OFFSET,
+    }
+    # Fast-fixture chassis: 2000 + 2 = 2002, 2000 + 3 = 2003.
+    assert expected == {12: 2002, 13: 2003}, expected
+    saw_expected = any(g == expected for g in dxl.goal_writes)
+    assert saw_expected, (
+        f"backward loop must apply per-side offsets ({expected}); "
+        f"writes={dxl.goal_writes}"
     )
 
 
-def test_straight_back_extra_ticks_default_is_zero() -> None:
-    """Lock the conservative default — no nudge past the calibrated
-    backward lean. Dialed back from 5 → 2 → 0 after the field-observed
-    runaway-spin (5 spun out; 2 still surfaced asymmetry). Operators
-    whose chassis needs extra push set the env override; editing this
-    constant should be a deliberate fleet-wide decision, not a chassis-
-    specific tune.
+def test_straight_back_left_ticks_offset_default_is_two() -> None:
+    """Lock the left-side default — +2 ticks added raw to
+    ``backward_pos_left``. Dialed in to compensate for the LEFT wheel
+    running slower than RIGHT on the reference chassis.
     """
-    assert _STRAIGHT_BACK_EXTRA_TICKS == 0
+    assert _STRAIGHT_BACK_LEFT_TICKS_OFFSET == 2
 
 
-def test_back_extra_ticks_smaller_than_forward_extra_ticks() -> None:
-    """Backward nudge default is intentionally smaller than the
-    forward nudge.
-
-    Forward's calibrated lean sits ~50 ticks short of the lean stack
-    limit on the reference build, so 14 extra ticks is safe. Backward's
-    calibrated lean is more constrained — both because it sits closer
-    to the lean stack limit AND because past it the BLDC motors'
-    asymmetry breakaway threshold gets crossed. Default backward push
-    is 0 to leave the calibrated tune alone; even with the env
-    override the operator should keep it small.
+def test_straight_back_right_ticks_offset_default_is_three() -> None:
+    """Lock the right-side default — +3 ticks added raw to
+    ``backward_pos_right``. Asymmetric vs the LEFT-side +2 specifically
+    to bias against the BLDC-side wheel asymmetry the operator
+    observed; on a different chassis these may need to differ in
+    magnitude AND in sign.
     """
-    assert _STRAIGHT_BACK_EXTRA_TICKS < _STRAIGHT_FWD_EXTRA_TICKS
+    assert _STRAIGHT_BACK_RIGHT_TICKS_OFFSET == 3
 
 
-def test_straight_back_extra_ticks_env_override_honored() -> None:
-    """Env override ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` lets the
-    operator dial the nudge without rebuilding. Clamps to ``[0, 50]``.
+def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
+    """Env overrides ``NINA_HOVER_STRAIGHT_BACK_{LEFT,RIGHT}_TICKS_OFFSET``
+    let the operator dial each side independently without rebuilding.
+    Signed, clamped to ``[-50, 50]``, garbage falls back to defaults.
     """
-    from nina.controllers.hoverboard_axis_drive import _straight_back_extra_ticks
+    for k in (
+        "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET",
+        "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET",
+    ):
+        os.environ.pop(k, None)
+    # Default (unset) → documented constants.
+    assert _straight_back_left_ticks_offset() == _STRAIGHT_BACK_LEFT_TICKS_OFFSET
+    assert _straight_back_right_ticks_offset() == _STRAIGHT_BACK_RIGHT_TICKS_OFFSET
 
-    # Default (unset) = the documented module-level constant (0).
-    os.environ.pop("NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS", None)
-    assert _straight_back_extra_ticks() == _STRAIGHT_BACK_EXTRA_TICKS
-
-    # Explicit ``=0`` matches the default (operator can be explicit
-    # in their service env without changing behavior).
+    # Negative offset (operator wants to REDUCE lean on a particular
+    # motor that's running too fast).
     with patch.dict(
         os.environ,
-        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "0"},
+        {
+            "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET": "-4",
+            "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET": "5",
+        },
         clear=False,
     ):
-        assert _straight_back_extra_ticks() == 0
+        assert _straight_back_left_ticks_offset() == -4
+        assert _straight_back_right_ticks_offset() == 5
 
-    # Override to a nonzero mid-value (the operator's "my chassis
-    # can't break stiction at calibration" dial).
+    # Out-of-range clamps to [-50, 50].
     with patch.dict(
         os.environ,
-        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "4"},
+        {
+            "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET": "999",
+            "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET": "-999",
+        },
         clear=False,
     ):
-        assert _straight_back_extra_ticks() == 4
+        assert _straight_back_left_ticks_offset() == 50
+        assert _straight_back_right_ticks_offset() == -50
 
-    # Out-of-range clamps to [0, 50].
+    # Garbage falls back to documented defaults independently per side.
     with patch.dict(
         os.environ,
-        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "999"},
+        {
+            "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET": "garbage",
+            "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET": "also-garbage",
+        },
         clear=False,
     ):
-        assert _straight_back_extra_ticks() == 50
+        assert _straight_back_left_ticks_offset() == _STRAIGHT_BACK_LEFT_TICKS_OFFSET
+        assert _straight_back_right_ticks_offset() == _STRAIGHT_BACK_RIGHT_TICKS_OFFSET
+
+
+def test_straight_back_ticks_offsets_per_side_independence() -> None:
+    """Setting one side must not affect the other — the per-motor
+    trim surface is the whole point of splitting from the old
+    symmetric ``_STRAIGHT_BACK_EXTRA_TICKS``.
+    """
+    for k in (
+        "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET",
+        "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET",
+    ):
+        os.environ.pop(k, None)
+    # Override only LEFT.
     with patch.dict(
         os.environ,
-        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "-5"},
+        {"NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET": "9"},
         clear=False,
     ):
-        assert _straight_back_extra_ticks() == 0
-
-    # Garbage falls back to default.
+        assert _straight_back_left_ticks_offset() == 9
+        assert _straight_back_right_ticks_offset() == _STRAIGHT_BACK_RIGHT_TICKS_OFFSET
+    # Override only RIGHT.
     with patch.dict(
         os.environ,
-        {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "garbage"},
+        {"NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET": "-7"},
         clear=False,
     ):
-        assert _straight_back_extra_ticks() == _STRAIGHT_BACK_EXTRA_TICKS
+        assert _straight_back_left_ticks_offset() == _STRAIGHT_BACK_LEFT_TICKS_OFFSET
+        assert _straight_back_right_ticks_offset() == -7
 
 
-def test_backward_loop_honors_back_extra_ticks_env_override() -> None:
-    """End-to-end: setting the env var changes the goals the backward
-    loop actually commands. Locks the operator-facing tunable surface.
+def test_backward_loop_honors_per_side_env_overrides_end_to_end() -> None:
+    """Live backward loop must reflect both env overrides in the
+    actual servo writes (operator-facing contract).
     """
     axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
 
-    # Operator opts in to a 3-tick nudge — backward_pos_left=2000 <
-    # brake=2048, so the nudge subtracts → 1997 on both sides.
-    env = _fast_straight_env() | {"NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS": "3"}
+    env = _fast_straight_env() | {
+        "NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET": "-3",
+        "NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET": "7",
+    }
     with patch.dict(os.environ, env, clear=False):
         hb.start_pulse_straight_backward(50)
         time.sleep(0.30)
         hb.stop()
     _wait_until_idle(hb)
 
-    nudged = {12: 1997, 13: 1997}
-    saw_nudged = any(g == nudged for g in dxl.goal_writes)
-    assert saw_nudged, (
-        f"with NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS=3 the loop must "
-        f"command the 3-tick-nudged backward goals ({nudged}); writes="
-        f"{dxl.goal_writes}"
-    )
-    bare = {12: 2000, 13: 2000}
-    saw_bare = any(g == bare for g in dxl.goal_writes)
-    assert not saw_bare, (
-        f"with a nonzero nudge the loop must NOT also command the "
-        f"bare backward_pos_* ({bare}) — every backward write is the "
-        f"nudged value; writes={dxl.goal_writes}"
+    # 2000 + (-3) = 1997 on left; 2000 + 7 = 2007 on right.
+    expected = {12: 1997, 13: 2007}
+    saw_expected = any(g == expected for g in dxl.goal_writes)
+    assert saw_expected, (
+        f"end-to-end per-side overrides not reflected in servo writes "
+        f"({expected}); writes={dxl.goal_writes}"
     )
 
 
@@ -1864,12 +1889,11 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    # Default ``_STRAIGHT_BACK_EXTRA_TICKS=0`` (no nudge) → bare
-    # calibrated ``backward_pos_*`` (2000). The disabled-pulse fallback
-    # and the live backward loop share the same nudge mechanism, so
-    # both apply the same lean magnitude regardless of the operator's
-    # ``NINA_HOVER_STRAIGHT_BACK_EXTRA_TICKS`` choice.
-    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
+    # Per-side asymmetric trim defaults: 2000+2 / 2000+3 = 2002 / 2003.
+    # Both the disabled-pulse ``backward()`` fallback AND the live
+    # drift-corrected loop go through the same ``_goals_for_wheels``
+    # backward branch, so both apply the same per-side trim.
+    assert dxl.goal_writes[-1] == {12: 2002, 13: 2003}
 
 
 # ---------------------------------------------------------------------------
