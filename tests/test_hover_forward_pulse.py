@@ -23,6 +23,7 @@ from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
+    _STRAIGHT_BACK_EXTRA_TICKS,
     _STRAIGHT_FWD_EXTRA_TICKS,
     _nudge_goal_from_brake,
     _straight_abort_drift_deg,
@@ -1341,7 +1342,10 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    rev = {12: 2000, 13: 2000}  # _axis_pulse_fast backward_pos_*
+    # _axis_pulse_fast backward_pos_* = 2000 each, nudged 5 ticks past
+    # the brake pose (2048) → 1995 each. The nudge is the new
+    # ``_STRAIGHT_BACK_EXTRA_TICKS`` push.
+    rev = {12: 1995, 13: 1995}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1475,6 +1479,80 @@ def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
     )
 
 
+def test_backward_loop_applies_back_extra_ticks_nudge() -> None:
+    """Backward straight legs must drive past the raw ``backward_pos_*``
+    by exactly ``_STRAIGHT_BACK_EXTRA_TICKS`` in the
+    away-from-brake direction.
+
+    The field-observed failure mode: at the bare calibrated
+    ``backward_pos_*`` the MX-28 lean stack visibly torques the chassis
+    but doesn't break it loose into rolling (pre-rolling stiction wins).
+    This nudge matches the forward path's
+    ``_STRAIGHT_FWD_EXTRA_TICKS`` pattern (forward gets 14, backward
+    gets a smaller 5 because backward's calibrated pose sits closer to
+    the chassis travel limit on the reference build) and is what the
+    operator confirmed gets the chassis moving without overshooting
+    the lean stack.
+    """
+    axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=lambda: 0.0)
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_backward(50)
+        time.sleep(0.30)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    # backward_pos_left=2000 < brake (2048) → nudge subtracts 5.
+    # _nudge_goal_from_brake(2000, 2048, 5) = 2000 - 5 = 1995.
+    expected_l = _nudge_goal_from_brake(
+        int(axis.backward_pos_left), int(axis.brake_pos_left),
+        _STRAIGHT_BACK_EXTRA_TICKS,
+    )
+    expected_r = _nudge_goal_from_brake(
+        int(axis.backward_pos_right), int(axis.brake_pos_right),
+        _STRAIGHT_BACK_EXTRA_TICKS,
+    )
+    assert expected_l == 1995, expected_l
+    assert expected_r == 1995, expected_r
+
+    expected = {12: expected_l, 13: expected_r}
+    raw = {12: int(axis.backward_pos_left), 13: int(axis.backward_pos_right)}
+    saw_nudged = any(g == expected for g in dxl.goal_writes)
+    saw_raw = any(g == raw for g in dxl.goal_writes)
+    assert saw_nudged, (
+        f"backward loop must apply the {_STRAIGHT_BACK_EXTRA_TICKS}-tick "
+        f"nudge ({expected}); writes={dxl.goal_writes}"
+    )
+    assert not saw_raw, (
+        f"backward loop must NOT command the bare backward_pos_* "
+        f"({raw}) — the nudge is mandatory; writes={dxl.goal_writes}"
+    )
+
+
+def test_straight_back_extra_ticks_default_is_five() -> None:
+    """Lock the magnitude — five raw ticks of extra push past the
+    calibrated backward lean. If a future edit needs to retune this,
+    update both the constant and this test in lockstep.
+    """
+    assert _STRAIGHT_BACK_EXTRA_TICKS == 5
+
+
+def test_back_extra_ticks_smaller_than_forward_extra_ticks() -> None:
+    """Backward nudge is intentionally smaller than the forward nudge.
+
+    Forward's calibrated lean sits ~50 ticks short of the lean stack
+    limit on the reference build, so 14 extra ticks is safe. Backward's
+    calibrated lean sits much closer to the limit on the same build, so
+    only 5 ticks of headroom is available before the lean stack would
+    saturate. If a chassis ever needs the backward push >= forward,
+    the right fix is to re-tune ``backward_pos_*``, not to crank this
+    constant.
+    """
+    assert _STRAIGHT_BACK_EXTRA_TICKS < _STRAIGHT_FWD_EXTRA_TICKS
+
+
 def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     """When ``pulse_forward_enabled`` is False, ``start_pulse_straight_backward``
     falls back to the continuous ``backward()`` set-and-hold (no drift
@@ -1492,7 +1570,11 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
+    # backward_pos_* (2000) nudged 5 ticks past brake (2048) → 1995. Same
+    # ``_STRAIGHT_BACK_EXTRA_TICKS`` nudge as the drift-corrected loop, so
+    # the disabled-pulse fallback and the live backward loop apply the
+    # same lean magnitude.
+    assert dxl.goal_writes[-1] == {12: 1995, 13: 1995}
 
 
 # ---------------------------------------------------------------------------

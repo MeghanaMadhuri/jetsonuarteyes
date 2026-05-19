@@ -314,6 +314,19 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
 
+# Extra raw ticks past calibrated ``backward_pos_*`` toward drive (symmetric
+# straight BACK only). Smaller than ``_STRAIGHT_FWD_EXTRA_TICKS`` because the
+# calibrated ``backward_pos_*`` is closer to the chassis travel limit on the
+# reference build and the unified drift-corrected backward leg was observed in
+# the field to "try" to move but not break loose at the bare calibrated pose.
+# Five ticks past the calibrated lean is enough push to overcome the
+# pre-rolling stiction the operator reported (MX-28s visibly torquing but
+# chassis not translating) without inflating into the lean stack's
+# travel-limit. Mirrors the forward branch's nudge philosophy — added by
+# :func:`_nudge_goal_from_brake` in the BACK-direction, not blindly subtracted,
+# so chassis with ``backward_pos_* > brake_pos_*`` get the correct sign.
+_STRAIGHT_BACK_EXTRA_TICKS = 5
+
 # Pivot only (L/R yaw): extra nudge away from each side's brake (after
 # ``turn_push_ticks``). Must use directional nudge — a raw +Δ on both goals
 # can land on brake and wipe blended timed-turn motion for that axis.
@@ -3575,8 +3588,20 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
-            bl = self._dxl._clamp_pos(int(self._axis.backward_pos_left))
-            br = self._dxl._clamp_pos(int(self._axis.backward_pos_right))
+            bl = self._dxl._clamp_pos(
+                _nudge_goal_from_brake(
+                    int(self._axis.backward_pos_left),
+                    nl,
+                    _STRAIGHT_BACK_EXTRA_TICKS,
+                )
+            )
+            br = self._dxl._clamp_pos(
+                _nudge_goal_from_brake(
+                    int(self._axis.backward_pos_right),
+                    nr,
+                    _STRAIGHT_BACK_EXTRA_TICKS,
+                )
+            )
             return {self._left_id: bl, self._right_id: br}
 
         # Pivot: opposite leans. **Equal speeds at 100** ⇒ full calibrated pivot.
