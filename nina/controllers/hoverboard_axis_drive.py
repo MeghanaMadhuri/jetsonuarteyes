@@ -344,13 +344,12 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 # which is exactly the bug that produced the "motor 12 leans, motor 13
 # doesn't get pushed, chassis spins" symptom in the field.
 #
-# Defaults are +5 / +5 — symmetric nudge AWAY from brake on both
-# sides (i.e. both wheels get 5 ticks more backward lean than the
-# bare calibrated ``backward_pos_*``). Dialed in on the reference
-# chassis after the raw-add → nudge-from-brake semantics fix; the
-# earlier-iterated asymmetric L+7 / R+8 values were against the
-# (now-corrected) raw-add bug, so the operator restarted at 0 / 0
-# and converged to a clean symmetric +5 / +5 baseline.
+# Defaults are 0 / 0 — i.e. drive the bare calibrated
+# ``backward_pos_*`` straight through with no per-side trim.
+# Operator's bench-validated calibration (``backward_pos_left =
+# backward_pos_right = 2000`` on the reference chassis, both 48
+# ticks BELOW brake=2048) is symmetric, so no per-side bias is
+# needed by default.
 #
 # Operators can re-tune per-bot via
 # ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
@@ -358,8 +357,8 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 # ``[-50, 50]``). Positive values add lean (further from brake);
 # negative trim the calibrated lean closer to neutral without
 # re-tuning ``backward_pos_*`` itself.
-_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 5
-_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 5
+_STRAIGHT_BACK_LEFT_TICKS_OFFSET = 0
+_STRAIGHT_BACK_RIGHT_TICKS_OFFSET = 0
 
 
 def _straight_back_left_ticks_offset() -> int:

@@ -1508,11 +1508,10 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # Per-side defaults are +5 / +5 → symmetric nudge AWAY from
-    # brake on both sides. Fast fixture: backward_pos_*=2000 (both
-    # BELOW brake=2048) → nudge subtracts → 2000 - 5 = 1995 on both
-    # wheels.
-    rev = {12: 1995, 13: 1995}
+    # Per-side defaults are 0 / 0 → no nudge → both wheels drive the
+    # bare calibrated ``backward_pos_*`` (2000 / 2000 on the fast
+    # fixture, matching the operator's real-chassis calibration).
+    rev = {12: 2000, 13: 2000}
     brk = {12: 2048, 13: 2048}
     saw_rev = any(g == rev for g in dxl.goal_writes)
     saw_brk = any(g == brk for g in dxl.goal_writes)
@@ -1711,18 +1710,13 @@ def test_backward_loop_aborts_above_threshold_and_speaks() -> None:
     )
 
 
-def test_backward_loop_default_applies_symmetric_plus_five_nudge() -> None:
-    """Backward loop at the default offsets (+5 / +5) must nudge both
-    wheels 5 ticks AWAY from brake (i.e. MORE backward lean on both
-    sides). Symmetric trim — same magnitude on each side — was the
-    baseline the operator converged on after restarting from 0 / 0
-    on the (now-fixed) nudge-from-brake semantics.
-
-    Operators still have the per-side knobs (env vars on
-    :data:`_STRAIGHT_BACK_LEFT_TICKS_OFFSET` and
-    :data:`_STRAIGHT_BACK_RIGHT_TICKS_OFFSET`) to dial in asymmetric
-    BLDC-wheel compensation; this test just locks down that the
-    in-tree default is the symmetric +5 / +5 baseline.
+def test_backward_loop_default_uses_bare_calibrated_lean() -> None:
+    """Backward loop at the default offsets (0 / 0) must drive the
+    bare calibrated ``backward_pos_*`` with no per-side trim applied.
+    Operator's bench-validated calibration (2000 / 2000 on the real
+    chassis, same as the fast fixture) is already symmetric so no
+    in-tree bias is needed; the per-side knobs remain available via
+    env vars when a different chassis needs asymmetric trim.
     """
     axis = _axis_pulse_fast()  # backward_pos_*=2000, brake=2048
     hb, dxl = _make_hb(axis)
@@ -1739,37 +1733,36 @@ def test_backward_loop_default_applies_symmetric_plus_five_nudge() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # Fast-fixture chassis: backward_pos_*=2000 (both BELOW brake
-    # 2048). Nudge AWAY from brake = subtract → 2000 - 5 = 1995 on
-    # both sides. Both wheels get the same +5 ticks of additional
-    # backward lean past the bare calibrated value.
-    expected = {12: 1995, 13: 1995}
+    # Fast-fixture chassis: backward_pos_*=2000. With offsets 0/0
+    # the nudge is a no-op → both wheels go straight to the bare
+    # calibrated lean.
+    expected = {12: 2000, 13: 2000}
     saw_expected = any(g == expected for g in dxl.goal_writes)
     assert saw_expected, (
-        f"backward loop must apply symmetric +5 nudge ({expected}); "
-        f"writes={dxl.goal_writes}"
+        f"backward loop must drive bare calibrated lean ({expected}) "
+        f"when both per-side offsets are 0; writes={dxl.goal_writes}"
     )
 
 
-def test_straight_back_left_ticks_offset_default_is_five() -> None:
-    """Lock the left-side default — +5 ticks of nudge AWAY from brake
-    (i.e. MORE left-side backward lean), applied to
-    ``backward_pos_left`` via :func:`_nudge_goal_from_brake`. Half of
-    the symmetric +5 / +5 baseline the operator converged on after
-    restarting from 0 / 0 on the (now-fixed) nudge-from-brake
-    semantics.
+def test_straight_back_left_ticks_offset_default_is_zero() -> None:
+    """Lock the left-side default — 0 ticks (no nudge), i.e. drive
+    the bare calibrated ``backward_pos_left`` as-is. The operator's
+    bench-validated calibration is symmetric (2000 / 2000), so no
+    per-side bias is needed; the env var
+    ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` remains available
+    for chassis-specific trim.
     """
-    assert _STRAIGHT_BACK_LEFT_TICKS_OFFSET == 5
+    assert _STRAIGHT_BACK_LEFT_TICKS_OFFSET == 0
 
 
-def test_straight_back_right_ticks_offset_default_is_five() -> None:
-    """Lock the right-side default — +5 ticks of nudge AWAY from
-    brake (i.e. MORE right-side backward lean), applied to
-    ``backward_pos_right`` via :func:`_nudge_goal_from_brake`.
-    Symmetric vs the LEFT-side +5 — no bias by default; operators
-    dial asymmetry in via the env vars when their chassis needs it.
+def test_straight_back_right_ticks_offset_default_is_zero() -> None:
+    """Lock the right-side default — 0 ticks (no nudge), i.e. drive
+    the bare calibrated ``backward_pos_right`` as-is. Symmetric vs
+    the LEFT-side default — no bias by default; operators dial
+    asymmetry in via ``NINA_HOVER_STRAIGHT_BACK_RIGHT_TICKS_OFFSET``
+    when their chassis needs it.
     """
-    assert _STRAIGHT_BACK_RIGHT_TICKS_OFFSET == 5
+    assert _STRAIGHT_BACK_RIGHT_TICKS_OFFSET == 0
 
 
 def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
@@ -1901,12 +1894,12 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
     assert not hb.is_forward_pulse_active()
-    # Per-side defaults are +5 / +5 → symmetric nudge AWAY from
-    # brake → 2000 - 5 = 1995 on both sides (fast fixture). Both
-    # the disabled-pulse ``backward()`` fallback AND the live
+    # Per-side defaults are 0 / 0 → no nudge → bare calibrated
+    # backward lean on both sides (2000 / 2000 on the fast fixture).
+    # Both the disabled-pulse ``backward()`` fallback AND the live
     # drift-corrected loop go through the same ``_goals_for_wheels``
-    # backward branch, so both apply the same nudge.
-    assert dxl.goal_writes[-1] == {12: 1995, 13: 1995}
+    # backward branch, so both behave the same.
+    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
 
 
 # ---------------------------------------------------------------------------
