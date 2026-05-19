@@ -162,7 +162,7 @@ class HoverboardAxisSettings:
     joint move on Protocol 1, higher = slower — default 0),
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
     uses ``NINA_HOVER_FWD_POS_*`` (defaults 2022 / 2080); straight backward uses ``NINA_HOVER_REV_POS_*``
-    (defaults 2000 / 2000). In-place pivots pair
+    (defaults 2005 / 1995). In-place pivots pair
     ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI pivots match this mount;
     set ``NINA_HOVER_SWAP_TURN_LR=0`` if yaw sense is reversed.
@@ -546,8 +546,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # this is the single source of truth for lean goals.
         forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2022),
         forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2080),
-        backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2000),
-        backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2000),
+        backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2005),
+        backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 1995),
         swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
         turn_push_ticks=max(
             0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 100))

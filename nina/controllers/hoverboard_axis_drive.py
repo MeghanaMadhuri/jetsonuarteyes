@@ -346,10 +346,11 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 #
 # Defaults are 0 / 0 — i.e. drive the bare calibrated
 # ``backward_pos_*`` straight through with no per-side trim.
-# Operator's bench-validated calibration (``backward_pos_left =
-# backward_pos_right = 2000`` on the reference chassis, both 48
-# ticks BELOW brake=2048) is symmetric, so no per-side bias is
-# needed by default.
+# Operator's bench-validated calibration on the reference chassis
+# (``backward_pos_left = 2005``, ``backward_pos_right = 1995``, both
+# BELOW brake=2048) already carries the asymmetric lean it needs
+# baked into the calibrated source itself, so no additional per-side
+# bias is needed by default.
 #
 # Operators can re-tune per-bot via
 # ``NINA_HOVER_STRAIGHT_BACK_LEFT_TICKS_OFFSET`` and
