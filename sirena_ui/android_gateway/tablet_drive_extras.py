@@ -34,15 +34,20 @@ def _autonomy_blocks(service: NinaService) -> bool:
 
 def drive_status_payload(service: NinaService) -> Dict[str, Any]:
     """Extended drive snapshot for tablet HUD (matches kiosk ``drive_screen``)."""
-    from sirena_ui.android_gateway.drive_http import navigation_hw_status, peek_last_drive_error
+    from sirena_ui.android_gateway.drive_http import (
+        _json_safe_float,
+        _sanitize_drive_status_body,
+        navigation_hw_status,
+        peek_last_drive_error,
+    )
 
     body = navigation_hw_status(service)
     dc = service.drive
     try:
         st = dc.state()
         body["speed_pct"] = int(st.get("speed_pct", 0))
-        body["heading_deg"] = float(st.get("heading_deg", 0.0))
-        body["distance_m"] = float(st.get("distance_m", 0.0))
+        body["heading_deg"] = _json_safe_float(st.get("heading_deg", 0.0))
+        body["distance_m"] = _json_safe_float(st.get("distance_m", 0.0))
         body["direction"] = str(st.get("direction", "idle"))
         body["reverse"] = bool(st.get("reverse", False))
     except Exception as exc:
@@ -56,7 +61,7 @@ def drive_status_payload(service: NinaService) -> Dict[str, Any]:
             drift_side = "off"
         else:
             s = mon.snapshot()
-            drift_deg = float(s.yaw_drift_deg)
+            drift_deg = _json_safe_float(s.yaw_drift_deg)
             drift_side = str(s.drift_side)
     except Exception:
         pass
@@ -75,7 +80,7 @@ def drive_status_payload(service: NinaService) -> Dict[str, Any]:
     err = peek_last_drive_error()
     if err:
         body["last_drive_error"] = err
-    return body
+    return _sanitize_drive_status_body(body)
 
 
 def _straight_fwd_duration_ms(

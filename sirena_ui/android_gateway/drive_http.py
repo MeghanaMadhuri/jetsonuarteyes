@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -29,6 +30,26 @@ def _set_last_drive_error(msg: Optional[str]) -> None:
 def peek_last_drive_error() -> Optional[str]:
     with _last_drive_error_lock:
         return _last_drive_error
+
+
+def _json_safe_float(value: Any) -> Optional[float]:
+    """Drop NaN/Inf so FastAPI JSON encoding cannot 500 the tablet poll."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v):
+        return None
+    return v
+
+
+def _sanitize_drive_status_body(body: Dict[str, Any]) -> Dict[str, Any]:
+    for key in ("heading_deg", "distance_m", "imu_drift_deg"):
+        if key in body:
+            body[key] = _json_safe_float(body.get(key))
+    return body
 
 
 def _autonomy_blocks(service: NinaService) -> bool:
@@ -232,10 +253,30 @@ def set_drive_reverse(service: NinaService, *, on: bool) -> Dict[str, Any]:
     return {"ok": True, "reverse": bool(st.get("reverse", on))}
 
 
+def _kick_drive_for_status_poll(service: NinaService) -> None:
+    """Non-blocking bring-up for ``GET /v1/robot/drive/status`` (kiosk + tablet).
+
+    Unlike ``_prime_drive_hardware``, this must not ``time.sleep`` on the Qt GUI
+    thread — Android polls every ~2.5 s and the command plane only drains a few
+    jobs per tick. A multi-second wait there starves the event loop and surfaces
+    as HTTP 500 / "drive status unreachable" while ``/health`` still works.
+    """
+    if not service.bus_ready:
+        try:
+            service.ensure_bus()
+        except Exception as exc:
+            log.warning("ensure_bus during drive status poll: %s", exc)
+    try:
+        service.start_mpu9250_imu_monitor()
+    except Exception:
+        log.debug("IMU monitor start skipped", exc_info=True)
+    service.drive.ensure_hardware()
+
+
 def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
-    """Read-only drive snapshot for HTTP polling (must not block the Qt thread)."""
+    """Read-only drive snapshot for HTTP polling (runs on the Qt GUI thread)."""
     err = peek_last_drive_error()
-    _prime_drive_hardware(service, wait_timeout_sec=2.0)
+    _kick_drive_for_status_poll(service)
     dc = service.drive
     try:
         nav = dc._nav  # noqa: SLF001
@@ -258,19 +299,26 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
             }
             if err:
                 body["last_drive_error"] = err
-            return body
+            return _sanitize_drive_status_body(body)
+        invert_left = False
+        invert_right = False
+        if hasattr(nav, "get_invert_left"):
+            invert_left = bool(nav.get_invert_left())
+        if hasattr(nav, "get_invert_right"):
+            invert_right = bool(nav.get_invert_right())
         body = {
             "ok": True,
             "connected": True,
             "message": "BLDC L+R connected",
-            "invert_left": bool(nav.get_invert_left()),
-            "invert_right": bool(nav.get_invert_right()),
+            "invert_left": invert_left,
+            "invert_right": invert_right,
             "brake": brake,
         }
         if err:
             body["last_drive_error"] = err
-        return body
+        return _sanitize_drive_status_body(body)
     except Exception as exc:
+        log.exception("navigation_hw_status")
         msg = f"{type(exc).__name__}: {exc}"
         out: Dict[str, Any] = {
             "ok": True,
@@ -282,7 +330,7 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
         }
         if err:
             out["last_drive_error"] = err
-        return out
+        return _sanitize_drive_status_body(out)
 
 
 def set_wheel_invert(
