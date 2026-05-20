@@ -122,11 +122,19 @@ class GP2Y0E02B:
             self._message = f"smbus2 not installed ({exc})"
             raise RuntimeError(self._message) from exc
 
+        bus = None
         try:
-            self._bus = smbus2.SMBus(self._bus_num)
-            shift = self._bus.read_byte_data(self._addr, 0x35) & 0x07
+            bus = smbus2.SMBus(self._bus_num)
+            shift = bus.read_byte_data(self._addr, 0x35) & 0x07
             self._shift = max(1, 1 << shift)
+            self._bus = bus
+            bus = None
         except Exception as exc:
+            if bus is not None:
+                try:
+                    bus.close()
+                except Exception:
+                    pass
             self._bus = None
             self._message = f"open i2c {self._bus_num}@0x{self._addr:02X}: {exc}"
             raise RuntimeError(self._message) from exc

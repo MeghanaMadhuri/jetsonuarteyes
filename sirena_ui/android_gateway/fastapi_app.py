@@ -1633,11 +1633,13 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
 
         gw.plane.submit(_prep, timeout=60.0)
         boundary = b"frame"
+        stop = threading.Event()
 
         async def _gen():
+            stop_task = asyncio.create_task(_watch_request_disconnect(request, stop))
             gw.vision_hub.client_enter(gw.service)
             try:
-                while True:
+                while not stop.is_set():
                     if await request.is_disconnected():
                         break
                     jpeg = gw.vision_hub.latest_jpeg()
@@ -1650,6 +1652,12 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                         )
                     await asyncio.sleep(0.016)
             finally:
+                stop.set()
+                stop_task.cancel()
+                try:
+                    await stop_task
+                except asyncio.CancelledError:
+                    pass
                 _mjpeg_stream_release()
                 gw.vision_hub.client_leave()
                 try:

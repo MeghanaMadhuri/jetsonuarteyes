@@ -109,6 +109,9 @@ def start_tablet_gateway(service: NinaService) -> None:
         port=int(cfg.port),
         log_level="info",
         loop="asyncio",
+        # Short keep-alive so abandoned tablet polls do not pin sockets/FDs.
+        timeout_keep_alive=5,
+        limit_concurrency=64,
     )
     _uvicorn_server = uvicorn.Server(config)
 
