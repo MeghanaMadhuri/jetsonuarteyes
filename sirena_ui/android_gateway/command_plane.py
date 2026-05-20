@@ -19,7 +19,7 @@ T = TypeVar("T")
 
 # Process at most this many HTTP→GUI jobs per event-loop tick so a burst of
 # tablet polls cannot freeze taps for multiple seconds.
-_MAX_DRAIN_PER_TICK = 6
+_MAX_DRAIN_PER_TICK = 2
 
 
 class QtCommandPlane(QObject):

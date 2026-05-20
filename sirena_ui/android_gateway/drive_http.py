@@ -6,10 +6,10 @@ import logging
 import math
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from sirena_ui.workers.drive_controller import DriveController
-from sirena_ui.workers.nina_service import NinaService
+if TYPE_CHECKING:
+    from sirena_ui.workers.nina_service import NinaService
 
 log = logging.getLogger("sirena_ui.android_gateway.drive_http")
 
@@ -63,7 +63,9 @@ def _autonomy_blocks(service: NinaService) -> bool:
 
 def _drive_hardware_ready(service: NinaService) -> bool:
     """True when hoverboard nav is up and the Drive pill would show connected."""
-    dc = service.drive
+    dc = getattr(service, "_drive", None)
+    if dc is None:
+        return False
     try:
         if dc._nav is None:  # noqa: SLF001
             return False
@@ -77,36 +79,35 @@ def _prime_drive_hardware(
     *,
     wait_timeout_sec: float = 10.0,
 ) -> Dict[str, Any]:
-    """Bring up Dynamixel bus + BLDC nav for tablet HTTP (no kiosk Drive screen).
+    """Kick BLDC nav initialization without blocking the Qt GUI thread.
 
-    Kiosk ``DriveScreen.on_enter`` only called ``ensure_hardware()``; the bus is
-    normally started from ``MainWindow``, but HTTP must not depend on that screen.
+    The embedded FastAPI gateway runs these helpers through ``QtCommandPlane``.
+    That means this function must not call ``ensure_bus()`` or poll with
+    ``time.sleep``. MainWindow already brings up the Dynamixel bus on a QThread;
+    once that is ready, ``DriveController.ensure_hardware()`` queues the hover
+    initialization on the drive worker and returns immediately.
     """
+    _ = wait_timeout_sec
     if _drive_hardware_ready(service):
         return {"ok": True, "ready": True}
-    try:
-        service.ensure_bus()
-    except Exception as exc:
-        log.exception("ensure_bus before tablet drive")
-        return {"ok": False, "ready": False, "error": f"Dynamixel bus: {exc}"}
+    if not service.bus_ready:
+        return {
+            "ok": True,
+            "ready": False,
+            "hardware_initializing": True,
+            "error": "Dynamixel bus still initializing — retry in a moment",
+        }
     try:
         service.start_mpu9250_imu_monitor()
     except Exception:
         log.debug("IMU monitor start skipped", exc_info=True)
     dc = service.drive
     dc.ensure_hardware()
-    if dc._nav is not None:  # noqa: SLF001
+    if _drive_hardware_ready(service):
         return {"ok": True, "ready": True}
-    deadline = time.monotonic() + max(0.0, float(wait_timeout_sec))
-    while time.monotonic() < deadline:
-        if dc._nav is not None:  # noqa: SLF001
-            return {"ok": True, "ready": True}
-        st = dc.state()
-        msg = str(st.get("driver_message", "") or "").strip()
-        if "init failed" in msg.lower():
-            return {"ok": False, "ready": False, "error": msg or "BLDC init failed"}
-        time.sleep(0.05)
     msg = str(dc.state().get("driver_message", "") or "").strip()
+    if "init failed" in msg.lower():
+        return {"ok": False, "ready": False, "error": msg or "BLDC init failed"}
     return {
         "ok": True,
         "ready": False,
@@ -120,13 +121,11 @@ def _prime_drive_for_manual(
     *,
     wait_timeout_sec: float = 1.2,
 ) -> Dict[str, Any]:
-    """Fast path for D-pad / momentary: skip multi-second wait when already warm."""
+    """Fast path for D-pad / momentary: never block the Qt event loop."""
+    _ = wait_timeout_sec
     if _drive_hardware_ready(service):
         return {"ok": True, "ready": True}
-    _kick_drive_for_status_poll(service)
-    if _drive_hardware_ready(service):
-        return {"ok": True, "ready": True}
-    return _prime_drive_hardware(service, wait_timeout_sec=wait_timeout_sec)
+    return _prime_drive_hardware(service, wait_timeout_sec=0.0)
 
 
 def _drive_not_ready_response(prime: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -142,8 +141,8 @@ def _drive_not_ready_response(prime: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
 
 def bootstrap_tablet_drive(service: NinaService) -> None:
-    """Best-effort BLDC bring-up when the robot bridge starts (background)."""
-    _prime_drive_hardware(service, wait_timeout_sec=15.0)
+    """Best-effort BLDC bring-up when the robot bridge starts."""
+    _prime_drive_hardware(service, wait_timeout_sec=0.0)
 
 
 def momentary_drive(
@@ -280,31 +279,23 @@ def set_drive_reverse(service: NinaService, *, on: bool) -> Dict[str, Any]:
     return {"ok": True, "reverse": bool(st.get("reverse", on))}
 
 
-def _kick_drive_for_status_poll(service: NinaService) -> None:
-    """Non-blocking bring-up for ``GET /v1/robot/drive/status`` (kiosk + tablet).
-
-    Unlike ``_prime_drive_hardware``, this must not ``time.sleep`` on the Qt GUI
-    thread — Android polls every ~2.5 s and the command plane only drains a few
-    jobs per tick. A multi-second wait there starves the event loop and surfaces
-    as HTTP 500 / "drive status unreachable" while ``/health`` still works.
-    """
-    if not service.bus_ready:
-        try:
-            service.ensure_bus()
-        except Exception as exc:
-            log.warning("ensure_bus during drive status poll: %s", exc)
-    try:
-        service.start_mpu9250_imu_monitor()
-    except Exception:
-        log.debug("IMU monitor start skipped", exc_info=True)
-    service.drive.ensure_hardware()
-
-
 def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
     """Read-only drive snapshot for HTTP polling (runs on the Qt GUI thread)."""
     err = peek_last_drive_error()
-    _kick_drive_for_status_poll(service)
-    dc = service.drive
+    dc = getattr(service, "_drive", None)
+    if dc is None:
+        body: Dict[str, Any] = {
+            "ok": True,
+            "connected": False,
+            "hardware_initializing": bool(getattr(service, "bus_ready", False)),
+            "message": "Drive controller not started",
+            "invert_left": False,
+            "invert_right": False,
+            "brake": True,
+        }
+        if err:
+            body["last_drive_error"] = err
+        return _sanitize_drive_status_body(body)
     try:
         nav = dc._nav  # noqa: SLF001
         st = dc.state()
@@ -363,7 +354,17 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
 def drive_status_payload(service: NinaService) -> Dict[str, Any]:
     """Extended drive snapshot for tablet HUD (matches kiosk ``drive_screen``)."""
     body = navigation_hw_status(service)
-    dc = service.drive
+    dc = getattr(service, "_drive", None)
+    if dc is None:
+        body["speed_pct"] = 0
+        body["heading_deg"] = None
+        body["distance_m"] = None
+        body["direction"] = "idle"
+        body["reverse"] = False
+        body["imu_drift_deg"] = None
+        body["imu_drift_side"] = "off"
+        body["straight_pulse_active"] = False
+        return _sanitize_drive_status_body(body)
     try:
         st = dc.state()
         body["speed_pct"] = int(st.get("speed_pct", 0))

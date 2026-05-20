@@ -741,6 +741,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 speed_percent=speed,
             ),
             timeout=30.0,
+            urgent=direction == "stop",
         )
 
     @app.post("/v1/robot/drive/brake")
@@ -779,7 +780,6 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         return gw.plane.submit(
             lambda: drive_hold_start(gw.service, direction=direction),
             timeout=30.0,
-            urgent=True,
         )
 
     @app.post("/v1/robot/drive/hold/stop")

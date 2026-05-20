@@ -131,16 +131,18 @@ def start_tablet_gateway(service: NinaService) -> None:
     _server_thread.start()
 
     if cfg.enable_robot_bridge:
+        from PyQt5.QtCore import QTimer
 
         def _bootstrap_drive() -> None:
+            if not service.bus_ready:
+                QTimer.singleShot(500, _bootstrap_drive)
+                return
             try:
                 from sirena_ui.android_gateway.drive_http import bootstrap_tablet_drive
 
                 bootstrap_tablet_drive(service)
             except Exception:
                 log.exception("tablet gateway: drive bootstrap failed")
-
-        from PyQt5.QtCore import QTimer
 
         QTimer.singleShot(500, _bootstrap_drive)
 
