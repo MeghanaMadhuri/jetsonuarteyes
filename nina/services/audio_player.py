@@ -48,6 +48,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import wave
@@ -92,6 +93,20 @@ def _output_warmup_ms() -> int:
 def _recover_zero_master_enabled() -> bool:
     v = (os.environ.get("NINA_AUDIO_RECOVER_ZERO_MASTER") or "").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+def _mp3_via_aplay_enabled() -> bool:
+    """Decode MP3 to a temporary WAV first, then play it with ``aplay``.
+
+    Some Jetson APE/I2S paths (notably Orin Nano -> MAX98357A) play a clean
+    sine wave through ``aplay`` but fail or produce garbage when ``mpg123`` is
+    asked to write directly to ALSA. The decode-to-WAV path uses ``mpg123`` only
+    as a file decoder, then lets ``aplay`` own the ALSA stream. Enable with:
+
+        NINA_AUDIO_MP3_VIA_APLAY=1
+    """
+    raw = (os.environ.get("NINA_AUDIO_MP3_VIA_APLAY") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 def _restore_volume_default_pct() -> int:
@@ -264,6 +279,43 @@ def mpg123_command_for(path: Path) -> Optional[List[str]]:
         cmd.extend(["-r", str(rate)])
     cmd.append(str(path))
     return cmd
+
+
+def mp3_via_aplay_command_for(path: Path) -> Optional[List[str]]:
+    """Build a small shell command that decodes MP3 -> temp WAV -> aplay.
+
+    This intentionally returns a process argv just like :func:`mpg123_command_for`
+    so :class:`AudioPlayer` can keep its existing background-process contract.
+    The shell is used only to manage the temp file lifecycle around two CLI
+    tools; all untrusted values are passed as positional arguments, not string
+    interpolated into the script.
+    """
+    mpg = shutil.which("mpg123")
+    aplay = shutil.which("aplay")
+    if not mpg or not aplay:
+        return None
+    dev = _aplay_device_flag() or ""
+    rate = _pcm_output_rate_hz()
+    rate_arg = "" if rate is None else str(rate)
+    script = r'''
+set -eu
+src="$1"
+dev="$2"
+rate="$3"
+tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-XXXXXX.wav")"
+cleanup() { rm -f "$tmp"; }
+trap cleanup EXIT
+if [ -n "$rate" ]; then
+    mpg123 -q -r "$rate" -w "$tmp" "$src"
+else
+    mpg123 -q -w "$tmp" "$src"
+fi
+if [ -n "$dev" ]; then
+    exec aplay -q -D "$dev" "$tmp"
+fi
+exec aplay -q "$tmp"
+'''.strip()
+    return ["/bin/sh", "-c", script, "nina-mp3-via-aplay", str(path), dev, rate_arg]
 
 
 def _pulse_set_volume_pct(pct: int) -> bool:
@@ -467,6 +519,10 @@ class AudioPlayer:
             cmd.append(str(path))
             return cmd
         if ext in (".mp3",):
+            if _mp3_via_aplay_enabled():
+                cmd = mp3_via_aplay_command_for(Path(path))
+                if cmd:
+                    return cmd
             cmd = mpg123_command_for(Path(path))
             if cmd:
                 return cmd

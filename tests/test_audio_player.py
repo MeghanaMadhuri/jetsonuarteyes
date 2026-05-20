@@ -111,6 +111,37 @@ def test_mpg123_command_includes_rate_when_forced(
     assert "48000" in cmd
 
 
+def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_mpg = tmp_path / "mpg123"
+    fake_mpg.write_text("#!/bin/sh\necho mpg\n")
+    fake_mpg.chmod(0o755)
+    fake_aplay = tmp_path / "aplay"
+    fake_aplay.write_text("#!/bin/sh\necho aplay\n")
+    fake_aplay.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH",
+        f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}",
+    )
+    monkeypatch.setenv("NINA_AUDIO_MP3_VIA_APLAY", "1")
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=APE,DEV=0")
+    monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
+    from nina.services.audio_player import AudioPlayer
+
+    mp3 = tmp_path / "x.mp3"
+    mp3.touch()
+    cmd = AudioPlayer()._command_for(mp3)
+    assert cmd is not None
+    assert cmd[:3] == ["/bin/sh", "-c", cmd[2]]
+    assert "mpg123 -q -r" in cmd[2]
+    assert "aplay -q -D" in cmd[2]
+    assert str(mp3) in cmd
+    assert "plughw:CARD=APE,DEV=0" in cmd
+    assert "48000" in cmd
+
+
 def test_mpg123_command_omits_rate_when_auto(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

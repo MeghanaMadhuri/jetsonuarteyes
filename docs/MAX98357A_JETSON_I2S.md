@@ -22,6 +22,7 @@ The app can be forced to a specific ALSA PCM with:
 ```bash
 NINA_GREET_APLAY_DEVICE=<alsa-pcm>
 NINA_AUDIO_MPG123_DEVICE=<alsa-pcm>
+NINA_AUDIO_MP3_VIA_APLAY=1
 NINA_AUDIO_OUTPUT_RATE=48000
 ```
 
@@ -157,6 +158,7 @@ The script writes these lines into `/etc/nina-link/navigation.env`:
 ```bash
 NINA_GREET_APLAY_DEVICE=plughw:CARD=max98357a,DEV=0
 NINA_AUDIO_MPG123_DEVICE=plughw:CARD=max98357a,DEV=0
+NINA_AUDIO_MP3_VIA_APLAY=1
 NINA_AUDIO_OUTPUT_RATE=48000
 NINA_AUDIO_OUTPUT_WARMUP_MS=100
 NINA_AUDIO_PREROLL_MS=0
@@ -177,10 +179,12 @@ Raw ALSA sine test:
 speaker-test -D plughw:CARD=max98357a,DEV=0 -c 2 -r 48000 -t sine -f 440
 ```
 
-Repo alert MP3 through the same PCM:
+Repo alert MP3 through the same PCM (the same decode-to-WAV path Nina uses
+when `NINA_AUDIO_MP3_VIA_APLAY=1`):
 
 ```bash
-mpg123 -o alsa -a plughw:CARD=max98357a,DEV=0 -r 48000 nina/audio/alerts/cant_move.mp3
+mpg123 -q -r 48000 -w /tmp/nina-cant-move.wav nina/audio/alerts/cant_move.mp3
+aplay -D plughw:CARD=max98357a,DEV=0 /tmp/nina-cant-move.wav
 ```
 
 Nina runtime env:
@@ -210,9 +214,17 @@ Check:
 - Try `--rate 48000`; many Jetson I2S paths are happiest at 48 kHz.
 - Use `speaker-test` first; if it fails, Nina will fail too.
 
-### MP3 works but WAV / warmup is silent
+### Direct `mpg123 -o alsa` fails or produces garbage
 
-The code now passes `NINA_GREET_APLAY_DEVICE` to WAV playback as well as MP3
+On Jetson Orin Nano APE -> MAX98357A, `speaker-test` / `aplay` can work while
+direct `mpg123 -o alsa -a ...` fails or produces garbage. Leave
+`NINA_AUDIO_MP3_VIA_APLAY=1` enabled (the setup script writes it by default).
+Nina will decode MP3 to a temporary WAV with `mpg123 -w`, then play that WAV
+through `aplay -D <device>`.
+
+### WAV / warmup is silent
+
+The code passes `NINA_GREET_APLAY_DEVICE` to WAV playback as well as MP3
 playback. Pull a commit that includes this doc and rerun the setup script.
 
 ### Sound is too quiet / too loud

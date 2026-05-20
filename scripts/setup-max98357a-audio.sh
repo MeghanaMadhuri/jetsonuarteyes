@@ -39,6 +39,7 @@ Examples:
 This writes:
   NINA_GREET_APLAY_DEVICE=<alsa-pcm>
   NINA_AUDIO_MPG123_DEVICE=<alsa-pcm>
+  NINA_AUDIO_MP3_VIA_APLAY=1
   NINA_AUDIO_OUTPUT_RATE=<rate>
   NINA_AUDIO_OUTPUT_WARMUP_MS=<warmup-ms>
   NINA_AUDIO_PREROLL_MS=0
@@ -157,6 +158,7 @@ fi
 sed -i -E \
     -e '/^NINA_GREET_APLAY_DEVICE=/d' \
     -e '/^NINA_AUDIO_MPG123_DEVICE=/d' \
+    -e '/^NINA_AUDIO_MP3_VIA_APLAY=/d' \
     -e '/^NINA_AUDIO_OUTPUT_RATE=/d' \
     -e '/^NINA_AUDIO_OUTPUT_WARMUP_MS=/d' \
     -e '/^NINA_AUDIO_PREROLL_MS=/d' \
@@ -168,6 +170,7 @@ cat >> "${TMP_FILE}" <<EOF
 # MAX98357A I2S amplifier playback (written by setup-max98357a-audio.sh)
 NINA_GREET_APLAY_DEVICE=${DEVICE}
 NINA_AUDIO_MPG123_DEVICE=${DEVICE}
+NINA_AUDIO_MP3_VIA_APLAY=1
 NINA_AUDIO_OUTPUT_RATE=${RATE}
 NINA_AUDIO_OUTPUT_WARMUP_MS=${WARMUP_MS}
 NINA_AUDIO_PREROLL_MS=0
@@ -179,7 +182,7 @@ sudo install -m 0644 -o root -g root "${TMP_FILE}" "${ENV_FILE}"
 
 echo
 echo "Wrote MAX98357A audio config to ${ENV_FILE}:"
-grep -E '^(NINA_GREET_APLAY_DEVICE|NINA_AUDIO_MPG123_DEVICE|NINA_AUDIO_OUTPUT_RATE|NINA_AUDIO_OUTPUT_WARMUP_MS|NINA_AUDIO_PREROLL_MS|NINA_AUDIO_MUTE_PREROLL_SEC)=' "${ENV_FILE}" || true
+grep -E '^(NINA_GREET_APLAY_DEVICE|NINA_AUDIO_MPG123_DEVICE|NINA_AUDIO_MP3_VIA_APLAY|NINA_AUDIO_OUTPUT_RATE|NINA_AUDIO_OUTPUT_WARMUP_MS|NINA_AUDIO_PREROLL_MS|NINA_AUDIO_MUTE_PREROLL_SEC)=' "${ENV_FILE}" || true
 
 if [[ "${RUN_TEST}" -eq 1 ]]; then
     echo
@@ -236,6 +239,7 @@ Verify runtime env:
   systemctl --user show nina-ui-kiosk.service --property=Environment | tr ' ' '\\n' | grep NINA_AUDIO
 
 Verify playback:
-  mpg123 -o alsa -a '${DEVICE}' -r '${RATE}' nina/audio/alerts/cant_move.mp3
+  mpg123 -q -r '${RATE}' -w /tmp/nina-cant-move.wav nina/audio/alerts/cant_move.mp3
+  aplay -D '${DEVICE}' /tmp/nina-cant-move.wav
 EOF
 
