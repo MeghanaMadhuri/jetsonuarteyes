@@ -278,6 +278,8 @@ class TouchAt42qt2120Settings:
     i2c_address: int
     debounce_reads: int
     release_reads: int
+    startup_probe_attempts: int
+    startup_probe_delay_sec: float
     cooldown_sec: float
     blind_after_reaction_sec: float
     poll_interval_sec: float
@@ -850,6 +852,12 @@ def load_settings(repo_root: Path) -> NinaSettings:
         i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
         debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 3))),
         release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 2))),
+        startup_probe_attempts=max(
+            1, min(10, _env_int("NINA_TOUCH_PROBE_ATTEMPTS", 5))
+        ),
+        startup_probe_delay_sec=max(
+            0.0, _env_float("NINA_TOUCH_PROBE_DELAY_SEC", 0.4)
+        ),
         cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 10.0)),
         blind_after_reaction_sec=max(
             0.0, _env_float("NINA_TOUCH_BLIND_SEC", 0.75)

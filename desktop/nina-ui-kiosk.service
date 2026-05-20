@@ -105,8 +105,8 @@ Environment=NINA_BATTERY_I2C_BUS=7
 Environment=NINA_BATTERY_CAL_SCALE=1.082
 
 # Capacitive touch AT42QT2120 @ 0x1c (same bus 7, pins 3/5).
-# Environment=NINA_TOUCH_AT42QT2120_ENABLE=1
-# Environment=NINA_TOUCH_I2C_BUS=7
+Environment=NINA_TOUCH_AT42QT2120_ENABLE=1
+Environment=NINA_TOUCH_I2C_BUS=7
 # Environment=NINA_BATTERY_R1_OHM=218000
 # Environment=NINA_BATTERY_R2_OHM=33000
 # Environment=NINA_BATTERY_CAL_SCALE=1.082

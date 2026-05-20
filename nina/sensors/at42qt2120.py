@@ -48,7 +48,13 @@ def default_touch_i2c_bus() -> int:
     return int(DEFAULT_TOUCH_I2C_BUS)
 
 
-def is_available(bus_num: Optional[int] = None, address: int = DEFAULT_TOUCH_I2C_ADDR) -> Tuple[bool, str]:
+def is_available(
+    bus_num: Optional[int] = None,
+    address: int = DEFAULT_TOUCH_I2C_ADDR,
+    *,
+    probe_attempts: int = 1,
+    probe_delay_sec: float = 0.0,
+) -> Tuple[bool, str]:
     if bus_num is None:
         bus_num = default_touch_i2c_bus()
     try:
@@ -58,12 +64,18 @@ def is_available(bus_num: Optional[int] = None, address: int = DEFAULT_TOUCH_I2C
     dev = f"/dev/i2c-{int(bus_num)}"
     if not os.path.exists(dev):
         return False, f"{dev} not present"
-    if not probe_at42qt2120_on_bus(int(bus_num), int(address)):
-        return False, (
-            f"AT42QT2120 not detected on {dev} @ 0x{int(address) & 0x7F:02X} "
-            f"(expected CHIP_ID 0x{_EXPECTED_CHIP_ID:02X})"
-        )
-    return True, ""
+    attempts = max(1, int(probe_attempts))
+    delay = max(0.0, float(probe_delay_sec))
+    last_msg = (
+        f"AT42QT2120 not detected on {dev} @ 0x{int(address) & 0x7F:02X} "
+        f"(expected CHIP_ID 0x{_EXPECTED_CHIP_ID:02X})"
+    )
+    for attempt in range(attempts):
+        if probe_at42qt2120_on_bus(int(bus_num), int(address)):
+            return True, ""
+        if attempt + 1 < attempts and delay > 0:
+            time.sleep(delay)
+    return False, last_msg
 
 
 def probe_at42qt2120_on_bus(bus_num: int, address: int = DEFAULT_TOUCH_I2C_ADDR) -> bool:

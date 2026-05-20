@@ -98,7 +98,13 @@ class TouchAt42qt2120Monitor:
         self._blind_until_mono = -1e30
 
     def start(self) -> None:
-        ok, msg = is_available(self._svc.settings.touch_at42qt2120.i2c_bus)
+        s = self._svc.settings.touch_at42qt2120
+        ok, msg = is_available(
+            s.i2c_bus,
+            s.i2c_address,
+            probe_attempts=max(1, int(s.startup_probe_attempts)),
+            probe_delay_sec=max(0.0, float(s.startup_probe_delay_sec)),
+        )
         if not ok:
             raise RuntimeError(msg)
         self._touch.open()
@@ -143,6 +149,11 @@ class TouchAt42qt2120Monitor:
         except Exception:
             log.debug("AT42QT2120 close failed", exc_info=True)
         log.info("AT42QT2120 touch monitor stopped")
+
+    def is_running(self) -> bool:
+        """True when the poll thread is alive."""
+        t = self._thread
+        return t is not None and t.is_alive()
 
     def _run(self) -> None:
         while not self._stop.is_set():

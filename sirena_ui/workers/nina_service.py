@@ -257,18 +257,35 @@ class NinaService:
         except Exception as exc:
             log.warning("Battery ADS1115 monitor did not start: %s", exc)
 
-    def start_touch_at42qt2120_monitor(self) -> None:
-        """Start AT42QT2120 touch monitor when enabled in settings."""
+    def touch_monitor_running(self) -> bool:
+        """True when the AT42QT2120 background poll thread is active."""
+        mon = self._touch_monitor
+        return mon is not None and mon.is_running()
+
+    def start_touch_at42qt2120_monitor(self) -> bool:
+        """Start AT42QT2120 touch monitor when enabled in settings.
+
+        Safe to call repeatedly after boot — returns False until the chip
+        answers on I²C (e.g. ``/dev/i2c-7`` not ready at UI startup).
+        """
         if not self.settings.touch_at42qt2120.enabled:
-            return
+            log.debug(
+                "AT42QT2120 touch monitor disabled "
+                "(set NINA_TOUCH_AT42QT2120_ENABLE=1 to enable)"
+            )
+            return False
+        if self.touch_monitor_running():
+            return True
         if self._touch_monitor is not None:
-            return
+            self._touch_monitor = None
         try:
             mon = TouchAt42qt2120Monitor(self)
             mon.start()
             self._touch_monitor = mon
+            return True
         except Exception as exc:
             log.warning("AT42QT2120 touch monitor did not start: %s", exc)
+            return False
 
     def _park_all_motors_at_goal(self, goal: int) -> None:
         """Sync-write goal position for Dynamixel IDs 1–13 (neutral pose)."""

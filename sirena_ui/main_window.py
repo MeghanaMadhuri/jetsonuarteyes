@@ -20,9 +20,12 @@ nav clicks to the right widget.
 from __future__ import annotations
 
 import getpass
+import logging
 import os
 import socket
 from typing import Dict, Optional
+
+log = logging.getLogger("sirena_ui.main_window")
 
 from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
@@ -146,6 +149,10 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._status_bar)
 
         self._bus_init_thread: Optional[_BusInitThread] = None
+        self._touch_bringup_attempts = 0
+        self._touch_bringup_timer = QTimer(self)
+        self._touch_bringup_timer.setInterval(5000)
+        self._touch_bringup_timer.timeout.connect(self._bringup_touch_monitor)
 
         self._battery_ui_timer = QTimer(self)
         self._battery_ui_timer.setInterval(2000)
@@ -158,8 +165,10 @@ class MainWindow(QMainWindow):
 
         # Header I²C sensors do not need the Dynamixel bus; start early.
         QTimer.singleShot(200, self._service.start_battery_ads1115_monitor)
-        QTimer.singleShot(250, self._service.start_touch_at42qt2120_monitor)
         QTimer.singleShot(300, self._service.start_ir_obstacle_stop_monitor)
+        # Touch chip is often absent on the first probe right after reboot.
+        QTimer.singleShot(1500, self._bringup_touch_monitor)
+        self._touch_bringup_timer.start()
 
         # Try to bring up the bus shortly after the window appears so the
         # status bar shows accurate dots without blocking the UI.
@@ -388,6 +397,24 @@ class MainWindow(QMainWindow):
         self._sidebar.select(screen_key)
 
     # ---------- bus / footer ----------
+
+    def _bringup_touch_monitor(self) -> None:
+        """Retry AT42QT2120 open until the header I²C bus answers after boot."""
+        if not self._service.settings.touch_at42qt2120.enabled:
+            self._touch_bringup_timer.stop()
+            return
+        if self._service.start_touch_at42qt2120_monitor():
+            self._touch_bringup_timer.stop()
+            return
+        self._touch_bringup_attempts += 1
+        if self._touch_bringup_attempts >= 24:
+            self._touch_bringup_timer.stop()
+            log.warning(
+                "AT42QT2120 touch monitor gave up after %d attempts — "
+                "check i2cdetect on bus %s and NINA_TOUCH_AT42QT2120_ENABLE",
+                self._touch_bringup_attempts,
+                self._service.settings.touch_at42qt2120.i2c_bus,
+            )
 
     def _refresh_battery_tray(self) -> None:
         """Update header + footer battery indicators from the ADS1115 snapshot."""
