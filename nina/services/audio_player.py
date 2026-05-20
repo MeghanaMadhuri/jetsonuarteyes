@@ -66,6 +66,11 @@ _AMP_PIN: Optional[int] = None
 _AMP_ACTIVE_HIGH = True
 _AMP_USERS = 0
 _AMP_SETUP_FAILED = False
+_SILENCE_KEEPALIVE_LOCK = threading.RLock()
+_SILENCE_KEEPALIVE_STOP = threading.Event()
+_SILENCE_KEEPALIVE_THREAD: Optional[threading.Thread] = None
+_SILENCE_KEEPALIVE_PROC: Optional[subprocess.Popen] = None
+_SILENCE_KEEPALIVE_REAL_AUDIO_USERS = 0
 
 
 def _repo_root() -> Path:
@@ -117,6 +122,19 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
         return max(lo, min(hi, int(raw)))
     except ValueError:
         return default
+
+
+def _silence_keepalive_enabled() -> bool:
+    return _env_bool("NINA_AUDIO_SILENCE_KEEPALIVE", False)
+
+
+def _silence_keepalive_loop_seconds() -> int:
+    return _env_int("NINA_AUDIO_SILENCE_KEEPALIVE_SEC", 2, 1, 30)
+
+
+def _audio_edge_silence_ms() -> int:
+    default = 80 if _silence_keepalive_enabled() else 0
+    return _env_int("NINA_AUDIO_EDGE_SILENCE_MS", default, 0, 2000)
 
 
 def _amp_enable_gpio_pin() -> Optional[int]:
@@ -183,6 +201,8 @@ def _amp_set_enabled(enabled: bool) -> None:
 def _amp_begin_playback() -> bool:
     """Enable amp for one playback. Returns True when this call owns a user ref."""
     global _AMP_USERS
+    if _silence_keepalive_enabled():
+        return False
     if _amp_enable_gpio_pin() is None:
         return False
     with _AMP_LOCK:
@@ -331,6 +351,155 @@ def _ensure_preroll_wav(ms: int, sample_rate: int) -> Optional[Path]:
     return path
 
 
+def _ensure_silence_keepalive_wav() -> Optional[Path]:
+    sample_rate = _preroll_wav_sample_rate_hz()
+    seconds = _silence_keepalive_loop_seconds()
+    cache = _repo_root() / "nina" / "data" / ".cache"
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    path = cache / f"keepalive_silence_{seconds}s_{sample_rate}_stereo.wav"
+    if path.exists() and path.stat().st_size > 0:
+        return path
+    try:
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(sample_rate)
+            w.writeframes(b"\x00\x00\x00\x00" * sample_rate * seconds)
+    except OSError:
+        return None
+    return path
+
+
+def _silence_keepalive_cmd() -> Optional[List[str]]:
+    aplay = shutil.which("aplay")
+    if not aplay:
+        return None
+    wav = _ensure_silence_keepalive_wav()
+    if wav is None:
+        return None
+    cmd: List[str] = [aplay, "-q"]
+    dev = _aplay_device_flag()
+    if dev:
+        cmd.extend(["-D", dev])
+    cmd.append(str(wav))
+    return cmd
+
+
+def _silence_keepalive_worker() -> None:
+    global _SILENCE_KEEPALIVE_PROC
+    while not _SILENCE_KEEPALIVE_STOP.is_set():
+        cmd = _silence_keepalive_cmd()
+        if cmd is None:
+            _SILENCE_KEEPALIVE_STOP.wait(1.0)
+            continue
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            print(f"[audio] silence keepalive failed to start: {exc}")
+            _SILENCE_KEEPALIVE_STOP.wait(1.0)
+            continue
+        with _SILENCE_KEEPALIVE_LOCK:
+            _SILENCE_KEEPALIVE_PROC = proc
+        while proc.poll() is None and not _SILENCE_KEEPALIVE_STOP.is_set():
+            _SILENCE_KEEPALIVE_STOP.wait(0.1)
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=0.5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        with _SILENCE_KEEPALIVE_LOCK:
+            if _SILENCE_KEEPALIVE_PROC is proc:
+                _SILENCE_KEEPALIVE_PROC = None
+
+
+def start_silence_keepalive() -> bool:
+    """Start the optional idle silence loop that keeps MAX98357A/I2S warm."""
+    global _SILENCE_KEEPALIVE_THREAD
+    if not _silence_keepalive_enabled():
+        return False
+    # Silence keepalive replaces SD_MODE toggling: keep the amp enabled and
+    # keep I2S clocks/data alive, instead of switching the amplifier per clip.
+    if _amp_enable_gpio_pin() is not None:
+        _amp_set_enabled(True)
+    with _SILENCE_KEEPALIVE_LOCK:
+        if _SILENCE_KEEPALIVE_REAL_AUDIO_USERS > 0:
+            return False
+        if (
+            _SILENCE_KEEPALIVE_THREAD is not None
+            and _SILENCE_KEEPALIVE_THREAD.is_alive()
+        ):
+            return True
+        _SILENCE_KEEPALIVE_STOP.clear()
+        _SILENCE_KEEPALIVE_THREAD = threading.Thread(
+            target=_silence_keepalive_worker,
+            name="nina-audio-silence-keepalive",
+            daemon=True,
+        )
+        _SILENCE_KEEPALIVE_THREAD.start()
+        return True
+
+
+def stop_silence_keepalive(*, wait: bool = True) -> None:
+    """Stop idle silence playback so exclusive ``hw:`` playback can open."""
+    global _SILENCE_KEEPALIVE_THREAD
+    with _SILENCE_KEEPALIVE_LOCK:
+        thread = _SILENCE_KEEPALIVE_THREAD
+        proc = _SILENCE_KEEPALIVE_PROC
+        _SILENCE_KEEPALIVE_STOP.set()
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    if wait and thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
+    with _SILENCE_KEEPALIVE_LOCK:
+        if (
+            _SILENCE_KEEPALIVE_THREAD is not None
+            and not _SILENCE_KEEPALIVE_THREAD.is_alive()
+        ):
+            _SILENCE_KEEPALIVE_THREAD = None
+
+
+def _begin_real_audio_playback() -> bool:
+    global _SILENCE_KEEPALIVE_REAL_AUDIO_USERS
+    if not _silence_keepalive_enabled():
+        return False
+    with _SILENCE_KEEPALIVE_LOCK:
+        first = _SILENCE_KEEPALIVE_REAL_AUDIO_USERS == 0
+        _SILENCE_KEEPALIVE_REAL_AUDIO_USERS += 1
+    if first:
+        stop_silence_keepalive(wait=True)
+    return True
+
+
+def _end_real_audio_playback() -> None:
+    global _SILENCE_KEEPALIVE_REAL_AUDIO_USERS
+    if not _silence_keepalive_enabled():
+        return
+    with _SILENCE_KEEPALIVE_LOCK:
+        if _SILENCE_KEEPALIVE_REAL_AUDIO_USERS <= 0:
+            _SILENCE_KEEPALIVE_REAL_AUDIO_USERS = 0
+            restart = True
+        else:
+            _SILENCE_KEEPALIVE_REAL_AUDIO_USERS -= 1
+            restart = _SILENCE_KEEPALIVE_REAL_AUDIO_USERS == 0
+    if restart:
+        start_silence_keepalive()
+
+
 def _alsa_amixer_base() -> Optional[List[str]]:
     exe = shutil.which("amixer")
     if not exe:
@@ -448,6 +617,7 @@ def mp3_via_aplay_command_for(path: Path) -> Optional[List[str]]:
     rate_arg = "" if rate is None else str(rate)
     raw_rate_arg = str(rate if rate is not None else _GREETING_MP3_SAMPLE_RATE_HZ)
     gain_arg = str(_digital_gain_pct())
+    edge_ms_arg = str(_audio_edge_silence_ms())
     mode = _aplay_stereo_mode()
     script = r'''
 set -eu
@@ -460,6 +630,7 @@ mpg="$6"
 aplay_bin="$7"
 python_bin="$8"
 gain_pct="$9"
+edge_ms="${10}"
 tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-in-XXXXXX.wav")"
 play="$tmp"
 cleanup() { rm -f "$tmp" "$play"; }
@@ -473,11 +644,11 @@ if [ "$mode" != "none" ]; then
     # Decode to WAV first, then preserve the decoder's actual WAV sample rate
     # while placing audio into the requested I2S slot.
     play="$(mktemp "${TMPDIR:-/tmp}/nina-audio-out-XXXXXX.wav")"
-    "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" "$gain_pct" <<'PY'
+    "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" "$gain_pct" "$edge_ms" <<'PY'
 import sys
 import wave
 
-src, dst, mode, rate_s, gain_s = sys.argv[1:6]
+src, dst, mode, rate_s, gain_s, edge_ms_s = sys.argv[1:7]
 with wave.open(src, "rb") as r:
     channels = r.getnchannels()
     sampwidth = r.getsampwidth()
@@ -488,6 +659,7 @@ if sampwidth <= 0:
     raise SystemExit("invalid sample width")
 
 gain = max(0.0, min(3.0, float(gain_s) / 100.0))
+edge_frames = max(0, int(rate * (int(edge_ms_s) / 1000.0)))
 
 def scale_sample(sample):
     if sampwidth != 2 or gain == 1.0:
@@ -496,7 +668,7 @@ def scale_sample(sample):
     out = int(round(v * gain))
     return out.to_bytes(2, "little", signed=True)
 
-out = bytearray()
+out = bytearray(b"\x00" * sampwidth * 2 * edge_frames)
 if channels == 1:
     for i in range(0, len(frames), sampwidth):
         s = scale_sample(frames[i:i + sampwidth])
@@ -522,6 +694,8 @@ else:
             out.extend(z); out.extend(right)
         else:
             out.extend(left); out.extend(right)
+if edge_frames:
+    out.extend(b"\x00" * sampwidth * 2 * edge_frames)
 
 with wave.open(dst, "wb") as w:
     w.setnchannels(2)
@@ -549,6 +723,7 @@ exec "$aplay_bin" -q "$play"
         aplay,
         python,
         gain_arg,
+        edge_ms_arg,
     ]
 
 
@@ -691,6 +866,7 @@ class AudioPlayer:
         self._ffplay = shutil.which("ffplay")
         self._procs: List[subprocess.Popen] = []
         self._lock = threading.Lock()
+        start_silence_keepalive()
 
     @property
     def is_supported(self) -> bool:
@@ -717,7 +893,8 @@ class AudioPlayer:
                 "install one with: sudo apt install -y alsa-utils mpg123"
             )
             return None
-        if not skip_preroll:
+        keepalive_paused = _begin_real_audio_playback()
+        if not skip_preroll and not keepalive_paused:
             play_silence_preroll_blocking()
         amp_enabled = _amp_begin_playback()
         try:
@@ -729,12 +906,14 @@ class AudioPlayer:
         except Exception as exc:
             if amp_enabled:
                 _amp_end_playback()
+            if keepalive_paused:
+                _end_real_audio_playback()
             print(f"[audio] failed to play {path}: {exc}")
             return None
-        if amp_enabled:
+        if amp_enabled or keepalive_paused:
             threading.Thread(
-                target=self._disable_amp_after_process,
-                args=(proc,),
+                target=self._after_audio_process,
+                args=(proc, amp_enabled, keepalive_paused),
                 daemon=True,
             ).start()
         with self._lock:
@@ -743,13 +922,18 @@ class AudioPlayer:
         return proc
 
     @staticmethod
-    def _disable_amp_after_process(proc: subprocess.Popen) -> None:
+    def _after_audio_process(
+        proc: subprocess.Popen, amp_enabled: bool, keepalive_paused: bool
+    ) -> None:
         try:
             proc.wait()
         except Exception:
             pass
         finally:
-            _amp_end_playback()
+            if amp_enabled:
+                _amp_end_playback()
+            if keepalive_paused:
+                _end_real_audio_playback()
 
     def stop_all(self) -> None:
         with self._lock:

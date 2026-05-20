@@ -132,11 +132,11 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
     monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "left")
     monkeypatch.setenv("NINA_AUDIO_GAIN_PCT", "175")
-    from nina.services.audio_player import AudioPlayer
+    from nina.services.audio_player import mp3_via_aplay_command_for
 
     mp3 = tmp_path / "x.mp3"
     mp3.touch()
-    cmd = AudioPlayer()._command_for(mp3)
+    cmd = mp3_via_aplay_command_for(mp3)
     assert cmd is not None
     assert cmd[:3] == ["/bin/sh", "-c", cmd[2]]
     assert '"$mpg" -q -r "$rate" -w "$tmp"' in cmd[2]
@@ -151,6 +151,35 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     assert "left" in cmd
     assert "100" in cmd
     assert '"$python_bin" -' in cmd[2]
+
+
+def test_mp3_via_aplay_adds_edge_silence_when_keepalive_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_mpg = tmp_path / "mpg123"
+    fake_mpg.write_text("#!/bin/sh\necho mpg\n")
+    fake_mpg.chmod(0o755)
+    fake_aplay = tmp_path / "aplay"
+    fake_aplay.write_text("#!/bin/sh\necho aplay\n")
+    fake_aplay.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH",
+        f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}",
+    )
+    monkeypatch.setenv("NINA_AUDIO_MP3_VIA_APLAY", "1")
+    monkeypatch.setenv("NINA_AUDIO_SILENCE_KEEPALIVE", "1")
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "hw:CARD=APE,DEV=0")
+    monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
+    monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "left")
+    from nina.services.audio_player import mp3_via_aplay_command_for
+
+    mp3 = tmp_path / "x.mp3"
+    mp3.touch()
+    cmd = mp3_via_aplay_command_for(mp3)
+    assert cmd is not None
+    assert "edge_ms" in cmd[2]
+    assert "80" in cmd
 
 
 def test_invalid_aplay_stereo_mode_falls_back_to_none(
@@ -198,6 +227,16 @@ def test_amp_enable_gpio_toggles_around_playback(
     assert ("setup", 23, "OUT", 0) in calls
     assert ("output", 23, 1) in calls
     assert calls[-1] == ("output", 23, 0)
+
+
+def test_silence_keepalive_disables_per_clip_amp_toggle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_AMP_ENABLE_GPIO", "23")
+    monkeypatch.setenv("NINA_AUDIO_SILENCE_KEEPALIVE", "1")
+    import nina.services.audio_player as ap
+
+    assert ap._amp_begin_playback() is False
 
 
 def test_mpg123_command_omits_rate_when_auto(
