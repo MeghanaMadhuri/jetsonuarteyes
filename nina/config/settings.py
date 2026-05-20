@@ -286,13 +286,15 @@ class TouchAt42qt2120Settings:
 class IrObstacleStopSettings:
     """GP2Y0E02B forward IR on header I²C (pins 3/5 → ``/dev/i2c-7``, addr **0x40**).
 
-    Polls only while the hoverboard is **in motion** (not idle / brake neutral).
-    At or below ``threshold_mm`` (default **1000** = 100 cm) with a valid reading,
+    Polls continuously by default so it also reacts when somebody/something
+    approaches Nina while she is idle. At or below ``threshold_mm`` (default
+    **400** = 40 cm) with a valid reading,
     stops drive, parks lean brake, runs neutral pose, plays obstacle TTS.
     Enable with ``NINA_IR_OBSTACLE_STOP_ENABLE=1`` (default on).
     """
 
     enabled: bool
+    motion_gated: bool
     i2c_bus: int
     i2c_address: int
     threshold_mm: int
@@ -790,10 +792,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     ir_obstacle_stop = IrObstacleStopSettings(
         enabled=_env_bool("NINA_IR_OBSTACLE_STOP_ENABLE", True),
+        motion_gated=_env_bool("NINA_IR_OBSTACLE_MOTION_GATED", False),
         i2c_bus=_env_int("NINA_IR_OBSTACLE_I2C_BUS", _env_int("NINA_IR_I2C_BUS", 7)),
         i2c_address=_env_int("NINA_IR_OBSTACLE_I2C_ADDR", _env_int("NINA_IR_I2C_ADDR", 0x40)),
         threshold_mm=max(
-            50, min(5000, _env_int("NINA_IR_OBSTACLE_MM", 1000))
+            50, min(5000, _env_int("NINA_IR_OBSTACLE_MM", 400))
         ),
         debounce_reads=max(1, min(20, _env_int("NINA_IR_OBSTACLE_DEBOUNCE", 2))),
         cooldown_sec=max(0.0, _env_float("NINA_IR_OBSTACLE_COOLDOWN_SEC", 15.0)),

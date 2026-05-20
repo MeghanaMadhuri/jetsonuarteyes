@@ -144,7 +144,7 @@ class NinaService:
         return bool(getattr(drv, "is_in_motion", lambda: False)())
 
     def start_ir_obstacle_stop_monitor(self) -> None:
-        """Start motion-gated GP2Y0E02B IR obstacle handling when enabled."""
+        """Start GP2Y0E02B IR obstacle handling when enabled."""
         if not self.settings.ir_obstacle_stop.enabled:
             return
         if self._ir_obstacle_monitor is not None:
@@ -171,9 +171,14 @@ class NinaService:
         except Exception:
             log.exception("Obstacle stop: drive / face-follow stop failed")
 
-        with self.bus_lock:
-            if not self._bus_ready:
+        if not self._bus_ready:
+            try:
+                self.ensure_bus()
+            except Exception:
+                log.exception("Obstacle stop: bus init failed")
                 return
+
+        with self.bus_lock:
             try:
                 self.dxl._require_initialized()
             except Exception:

@@ -1,8 +1,8 @@
 """GP2Y0E02B IR obstacle stop on header I²C (bus 7 with IMU / ADC / touch).
 
-Polls the Sharp IR only while the hoverboard is **in motion** (not at idle /
-brake neutral). When a valid reading is at or below the configured threshold
-(default **1000 mm** = 100 cm), fires ``NinaService.run_obstacle_stop_reaction``.
+Polls the Sharp IR continuously by default. When a valid reading is at or below
+the configured threshold (default **400 mm** = 40 cm), fires
+``NinaService.run_obstacle_stop_reaction``.
 
 Enable with ``NINA_IR_OBSTACLE_STOP_ENABLE=1`` (default on). Shares
 ``/dev/i2c-7`` @ **0x40** with MPU-9250 (**0x68**), ADS1115 (**0x48**),
@@ -53,6 +53,7 @@ class IrObstacleStopMonitor:
         self._svc = service
         self._in_motion = in_motion_fn
         s = service.settings.ir_obstacle_stop
+        self._motion_gated = bool(getattr(s, "motion_gated", False))
         self._threshold_mm = int(s.threshold_mm)
         self._debounce_reads = int(s.debounce_reads)
         self._cooldown_sec = float(s.cooldown_sec)
@@ -78,10 +79,11 @@ class IrObstacleStopMonitor:
         )
         self._thread.start()
         log.info(
-            "IR obstacle stop monitor started (i2c-%s 0x%02X threshold=%s mm, motion-gated)",
+            "IR obstacle stop monitor started (i2c-%s 0x%02X threshold=%s mm, mode=%s)",
             self._svc.settings.ir_obstacle_stop.i2c_bus,
             self._svc.settings.ir_obstacle_stop.i2c_address,
             self._threshold_mm,
+            "motion-gated" if self._motion_gated else "continuous",
         )
 
     def stop(self) -> None:
@@ -116,7 +118,7 @@ class IrObstacleStopMonitor:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            if not self._in_motion():
+            if self._motion_gated and not self._in_motion():
                 self._close_sensor()
                 time.sleep(self._poll_sec)
                 continue

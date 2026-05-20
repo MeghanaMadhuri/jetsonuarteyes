@@ -13,14 +13,14 @@ from nina.sensors.ir_obstacle_stop_monitor import (
 
 
 class IrObstacleMotionGatingTests(unittest.TestCase):
-    def test_debounce_at_100cm_threshold(self) -> None:
+    def test_debounce_at_40cm_threshold(self) -> None:
         fire, n = obstacle_debounce_step(
-            950, threshold_mm=1000, debounce_reads=2, consecutive_hits=0
+            390, threshold_mm=400, debounce_reads=2, consecutive_hits=0
         )
         self.assertFalse(fire)
         self.assertEqual(n, 1)
         fire2, _ = obstacle_debounce_step(
-            900, threshold_mm=1000, debounce_reads=2, consecutive_hits=n
+            380, threshold_mm=400, debounce_reads=2, consecutive_hits=n
         )
         self.assertTrue(fire2)
 
@@ -30,9 +30,10 @@ class IrObstacleMotionGatingTests(unittest.TestCase):
         svc = MagicMock()
         svc.settings.ir_obstacle_stop = IrObstacleStopSettings(
             enabled=True,
+            motion_gated=True,
             i2c_bus=7,
             i2c_address=0x40,
-            threshold_mm=1000,
+            threshold_mm=400,
             debounce_reads=2,
             cooldown_sec=15.0,
             poll_interval_sec=0.02,
@@ -50,6 +51,25 @@ class IrObstacleMotionGatingTests(unittest.TestCase):
 
         mon._open_sensor()
         self.assertEqual(sensor.open.call_count, 2)
+
+    @patch("nina.sensors.ir_obstacle_stop_monitor.GP2Y0E02B")
+    def test_continuous_mode_ignores_motion_gate(self, mock_gp2y) -> None:
+        svc = MagicMock()
+        svc.settings.ir_obstacle_stop = IrObstacleStopSettings(
+            enabled=True,
+            motion_gated=False,
+            i2c_bus=7,
+            i2c_address=0x40,
+            threshold_mm=400,
+            debounce_reads=2,
+            cooldown_sec=15.0,
+            poll_interval_sec=0.02,
+            tts_text="There is an obstacle in my way",
+        )
+        mon = IrObstacleStopMonitor(svc, in_motion_fn=lambda: False)
+        self.assertFalse(mon._motion_gated)
+        mon._open_sensor()
+        mock_gp2y.return_value.open.assert_called_once()
 
 
 if __name__ == "__main__":
