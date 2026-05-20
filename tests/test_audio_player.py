@@ -67,6 +67,28 @@ def test_mpg123_command_includes_default_gtts_rate(
     assert str(_GREETING_MP3_SAMPLE_RATE_HZ) in cmd
 
 
+def test_wav_command_includes_aplay_device_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_aplay = tmp_path / "aplay"
+    fake_aplay.write_text("#!/bin/sh\necho ok\n")
+    fake_aplay.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH",
+        f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}",
+    )
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=max98357a,DEV=0")
+    from nina.services.audio_player import AudioPlayer
+
+    wav = tmp_path / "x.wav"
+    wav.touch()
+    cmd = AudioPlayer()._command_for(wav)
+    assert cmd is not None
+    assert "-D" in cmd
+    assert "plughw:CARD=max98357a,DEV=0" in cmd
+
+
 def test_mpg123_command_includes_rate_when_forced(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

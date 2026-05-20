@@ -460,7 +460,12 @@ class AudioPlayer:
     def _command_for(self, path: Path) -> Optional[List[str]]:
         ext = path.suffix.lower()
         if ext == ".wav" and self._aplay:
-            return [self._aplay, "-q", str(path)]
+            cmd = [self._aplay, "-q"]
+            dev = _aplay_device_flag()
+            if dev:
+                cmd.extend(["-D", dev])
+            cmd.append(str(path))
+            return cmd
         if ext in (".mp3",):
             cmd = mpg123_command_for(Path(path))
             if cmd:
