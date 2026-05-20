@@ -242,9 +242,9 @@ class LinkClient {
         }
 
     /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
-    suspend fun robotDriveStatus(baseUrl: String): JSONObject =
+    suspend fun robotDriveStatus(baseUrl: String, bearer: String? = null): JSONObject =
         withContext(Dispatchers.IO) {
-            get("$baseUrl/v1/robot/drive/status")
+            get("$baseUrl/v1/robot/drive/status", bearer)
         }
 
     /** Per-wheel polarity flip (matches Qt Drive Flip L/R). */

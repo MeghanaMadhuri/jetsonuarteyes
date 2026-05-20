@@ -638,7 +638,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun fetchRobotDriveStatus(): JSONObject? =
         try {
             val url = prefs.baseUrl.first()
-            client.robotDriveStatus(url)
+            val bearer = prefs.bearerToken.first()
+            client.robotDriveStatus(url, bearer)
         } catch (_: Exception) {
             null
         }

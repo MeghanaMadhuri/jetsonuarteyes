@@ -167,16 +167,23 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
     """Read-only drive snapshot for HTTP polling (must not block the Qt thread)."""
     err = peek_last_drive_error()
     dc = service.drive
+    # Match kiosk ``DriveScreen.on_enter`` — lazy BLDC init only runs after this.
+    dc.ensure_hardware()
     try:
         nav = dc._nav  # noqa: SLF001
         st = dc.state()
         brake = bool(st.get("brake", True))
         if nav is None:
-            # init still in flight
+            msg = str(st.get("driver_message", "") or "").strip()
+            connected = bool(st.get("connected"))
+            failed = "init failed" in msg.lower() or "failed" in msg.lower()
+            if not msg:
+                msg = "BLDC initializing…" if not failed else msg
             body: Dict[str, Any] = {
                 "ok": True,
-                "connected": bool(st.get("connected")),
-                "message": str(st.get("driver_message", "")),
+                "connected": connected,
+                "hardware_initializing": not connected and not failed,
+                "message": msg,
                 "invert_left": bool(st.get("invert_left", False)),
                 "invert_right": bool(st.get("invert_right", False)),
                 "brake": brake,

@@ -129,6 +129,7 @@ fun SirenaDriveScreen(
     var keyboardDriveDir by remember { mutableStateOf<String?>(null) }
     var cameraPreviewOn by remember { mutableStateOf(false) }
     var bldcConnected by remember { mutableStateOf<Boolean?>(null) }
+    var bldcInitializing by remember { mutableStateOf(false) }
     var bldcDetail by remember { mutableStateOf<String?>(null) }
     var brakeOn by remember { mutableStateOf(true) }
     var reverseOn by remember { mutableStateOf(false) }
@@ -180,16 +181,25 @@ fun SirenaDriveScreen(
     LaunchedEffect(bridgeOn, jetsonOnline, straightRunning) {
         if (!bridgeOn || !jetsonOnline) {
             bldcConnected = null
+            bldcInitializing = false
             bldcDetail = null
             return@LaunchedEffect
         }
         delay(400)
         focusRequester.requestFocus()
         while (isActive) {
+            var pollMs = if (straightRunning) 50L else 2500L
             try {
                 val j = vm.fetchRobotDriveStatus()
                 if (j != null) {
-                    bldcConnected = j.optBoolean("connected")
+                    val initializing = j.optBoolean("hardware_initializing", false)
+                    bldcInitializing = initializing
+                    if (initializing) {
+                        bldcConnected = null
+                        pollMs = 500L
+                    } else {
+                        bldcConnected = j.optBoolean("connected")
+                    }
                     val msg = j.optString("message").trim()
                     val lde = j.optString("last_drive_error").trim()
                     bldcDetail =
@@ -206,12 +216,23 @@ fun SirenaDriveScreen(
                     val side = j.optString("imu_drift_side", "n/a")
                     val straightActive = j.optBoolean("straight_pulse_active", false)
                     hudImu = formatImuHud(drift, side, straightActive || straightRunning)
+                } else {
+                    bldcInitializing = false
+                    bldcConnected = false
+                    if (bldcDetail.isNullOrBlank()) {
+                        bldcDetail = "drive status unreachable"
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
+                bldcInitializing = false
+                bldcConnected = false
+                if (bldcDetail.isNullOrBlank()) {
+                    bldcDetail = "drive status unreachable"
+                }
             }
-            delay(if (straightRunning) 50L else 2500L)
+            delay(pollMs)
         }
     }
 
@@ -348,6 +369,7 @@ fun SirenaDriveScreen(
             val bldcKind =
                 when {
                     !bridgeOn || !jetsonOnline -> SirenaPillKind.Neutral
+                    bldcInitializing -> SirenaPillKind.Warn
                     bldcConnected == true -> SirenaPillKind.Ok
                     bldcConnected == false -> SirenaPillKind.Error
                     else -> SirenaPillKind.Neutral
@@ -356,6 +378,10 @@ fun SirenaDriveScreen(
                 when {
                     !bridgeOn -> "BLDC · bridge off"
                     !jetsonOnline -> "BLDC · offline"
+                    bldcInitializing -> {
+                        val d = bldcDetail
+                        if (!d.isNullOrBlank()) "BLDC · ${d.take(48)}" else "BLDC · initializing…"
+                    }
                     bldcConnected == true -> "BLDC · connected"
                     bldcConnected == false -> {
                         val d = bldcDetail

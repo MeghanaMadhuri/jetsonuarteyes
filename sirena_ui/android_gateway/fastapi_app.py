@@ -845,7 +845,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             }
         from sirena_ui.android_gateway.tablet_drive_extras import drive_status_payload
 
-        st = _run_bg(lambda: drive_status_payload(gw.service), timeout=30.0)
+        st = gw.plane.submit(
+            lambda: drive_status_payload(gw.service),
+            timeout=30.0,
+        )
         st["bridge_enabled"] = True
         return st
 
