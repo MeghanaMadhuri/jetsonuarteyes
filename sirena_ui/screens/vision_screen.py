@@ -16,6 +16,7 @@ so layout work is unaffected.
 
 from __future__ import annotations
 
+import os
 from typing import List, Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -46,6 +47,21 @@ from sirena_ui.workers.aruco_follow_controller import ArucoFollowController
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.object_announcer import ObjectAnnouncer
 from sirena_ui.workers.vision_types import KIND_FACE, KIND_OBJECT, Detection
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "y", "on")
+
+
+def _auto_start_face_detection() -> bool:
+    return _env_bool("NINA_VISION_FACE_AUTO", False)
+
+
+def _auto_start_object_detection() -> bool:
+    return _env_bool("NINA_VISION_OBJECT_AUTO", False)
 
 
 class _ToggleRow(QFrame):
@@ -182,8 +198,9 @@ class VisionScreen(QWidget):
         # holder, the camera comes up.
         worker.acquire()
         self._holds_camera = True
-        # Sync toggles that default ON so the worker actually starts
-        # detectors without requiring an extra click.
+        # Sync any detector toggles the operator/env explicitly left ON.
+        # Defaults are OFF so the screen opens the camera preview quickly
+        # without forcing YOLO/TensorRT startup or dependency errors.
         if self._face_toggle is not None and self._face_toggle._btn.isChecked():  # noqa: SLF001
             worker.set_face_enabled(True)
         if self._object_toggle is not None and self._object_toggle._btn.isChecked():  # noqa: SLF001
@@ -295,8 +312,8 @@ class VisionScreen(QWidget):
         card = Card(padding=12, spacing=6)
 
         card.add(SectionLabel("Recognition"))
-        face = _ToggleRow("Face recognition", on=True)
-        obj = _ToggleRow("Object detection", on=True)
+        face = _ToggleRow("Face recognition", on=_auto_start_face_detection())
+        obj = _ToggleRow("Object detection", on=_auto_start_object_detection())
         for w in (face, obj):
             card.add(w)
         self._face_toggle = face
@@ -656,7 +673,7 @@ class VisionScreen(QWidget):
                 w.deleteLater()
         if not detections:
             empty = MutedLabel(
-                "No detections yet \u2014 toggle Face or Object to start."
+                "Camera preview starts first. Toggle Face or Object to load detectors."
             )
             empty.setWordWrap(True)
             layout.addWidget(empty)
