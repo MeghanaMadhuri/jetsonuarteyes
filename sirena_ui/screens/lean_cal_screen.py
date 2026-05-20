@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -359,19 +359,36 @@ class LeanCalScreen(QWidget):
     # --- screen lifecycle ---
 
     def on_enter(self) -> None:
-        """Bring the bus up (idempotent) and park to brake as a known
-        starting pose. The first apply the operator triggers will move
-        the chassis off brake to the configured backward lean."""
-        try:
-            self._service.ensure_bus()
-        except Exception as exc:
-            log.exception("lean-cal: ensure_bus failed")
-            self._status.setText(f"bus init failed: {exc}")
-            return
+        """Cheap, non-blocking entry: do NOT re-init the bus here.
+
+        The app-level ``_initialize_bus`` (kicked off from
+        ``MainWindow`` at startup) brings the Dynamixel bus up on a
+        background ``_BusInitThread`` — by the time the operator
+        navigates to this screen the bus is normally ready. Calling
+        :meth:`NinaService.ensure_bus` AGAIN from ``on_enter`` would
+        block the GUI thread for ~15-20 s on every entry because
+        ``ensure_bus`` re-runs the health check + joint-mode setup +
+        torque enable on every call (not just the first), and it
+        holds ``bus_lock`` the whole time.
+
+        Instead we just check ``bus_ready`` and defer the (fast)
+        brake park via a ``QTimer.singleShot(0, ...)`` so the screen
+        paints first. If the bus isn't ready yet the operator gets a
+        friendly status message; they can navigate away and back, or
+        just wait — the first slider commit will retry the bus call
+        via :meth:`_push_to_bus`, which is cheap.
+        """
+        self._status.setText("Loading \u2026")
+        # Defer the actual work so the screen paints immediately.
+        QTimer.singleShot(0, self._on_enter_deferred)
+
+    def _on_enter_deferred(self) -> None:
         if not self._service.bus_ready:
             self._status.setText(
-                "Dynamixel bus not ready \u2014 check cable / power. "
-                "Try again from the Health screen."
+                "Dynamixel bus is still initializing \u2014 give it a few "
+                "seconds and try again, or check the Health screen. "
+                "Sliders work either way; they'll push to the motors "
+                "as soon as the bus is up."
             )
             return
         try:
@@ -387,7 +404,10 @@ class LeanCalScreen(QWidget):
 
     def on_leave(self) -> None:
         """Always park back to brake when the operator leaves the
-        screen — don't strand the lean stack tilted."""
+        screen — don't strand the lean stack tilted. Skipped when the
+        bus isn't ready (nothing to park to)."""
+        if not self._service.bus_ready:
+            return
         try:
             self._service.park_hoverboard_brake()
         except Exception:
