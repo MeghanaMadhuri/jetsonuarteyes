@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -158,6 +160,44 @@ def test_invalid_aplay_stereo_mode_falls_back_to_none(
     from nina.services.audio_player import _aplay_stereo_mode
 
     assert _aplay_stereo_mode() == "none"
+
+
+def test_amp_enable_gpio_toggles_around_playback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple] = []
+    fake_gpio = types.ModuleType("Jetson.GPIO")
+    fake_gpio.BCM = "BCM"
+    fake_gpio.OUT = "OUT"
+    fake_gpio.HIGH = 1
+    fake_gpio.LOW = 0
+    fake_gpio.setmode = lambda mode: calls.append(("setmode", mode))
+    fake_gpio.setwarnings = lambda value: calls.append(("setwarnings", value))
+    fake_gpio.setup = lambda pin, mode, initial=None: calls.append(
+        ("setup", pin, mode, initial)
+    )
+    fake_gpio.output = lambda pin, level: calls.append(("output", pin, level))
+    fake_pkg = types.ModuleType("Jetson")
+    fake_pkg.GPIO = fake_gpio
+    monkeypatch.setitem(sys.modules, "Jetson", fake_pkg)
+    monkeypatch.setitem(sys.modules, "Jetson.GPIO", fake_gpio)
+    monkeypatch.setenv("NINA_AUDIO_AMP_ENABLE_GPIO", "23")
+    monkeypatch.setenv("NINA_AUDIO_AMP_PRE_ENABLE_MS", "0")
+    monkeypatch.setenv("NINA_AUDIO_AMP_POST_DISABLE_MS", "0")
+
+    import nina.services.audio_player as ap
+
+    monkeypatch.setattr(ap, "_AMP_GPIO", None)
+    monkeypatch.setattr(ap, "_AMP_PIN", None)
+    monkeypatch.setattr(ap, "_AMP_USERS", 0)
+    monkeypatch.setattr(ap, "_AMP_SETUP_FAILED", False)
+
+    assert ap._amp_begin_playback() is True
+    ap._amp_end_playback()
+
+    assert ("setup", 23, "OUT", 0) in calls
+    assert ("output", 23, 1) in calls
+    assert calls[-1] == ("output", 23, 0)
 
 
 def test_mpg123_command_omits_rate_when_auto(

@@ -71,6 +71,25 @@ Many Jetson developer kits expose an I2S port on the 40-pin header:
 Verify the exact pinmux for your Jetson / carrier. Do not assume the header
 pins are in I2S mode just because they are physically connected.
 
+### Optional pop suppression
+
+To mute start/end artifacts, wire MAX98357A `SD` / `SD_MODE` to a free Jetson
+GPIO instead of tying it permanently high. Nina can then enable the amplifier
+only while an audio process is running.
+
+Use BCM numbering for the env var:
+
+```bash
+NINA_AUDIO_AMP_ENABLE_GPIO=<bcm-gpio>
+NINA_AUDIO_AMP_ENABLE_ACTIVE_HIGH=1
+NINA_AUDIO_AMP_PRE_ENABLE_MS=40
+NINA_AUDIO_AMP_POST_DISABLE_MS=80
+```
+
+`PRE_ENABLE_MS` gives the amp a short wake-up time before real audio starts.
+`POST_DISABLE_MS` keeps it on briefly after playback so the tail does not get
+cut off. Leave `NINA_AUDIO_AMP_ENABLE_GPIO` unset if `SD_MODE` is tied high.
+
 ## Enable Jetson I2S / sound card
 
 ### Preferred: Jetson-IO
@@ -181,6 +200,11 @@ NINA_AUDIO_APE_FRAME_MODE=i2s
 NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
 NINA_AUDIO_APE_BCLK_RATIO=16
 NINA_AUDIO_APE_FSYNC_WIDTH=1
+# Optional, only if MAX98357A SD/SD_MODE is wired to Jetson GPIO:
+# NINA_AUDIO_AMP_ENABLE_GPIO=23
+# NINA_AUDIO_AMP_ENABLE_ACTIVE_HIGH=1
+# NINA_AUDIO_AMP_PRE_ENABLE_MS=40
+# NINA_AUDIO_AMP_POST_DISABLE_MS=80
 ```
 
 Then restart Nina:

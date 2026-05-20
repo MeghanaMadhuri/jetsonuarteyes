@@ -60,6 +60,12 @@ from typing import List, Optional
 # and action clips in this repo decode as mono ~64 kb/s at this rate (verify with
 # ``ffprobe -show_entries stream=sample_rate`` on any ``*.mp3``).
 _GREETING_MP3_SAMPLE_RATE_HZ = 24000
+_AMP_LOCK = threading.Lock()
+_AMP_GPIO = None
+_AMP_PIN: Optional[int] = None
+_AMP_ACTIVE_HIGH = True
+_AMP_USERS = 0
+_AMP_SETUP_FAILED = False
 
 
 def _repo_root() -> Path:
@@ -94,6 +100,117 @@ def _output_warmup_ms() -> int:
 def _recover_zero_master_enabled() -> bool:
     v = (os.environ.get("NINA_AUDIO_RECOVER_ZERO_MASTER") or "").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "y", "on")
+
+
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, min(hi, int(raw)))
+    except ValueError:
+        return default
+
+
+def _amp_enable_gpio_pin() -> Optional[int]:
+    raw = (os.environ.get("NINA_AUDIO_AMP_ENABLE_GPIO") or "").strip()
+    if not raw:
+        return None
+    try:
+        pin = int(raw)
+    except ValueError:
+        return None
+    return pin if pin >= 0 else None
+
+
+def _amp_pre_enable_delay_sec() -> float:
+    return _env_int("NINA_AUDIO_AMP_PRE_ENABLE_MS", 40, 0, 1000) / 1000.0
+
+
+def _amp_post_disable_delay_sec() -> float:
+    return _env_int("NINA_AUDIO_AMP_POST_DISABLE_MS", 80, 0, 5000) / 1000.0
+
+
+def _amp_gpio_setup() -> bool:
+    """Configure optional MAX98357A SD/enable GPIO. No-op unless env is set."""
+    global _AMP_ACTIVE_HIGH, _AMP_GPIO, _AMP_PIN, _AMP_SETUP_FAILED
+    pin = _amp_enable_gpio_pin()
+    if pin is None:
+        return False
+    with _AMP_LOCK:
+        if _AMP_GPIO is not None and _AMP_PIN == pin:
+            return True
+        if _AMP_SETUP_FAILED:
+            return False
+        try:
+            import Jetson.GPIO as GPIO  # type: ignore
+
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            _AMP_ACTIVE_HIGH = _env_bool("NINA_AUDIO_AMP_ENABLE_ACTIVE_HIGH", True)
+            inactive = GPIO.LOW if _AMP_ACTIVE_HIGH else GPIO.HIGH
+            GPIO.setup(pin, GPIO.OUT, initial=inactive)
+        except Exception as exc:
+            _AMP_SETUP_FAILED = True
+            print(f"[audio] amp enable GPIO setup failed for BCM {pin}: {exc}")
+            return False
+        _AMP_GPIO = GPIO
+        _AMP_PIN = pin
+        return True
+
+
+def _amp_set_enabled(enabled: bool) -> None:
+    if not _amp_gpio_setup():
+        return
+    gpio = _AMP_GPIO
+    pin = _AMP_PIN
+    if gpio is None or pin is None:
+        return
+    level = gpio.HIGH if (enabled == _AMP_ACTIVE_HIGH) else gpio.LOW
+    try:
+        gpio.output(pin, level)
+    except Exception as exc:
+        print(f"[audio] amp enable GPIO write failed for BCM {pin}: {exc}")
+
+
+def _amp_begin_playback() -> bool:
+    """Enable amp for one playback. Returns True when this call owns a user ref."""
+    global _AMP_USERS
+    if _amp_enable_gpio_pin() is None:
+        return False
+    with _AMP_LOCK:
+        first = _AMP_USERS == 0
+        _AMP_USERS += 1
+    if first:
+        _amp_set_enabled(True)
+        delay = _amp_pre_enable_delay_sec()
+        if delay > 0:
+            time.sleep(delay)
+    return True
+
+
+def _amp_end_playback() -> None:
+    global _AMP_USERS
+    if _amp_enable_gpio_pin() is None:
+        return
+    with _AMP_LOCK:
+        if _AMP_USERS <= 0:
+            _AMP_USERS = 0
+            return
+        _AMP_USERS -= 1
+        last = _AMP_USERS == 0
+    if last:
+        delay = _amp_post_disable_delay_sec()
+        if delay > 0:
+            time.sleep(delay)
+        _amp_set_enabled(False)
 
 
 def _mp3_via_aplay_enabled() -> bool:
@@ -602,6 +719,7 @@ class AudioPlayer:
             return None
         if not skip_preroll:
             play_silence_preroll_blocking()
+        amp_enabled = _amp_begin_playback()
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -609,12 +727,29 @@ class AudioPlayer:
                 stderr=subprocess.DEVNULL,
             )
         except Exception as exc:
+            if amp_enabled:
+                _amp_end_playback()
             print(f"[audio] failed to play {path}: {exc}")
             return None
+        if amp_enabled:
+            threading.Thread(
+                target=self._disable_amp_after_process,
+                args=(proc,),
+                daemon=True,
+            ).start()
         with self._lock:
             self._procs = [p for p in self._procs if p.poll() is None]
             self._procs.append(proc)
         return proc
+
+    @staticmethod
+    def _disable_amp_after_process(proc: subprocess.Popen) -> None:
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        finally:
+            _amp_end_playback()
 
     def stop_all(self) -> None:
         with self._lock:
