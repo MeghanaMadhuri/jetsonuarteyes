@@ -843,7 +843,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "invert_right": False,
                 "brake": True,
             }
-        from sirena_ui.android_gateway.tablet_drive_extras import drive_status_payload
+        from sirena_ui.android_gateway.drive_http import drive_status_payload
 
         try:
             st = gw.plane.submit(

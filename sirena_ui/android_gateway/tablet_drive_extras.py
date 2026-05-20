@@ -10,7 +10,6 @@ import time
 from typing import Any, Dict, Optional
 
 from nina.config.settings import HoverboardAxisSettings
-from nina.config.hover_calibration import read_hover_calibration_ints
 from nina.controllers.hoverboard_axis_drive import (
     estimate_backward_pulse_series_duration_sec,
     estimate_forward_pulse_series_duration_sec,
@@ -30,57 +29,6 @@ def _autonomy_blocks(service: NinaService) -> bool:
     except Exception:
         log.exception("autonomy check")
     return False
-
-
-def drive_status_payload(service: NinaService) -> Dict[str, Any]:
-    """Extended drive snapshot for tablet HUD (matches kiosk ``drive_screen``)."""
-    from sirena_ui.android_gateway.drive_http import (
-        _json_safe_float,
-        _sanitize_drive_status_body,
-        navigation_hw_status,
-        peek_last_drive_error,
-    )
-
-    body = navigation_hw_status(service)
-    dc = service.drive
-    try:
-        st = dc.state()
-        body["speed_pct"] = int(st.get("speed_pct", 0))
-        body["heading_deg"] = _json_safe_float(st.get("heading_deg", 0.0))
-        body["distance_m"] = _json_safe_float(st.get("distance_m", 0.0))
-        body["direction"] = str(st.get("direction", "idle"))
-        body["reverse"] = bool(st.get("reverse", False))
-    except Exception as exc:
-        log.debug("drive state merge: %s", exc)
-
-    drift_side = "n/a"
-    drift_deg: Optional[float] = None
-    try:
-        mon = service.imu_monitor
-        if mon is None:
-            drift_side = "off"
-        else:
-            s = mon.snapshot()
-            drift_deg = _json_safe_float(s.yaw_drift_deg)
-            drift_side = str(s.drift_side)
-    except Exception:
-        pass
-    body["imu_drift_deg"] = drift_deg
-    body["imu_drift_side"] = drift_side
-
-    straight_active = False
-    try:
-        nav = dc._nav  # noqa: SLF001
-        if nav is not None and hasattr(nav, "is_straight_pulse_series_active"):
-            straight_active = bool(nav.is_straight_pulse_series_active())
-    except Exception:
-        pass
-    body["straight_pulse_active"] = straight_active
-
-    err = peek_last_drive_error()
-    if err:
-        body["last_drive_error"] = err
-    return _sanitize_drive_status_body(body)
 
 
 def _straight_fwd_duration_ms(
@@ -238,6 +186,8 @@ def hover_straight_stop(service: NinaService) -> Dict[str, Any]:
 
 
 def hover_calibration_snapshot(service: NinaService) -> Dict[str, Any]:
+    from nina.config.hover_calibration import read_hover_calibration_ints
+
     ax = service.settings.hoverboard_axis
     nav = service.settings.navigation
     tl0, tl1 = hover_computed_turn_pivot_goals(ax, turn_left=True)

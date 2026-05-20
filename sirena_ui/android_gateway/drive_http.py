@@ -333,6 +333,50 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
         return _sanitize_drive_status_body(out)
 
 
+def drive_status_payload(service: NinaService) -> Dict[str, Any]:
+    """Extended drive snapshot for tablet HUD (matches kiosk ``drive_screen``)."""
+    body = navigation_hw_status(service)
+    dc = service.drive
+    try:
+        st = dc.state()
+        body["speed_pct"] = int(st.get("speed_pct", 0))
+        body["heading_deg"] = _json_safe_float(st.get("heading_deg", 0.0))
+        body["distance_m"] = _json_safe_float(st.get("distance_m", 0.0))
+        body["direction"] = str(st.get("direction", "idle"))
+        body["reverse"] = bool(st.get("reverse", False))
+    except Exception as exc:
+        log.debug("drive state merge: %s", exc)
+
+    drift_side = "n/a"
+    drift_deg: Optional[float] = None
+    try:
+        mon = service.imu_monitor
+        if mon is None:
+            drift_side = "off"
+        else:
+            s = mon.snapshot()
+            drift_deg = _json_safe_float(s.yaw_drift_deg)
+            drift_side = str(s.drift_side)
+    except Exception:
+        pass
+    body["imu_drift_deg"] = drift_deg
+    body["imu_drift_side"] = drift_side
+
+    straight_active = False
+    try:
+        nav = dc._nav  # noqa: SLF001
+        if nav is not None and hasattr(nav, "is_straight_pulse_series_active"):
+            straight_active = bool(nav.is_straight_pulse_series_active())
+    except Exception:
+        pass
+    body["straight_pulse_active"] = straight_active
+
+    err = peek_last_drive_error()
+    if err:
+        body["last_drive_error"] = err
+    return _sanitize_drive_status_body(body)
+
+
 def set_wheel_invert(
     service: NinaService,
     *,
