@@ -149,8 +149,16 @@ def hover_straight_start(service: NinaService, *, backward: bool) -> Dict[str, A
     """Match kiosk ``DriveScreen._begin_straight_bench_run`` / ``_apply_straight_sequence_segment``."""
     if _autonomy_blocks(service):
         return {"ok": False, "error": "autonomy active — disable autonomy first"}
+    from sirena_ui.android_gateway.drive_http import (
+        _drive_not_ready_response,
+        _prime_drive_hardware,
+    )
+
+    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    blocked = _drive_not_ready_response(prime)
+    if blocked is not None:
+        return blocked
     dc = service.drive
-    dc.ensure_hardware()
     st = dc.state()
     if not bool(st.get("connected")):
         msg = str(st.get("driver_message", "")).strip()

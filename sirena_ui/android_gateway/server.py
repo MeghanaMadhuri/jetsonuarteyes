@@ -130,6 +130,20 @@ def start_tablet_gateway(service: NinaService) -> None:
     )
     _server_thread.start()
 
+    if cfg.enable_robot_bridge:
+
+        def _bootstrap_drive() -> None:
+            try:
+                from sirena_ui.android_gateway.drive_http import bootstrap_tablet_drive
+
+                bootstrap_tablet_drive(service)
+            except Exception:
+                log.exception("tablet gateway: drive bootstrap failed")
+
+        from PyQt5.QtCore import QTimer
+
+        QTimer.singleShot(500, _bootstrap_drive)
+
     if cfg.mdns_advertise:
         ident = _system_identity(cfg, coordinator)
         label = os.environ.get("NINA_LINK_MDNS_NAME", "").strip() or (

@@ -40,6 +40,64 @@ def _autonomy_blocks(service: NinaService) -> bool:
     return False
 
 
+def _prime_drive_hardware(
+    service: NinaService,
+    *,
+    wait_timeout_sec: float = 10.0,
+) -> Dict[str, Any]:
+    """Bring up Dynamixel bus + BLDC nav for tablet HTTP (no kiosk Drive screen).
+
+    Kiosk ``DriveScreen.on_enter`` only called ``ensure_hardware()``; the bus is
+    normally started from ``MainWindow``, but HTTP must not depend on that screen.
+    """
+    try:
+        service.ensure_bus()
+    except Exception as exc:
+        log.exception("ensure_bus before tablet drive")
+        return {"ok": False, "ready": False, "error": f"Dynamixel bus: {exc}"}
+    try:
+        service.start_mpu9250_imu_monitor()
+    except Exception:
+        log.debug("IMU monitor start skipped", exc_info=True)
+    dc = service.drive
+    dc.ensure_hardware()
+    if dc._nav is not None:  # noqa: SLF001
+        return {"ok": True, "ready": True}
+    deadline = time.monotonic() + max(0.0, float(wait_timeout_sec))
+    while time.monotonic() < deadline:
+        if dc._nav is not None:  # noqa: SLF001
+            return {"ok": True, "ready": True}
+        st = dc.state()
+        msg = str(st.get("driver_message", "") or "").strip()
+        if "init failed" in msg.lower():
+            return {"ok": False, "ready": False, "error": msg or "BLDC init failed"}
+        time.sleep(0.05)
+    msg = str(dc.state().get("driver_message", "") or "").strip()
+    return {
+        "ok": True,
+        "ready": False,
+        "hardware_initializing": True,
+        "error": msg or "BLDC still initializing — retry in a moment",
+    }
+
+
+def _drive_not_ready_response(prime: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if prime.get("ready"):
+        return None
+    out: Dict[str, Any] = {
+        "ok": False,
+        "error": str(prime.get("error") or "BLDC not ready"),
+    }
+    if prime.get("hardware_initializing"):
+        out["hardware_initializing"] = True
+    return out
+
+
+def bootstrap_tablet_drive(service: NinaService) -> None:
+    """Best-effort BLDC bring-up when the robot bridge starts (background)."""
+    _prime_drive_hardware(service, wait_timeout_sec=15.0)
+
+
 def momentary_drive(
     service: NinaService,
     *,
@@ -59,6 +117,11 @@ def momentary_drive(
             "ok": False,
             "error": "autonomy active — disable autonomy before HTTP drive",
         }
+
+    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    blocked = _drive_not_ready_response(prime)
+    if blocked is not None:
+        return blocked
 
     dc = service.drive
 
@@ -118,8 +181,11 @@ def drive_hold_start(service: NinaService, *, direction: str) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before manual drive",
         }
+    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    blocked = _drive_not_ready_response(prime)
+    if blocked is not None:
+        return blocked
     dc = service.drive
-    dc.ensure_hardware()
     with dc._lock:  # noqa: SLF001
         if dc._state.get("brake"):  # noqa: SLF001
             return {"ok": False, "error": "Release brake to drive."}
@@ -145,8 +211,11 @@ def drive_turn(service: NinaService, *, which: str) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before manual turns",
         }
+    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    blocked = _drive_not_ready_response(prime)
+    if blocked is not None:
+        return blocked
     dc = service.drive
-    dc.ensure_hardware()
     with dc._lock:  # noqa: SLF001
         if dc._state.get("brake"):  # noqa: SLF001
             return {"ok": False, "error": "Release brake before running a turn."}
@@ -166,9 +235,8 @@ def set_drive_reverse(service: NinaService, *, on: bool) -> Dict[str, Any]:
 def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
     """Read-only drive snapshot for HTTP polling (must not block the Qt thread)."""
     err = peek_last_drive_error()
+    _prime_drive_hardware(service, wait_timeout_sec=2.0)
     dc = service.drive
-    # Match kiosk ``DriveScreen.on_enter`` — lazy BLDC init only runs after this.
-    dc.ensure_hardware()
     try:
         nav = dc._nav  # noqa: SLF001
         st = dc.state()
@@ -252,14 +320,19 @@ def robot_set_brake(service: NinaService, *, on: bool) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before releasing brake",
         }
+    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    if not on:
+        blocked = _drive_not_ready_response(prime)
+        if blocked is not None:
+            return blocked
     dc = service.drive
-    dc.ensure_hardware()
     dc.set_brake(bool(on))
     st = dc.state()
     return {"ok": True, "brake": bool(st.get("brake", on))}
 
 
 def emergency_stop(service: NinaService) -> Dict[str, Any]:
+    _prime_drive_hardware(service, wait_timeout_sec=10.0)
     dc = service.drive
 
     def run() -> None:
