@@ -39,7 +39,7 @@ from nina.services.audio_player import AudioPlayer
 from nina.services.sensor_alert_audio import (
     maybe_speak_low_battery,
     maybe_speak_obstacle_alert,
-    play_touch_alert,
+    maybe_speak_touch_alert,
 )
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
@@ -289,7 +289,7 @@ class NinaService:
                 log.exception("Park all motors at goal %s failed", goal)
 
     def run_touch_reaction(self) -> None:
-        """Stop drive, park motors 1–13 at neutral (2048), speak touch TTS."""
+        """Stop drive, speak touch alert, park motors 1–13 at neutral (2048)."""
         try:
             if self._face_follow is not None:
                 try:
@@ -300,15 +300,14 @@ class NinaService:
         except Exception:
             log.exception("Touch: drive / face-follow stop failed")
 
-        goal = max(0, min(4095, int(self.settings.touch_at42qt2120.motor_goal)))
-        self._park_all_motors_at_goal(goal)
-
+        phrase = (self.settings.touch_at42qt2120.tts_text or "").strip()
         try:
-            play_touch_alert(
-                phrase=(self.settings.touch_at42qt2120.tts_text or "").strip()
-            )
+            maybe_speak_touch_alert(phrase=phrase)
         except Exception:
             log.exception("Touch alert playback failed")
+
+        goal = max(0, min(4095, int(self.settings.touch_at42qt2120.motor_goal)))
+        self._park_all_motors_at_goal(goal)
 
     def start_mpu9250_imu_monitor(self) -> None:
         """Start MPU-9250 drift sampler when ``NINA_IMU_MPU9250_ENABLE`` is set.

@@ -176,6 +176,18 @@ def play_touch_alert(*, phrase: str | None = None) -> None:
     )
 
 
+def maybe_speak_touch_alert(phrase: Optional[str] = None) -> None:
+    """Play the touch alert on a daemon thread so I²C polling is not delayed."""
+
+    def _run() -> None:
+        try:
+            play_touch_alert(phrase=phrase)
+        except Exception:
+            log.exception("Touch alert playback failed")
+
+    threading.Thread(target=_run, daemon=True, name="touch-alert").start()
+
+
 def play_obstacle_alert(*, phrase: str | None = None) -> None:
     play_bundled_or_gtts(
         obstacle_alert_path(),
