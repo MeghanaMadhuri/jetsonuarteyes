@@ -136,9 +136,10 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     cmd = AudioPlayer()._command_for(mp3)
     assert cmd is not None
     assert cmd[:3] == ["/bin/sh", "-c", cmd[2]]
-    assert '"$mpg" -q -m -r' in cmd[2]
+    assert '"$mpg" -q -r "$rate" -w "$tmp"' in cmd[2]
     assert 'exec "$aplay_bin" -q -D' in cmd[2]
     assert "else:\n    if [ -n \"$rate\" ]" not in cmd[2]
+    assert "\nelse:\n    frame_width = channels * sampwidth" in cmd[2]
     assert str(mp3) in cmd
     assert "plughw:CARD=APE,DEV=0" in cmd
     assert str(fake_mpg) in cmd

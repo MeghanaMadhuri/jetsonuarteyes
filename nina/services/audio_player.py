@@ -328,34 +328,57 @@ aplay_bin="$7"
 python_bin="$8"
 tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-in-XXXXXX.wav")"
 play="$tmp"
-raw=""
-cleanup() { rm -f "$tmp" "$play" "$raw"; }
+cleanup() { rm -f "$tmp" "$play"; }
 trap cleanup EXIT
+if [ -n "$rate" ]; then
+    "$mpg" -q -r "$rate" -w "$tmp" "$src"
+else
+    "$mpg" -q -w "$tmp" "$src"
+fi
 if [ "$mode" != "none" ]; then
-    raw="$(mktemp "${TMPDIR:-/tmp}/nina-audio-raw-XXXXXX.pcm")"
-    # Decode to raw mono PCM, then write the WAV header ourselves. This avoids
-    # Jetson hw playback inheriting an unexpected mpg123 WAV channel/rate shape.
-    "$mpg" -q -m -r "$raw_rate" -s "$src" > "$raw"
+    # Decode to WAV first, then preserve the decoder's actual WAV sample rate
+    # while placing audio into the requested I2S slot.
     play="$(mktemp "${TMPDIR:-/tmp}/nina-audio-out-XXXXXX.wav")"
-    "$python_bin" - "$raw" "$play" "$mode" "$raw_rate" <<'PY'
+    "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" <<'PY'
 import sys
 import wave
 
 src, dst, mode, rate_s = sys.argv[1:5]
-rate = int(rate_s)
-sampwidth = 2
-frames = open(src, "rb").read()
+with wave.open(src, "rb") as r:
+    channels = r.getnchannels()
+    sampwidth = r.getsampwidth()
+    rate = r.getframerate()
+    frames = r.readframes(r.getnframes())
+
+if sampwidth <= 0:
+    raise SystemExit("invalid sample width")
 
 out = bytearray()
-for i in range(0, len(frames) - (len(frames) % sampwidth), sampwidth):
-    s = frames[i:i + sampwidth]
-    z = b"\x00" * sampwidth
-    if mode == "left":
-        out.extend(s); out.extend(z)
-    elif mode == "right":
-        out.extend(z); out.extend(s)
-    else:
-        out.extend(s); out.extend(s)
+if channels == 1:
+    for i in range(0, len(frames), sampwidth):
+        s = frames[i:i + sampwidth]
+        z = b"\x00" * sampwidth
+        if mode == "left":
+            out.extend(s); out.extend(z)
+        elif mode == "right":
+            out.extend(z); out.extend(s)
+        else:
+            out.extend(s); out.extend(s)
+else:
+    frame_width = channels * sampwidth
+    for i in range(0, len(frames), frame_width):
+        frame = frames[i:i + frame_width]
+        if len(frame) < frame_width:
+            continue
+        left = frame[0:sampwidth]
+        right = frame[sampwidth:2 * sampwidth]
+        z = b"\x00" * sampwidth
+        if mode == "left":
+            out.extend(left); out.extend(z)
+        elif mode == "right":
+            out.extend(z); out.extend(right)
+        else:
+            out.extend(left); out.extend(right)
 
 with wave.open(dst, "wb") as w:
     w.setnchannels(2)
@@ -363,12 +386,6 @@ with wave.open(dst, "wb") as w:
     w.setframerate(rate)
     w.writeframes(bytes(out))
 PY
-else
-    if [ -n "$rate" ]; then
-        "$mpg" -q -r "$rate" -w "$tmp" "$src"
-    else
-        "$mpg" -q -w "$tmp" "$src"
-    fi
 fi
 if [ -n "$dev" ]; then
     exec "$aplay_bin" -q -D "$dev" "$play"
