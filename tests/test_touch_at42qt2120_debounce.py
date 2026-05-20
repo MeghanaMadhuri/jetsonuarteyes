@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from nina.sensors.touch_at42qt2120_monitor import (
+    touch_baseline_ready_step,
     touch_debounce_step,
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
+    touch_stuck_high_step,
 )
 
 
@@ -83,6 +85,60 @@ def test_release_rearm_after_consecutive_clear_polls() -> None:
     )
     assert armed
     assert clear == 0
+
+
+def test_stuck_high_suppresses_effective_touch() -> None:
+    t0 = 100.0
+    eff, latched, since, clear_hits, newly = touch_stuck_high_step(
+        True,
+        stuck_latched=False,
+        touch_high_since_mono=t0,
+        stuck_clear_hits=0,
+        now=t0 + 2.1,
+        stuck_after_sec=2.0,
+        stuck_clear_reads=5,
+    )
+    assert not eff
+    assert latched
+    assert newly
+
+
+def test_stuck_high_clears_after_release() -> None:
+    _, latched, _, clear_hits, _ = touch_stuck_high_step(
+        False,
+        stuck_latched=True,
+        touch_high_since_mono=None,
+        stuck_clear_hits=4,
+        now=0.0,
+        stuck_after_sec=2.0,
+        stuck_clear_reads=5,
+    )
+    assert latched
+    assert clear_hits == 5
+    eff, latched, _, _, _ = touch_stuck_high_step(
+        False,
+        stuck_latched=True,
+        touch_high_since_mono=None,
+        stuck_clear_hits=5,
+        now=0.0,
+        stuck_after_sec=2.0,
+        stuck_clear_reads=5,
+    )
+    assert not eff
+    assert not latched
+
+
+def test_baseline_requires_clear_before_ready() -> None:
+    ready, hits = touch_baseline_ready_step(
+        True, baseline_ready=False, baseline_clear_reads=3, consecutive_clear=0
+    )
+    assert not ready
+    assert hits == 0
+    ready, hits = touch_baseline_ready_step(
+        False, baseline_ready=False, baseline_clear_reads=3, consecutive_clear=2
+    )
+    assert ready
+    assert hits == 0
 
 
 def test_simulated_monitor_loop_one_fire_per_gesture() -> None:

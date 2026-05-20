@@ -158,6 +158,19 @@ class AT42QT2120:
             return True
         return self.read_key_mask() != 0
 
+    def touch_snapshot(self) -> dict:
+        """Raw register view for bench/debug (STATUS vs key mask)."""
+        st = self.read_status()
+        mask = self.read_key_mask()
+        return {
+            "status": st,
+            "mask": mask,
+            "keys_pressed": bool(st & _STATUS_KEYS),
+            "slider_pressed": bool(st & _STATUS_SLIDER),
+            "calibrating": bool(st & _STATUS_CALIBRATING),
+            "any_touch": self.any_touch(),
+        }
+
     def touched_channel_names(self) -> list[int]:
         mask = self.read_key_mask()
         return [ch for ch in range(12) if mask & (1 << ch)]

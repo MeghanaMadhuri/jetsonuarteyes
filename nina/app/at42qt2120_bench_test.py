@@ -85,16 +85,50 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  STATUS=0x{st:02X}  keys_pressed={dev.keys_pressed()}  mask={_format_mask(mask)}")
             return 0
 
-        print("Watching touch (Ctrl+C to stop)...")
+        print(
+            "Watching touch (Ctrl+C to stop). If touch=True stays on with nobody "
+            "touching, insulate the copper back from metal — STATUS is latched high."
+        )
         prev = False
+        high_since = None
+        stuck = False
+        stuck_clear = 0
+        stuck_after = 2.0
+        stuck_clear_reads = 15
         while True:
-            cal = dev.is_calibrating()
-            touched = dev.any_touch()
-            mask = dev.read_key_mask()
-            edge = touched and not prev
-            prev = touched
+            snap = dev.touch_snapshot()
+            touched_raw = bool(snap["any_touch"])
+            now = time.monotonic()
+            if not touched_raw:
+                high_since = None
+                if stuck:
+                    stuck_clear += 1
+                    if stuck_clear >= stuck_clear_reads:
+                        stuck = False
+                        stuck_clear = 0
+                        print("  [stuck-high cleared — pad idled]")
+                effective = False
+            elif stuck:
+                effective = False
+                stuck_clear = 0
+            else:
+                if high_since is None:
+                    high_since = now
+                if (now - high_since) >= stuck_after:
+                    if not stuck:
+                        print(
+                            f"  [STUCK HIGH >= {stuck_after:.1f}s: STATUS=0x{snap['status']:02X} "
+                            f"mask={_format_mask(int(snap['mask']))} — insulate electrode back]"
+                        )
+                    stuck = True
+                    effective = False
+                else:
+                    effective = True
+            edge = effective and not prev
+            prev = effective
             line = (
-                f"touch={touched}  calibrating={cal}  mask={_format_mask(mask)}"
+                f"raw={touched_raw}  effective={effective}  STATUS=0x{snap['status']:02X}  "
+                f"calibrating={snap['calibrating']}  mask={_format_mask(int(snap['mask']))}"
             )
             if edge:
                 line += "  ** TOUCH **"
