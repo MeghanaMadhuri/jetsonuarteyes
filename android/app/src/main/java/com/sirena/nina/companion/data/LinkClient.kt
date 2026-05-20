@@ -32,6 +32,17 @@ class LinkClient {
             .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
             .build()
 
+    /** Short timeouts for drive hold/stop/status so the UI never blocks for minutes. */
+    private val driveClient =
+        OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
     suspend fun health(baseUrl: String): JSONObject = withContext(Dispatchers.IO) {
@@ -175,7 +186,7 @@ class LinkClient {
         direction: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            post(
+            postDrive(
                 "$baseUrl/v1/robot/drive/hold",
                 bearer,
                 JSONObject().put("direction", direction).toString(),
@@ -184,7 +195,7 @@ class LinkClient {
 
     suspend fun robotDriveHoldStop(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
-            post("$baseUrl/v1/robot/drive/hold/stop", bearer, "{}")
+            postDrive("$baseUrl/v1/robot/drive/hold/stop", bearer, "{}")
         }
 
     /** Kiosk Turn left/right (``DriveController.turn_90``). */
@@ -194,7 +205,7 @@ class LinkClient {
         which: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            post(
+            postDrive(
                 "$baseUrl/v1/robot/drive/turn",
                 bearer,
                 JSONObject().put("which", which).toString(),
@@ -217,7 +228,7 @@ class LinkClient {
     /** Same stack as kiosk ``DriveController.set_brake`` (servo brake pose on lean axes). */
     suspend fun robotDriveBrake(baseUrl: String, bearer: String?, on: Boolean): JSONObject =
         withContext(Dispatchers.IO) {
-            post(
+            postDrive(
                 "$baseUrl/v1/robot/drive/brake",
                 bearer,
                 JSONObject().put("on", on).toString(),
@@ -226,7 +237,7 @@ class LinkClient {
 
     suspend fun robotEmergencyStop(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
-            post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
+            postDrive("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
         }
 
     /** Ask the Jetson host to power off (requires passwordless sudo on the robot — see nina-link docs). */
@@ -244,7 +255,7 @@ class LinkClient {
     /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
     suspend fun robotDriveStatus(baseUrl: String, bearer: String? = null): JSONObject =
         withContext(Dispatchers.IO) {
-            get("$baseUrl/v1/robot/drive/status", bearer)
+            getDrive("$baseUrl/v1/robot/drive/status", bearer)
         }
 
     /** Per-wheel polarity flip (matches Qt Drive Flip L/R). */
@@ -266,7 +277,7 @@ class LinkClient {
         backward: Boolean,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            post(
+            postDrive(
                 "$baseUrl/v1/robot/drive/straight",
                 bearer,
                 JSONObject().put("backward", backward).toString(),
@@ -275,7 +286,7 @@ class LinkClient {
 
     suspend fun robotDriveStraightStop(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
-            post("$baseUrl/v1/robot/drive/straight/stop", bearer, "{}")
+            postDrive("$baseUrl/v1/robot/drive/straight/stop", bearer, "{}")
         }
 
     suspend fun robotDriveCalibrationGet(baseUrl: String): JSONObject =
@@ -708,17 +719,24 @@ class LinkClient {
             delete("$baseUrl/v1/autonomy/goal", bearer)
         }
 
-    private fun get(url: String, bearer: String? = null): JSONObject {
+    private fun get(url: String, bearer: String? = null): JSONObject = get(url, bearer, client)
+
+    private fun get(url: String, bearer: String?, http: OkHttpClient): JSONObject {
         val req = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
             .apply { if (!bearer.isNullOrBlank()) header("Authorization", "Bearer $bearer") }
             .get()
             .build()
-        return execute(req)
+        return execute(req, http)
     }
 
-    private fun post(url: String, bearer: String?, jsonBody: String): JSONObject {
+    private fun getDrive(url: String, bearer: String? = null): JSONObject = get(url, bearer, driveClient)
+
+    private fun post(url: String, bearer: String?, jsonBody: String): JSONObject =
+        post(url, bearer, jsonBody, client)
+
+    private fun post(url: String, bearer: String?, jsonBody: String, http: OkHttpClient): JSONObject {
         val body = jsonBody.toRequestBody(jsonMedia)
         val req = Request.Builder()
             .url(url)
@@ -726,8 +744,11 @@ class LinkClient {
             .apply { if (!bearer.isNullOrBlank()) header("Authorization", "Bearer $bearer") }
             .post(body)
             .build()
-        return execute(req)
+        return execute(req, http)
     }
+
+    private fun postDrive(url: String, bearer: String?, jsonBody: String): JSONObject =
+        post(url, bearer, jsonBody, driveClient)
 
     private fun delete(url: String, bearer: String?): JSONObject {
         val req = Request.Builder()
@@ -753,11 +774,11 @@ class LinkClient {
         return "${req.method} $path $auth"
     }
 
-    private fun execute(req: Request): JSONObject {
+    private fun execute(req: Request, http: OkHttpClient = client): JSONObject {
         val label = safeRequestLabel(req)
         NinaLog.debug("LinkClient", ">> $label")
         try {
-            client.newCall(req).execute().use { resp ->
+            http.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
                 NinaLog.debug("LinkClient", "<< $label http=${resp.code} bytes=${body.length}")
                 if (!resp.isSuccessful) {

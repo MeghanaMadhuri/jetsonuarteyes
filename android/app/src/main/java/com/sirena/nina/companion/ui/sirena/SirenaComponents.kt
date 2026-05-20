@@ -810,8 +810,8 @@ fun SirenaSubTabRow(
 fun SirenaDpadHoldButton(
     label: String,
     enabled: Boolean,
-    onPress: suspend () -> Unit,
-    onRelease: suspend () -> Unit,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -822,20 +822,10 @@ fun SirenaDpadHoldButton(
     LaunchedEffect(pressed, enabled) {
         val down = pressed && enabled
         if (down && !prevPressed) {
-            try {
-                latestPress()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-            }
+            latestPress()
         }
         if (prevPressed && !down) {
-            try {
-                latestRelease()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-            }
+            latestRelease()
         }
         prevPressed = down
     }
