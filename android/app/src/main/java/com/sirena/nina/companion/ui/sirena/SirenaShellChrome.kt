@@ -47,6 +47,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.sirena.nina.companion.CompanionViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -440,10 +441,15 @@ fun SirenaShellHeader(
     var jetsonVolume by remember { mutableFloatStateOf(70f) }
     var volumeAvailable by remember { mutableStateOf(false) }
     var volumeBusy by remember { mutableStateOf(false) }
+    var volumeErr by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(volumeOpen, jetsonOnline) {
-        if (!volumeOpen || !jetsonOnline) return@LaunchedEffect
-        while (true) {
+    LaunchedEffect(jetsonOnline) {
+        if (!jetsonOnline) {
+            volumeAvailable = false
+            volumeErr = null
+            return@LaunchedEffect
+        }
+        while (isActive) {
             val pct = vm.fetchSystemVolumePct()
             if (pct != null) {
                 volumeAvailable = true
@@ -453,15 +459,27 @@ fun SirenaShellHeader(
             } else {
                 volumeAvailable = false
             }
-            delay(900L)
+            delay(if (volumeOpen) 900L else 2500L)
         }
     }
 
-    LaunchedEffect(jetsonVolume, volumeOpen, volumeAvailable) {
+    LaunchedEffect(volumeOpen, jetsonOnline) {
+        if (!volumeOpen || !jetsonOnline) return@LaunchedEffect
+        volumeErr = null
+        val pct = vm.fetchSystemVolumePct()
+        if (pct != null) {
+            volumeAvailable = true
+            jetsonVolume = pct.toFloat()
+        } else {
+            volumeAvailable = false
+        }
+    }
+
+    LaunchedEffect(jetsonVolume, volumeOpen, volumeAvailable, jetsonOnline) {
         if (!volumeOpen || !volumeAvailable || !jetsonOnline) return@LaunchedEffect
-        delay(220L)
+        delay(400L)
         volumeBusy = true
-        vm.setSystemVolumePct(jetsonVolume.toInt())
+        volumeErr = vm.setSystemVolumePct(jetsonVolume.toInt())
         volumeBusy = false
     }
 
@@ -602,8 +620,13 @@ fun SirenaShellHeader(
                         ) {
                             Text("Jetson speaker", fontWeight = FontWeight.Bold, color = SirenaColors.text)
                             SirenaMutedText(
-                                if (volumeAvailable) "System output volume" else "Volume control unavailable on robot",
-                                maxLines = 2,
+                                when {
+                                    volumeErr != null -> volumeErr!!
+                                    volumeAvailable -> "System output volume (Jetson speaker)"
+                                    else ->
+                                        "Volume control unavailable — robot needs alsa-utils / a working audio sink"
+                                },
+                                maxLines = 3,
                             )
                             Slider(
                                 value = jetsonVolume,

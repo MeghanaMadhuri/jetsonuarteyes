@@ -31,6 +31,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class StatusUi(
     val wifiRole: String,
@@ -77,6 +80,11 @@ data class DiscoveryDiagnosticsUi(
     val failedProbes: Int = 0,
     val durationMs: Long? = null,
     val lastError: String? = null,
+)
+
+data class DriveCommandLogUi(
+    val timestamp: String,
+    val line: String,
 )
 
 /** Fast HTTP liveness to saved daemon URL (independent of full status refresh). */
@@ -153,6 +161,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     val discoveredDaemons: StateFlow<List<DiscoveredDaemonUi>> = _discoveredDaemons.asStateFlow()
     private val _discoveryDiagnostics = MutableStateFlow(DiscoveryDiagnosticsUi())
     val discoveryDiagnostics: StateFlow<DiscoveryDiagnosticsUi> = _discoveryDiagnostics.asStateFlow()
+    private val _driveCommandLog = MutableStateFlow<List<DriveCommandLogUi>>(emptyList())
+    val driveCommandLog: StateFlow<List<DriveCommandLogUi>> = _driveCommandLog.asStateFlow()
+    private val driveLogTimeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     init {
         vmD("init CompanionViewModel")
@@ -597,7 +608,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         NinaLog.tap("Drive", "momentary", "$direction ${durationMs}ms speed=$speedPercent")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
-        return client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
+        addDriveLog("send momentary dir=$direction ms=$durationMs speed=${speedPercent ?: "-"}")
+        return try {
+            val result = client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
+            addDriveLog("recv momentary ok=${result.optBoolean("ok", true)} err=${result.optString("error").ifBlank { "-" }}")
+            result
+        } catch (e: Exception) {
+            addDriveLog("recv momentary failed=${e.message ?: e.javaClass.simpleName}")
+            throw e
+        }
     }
 
     suspend fun robotSetBrake(on: Boolean): JSONObject {
@@ -650,8 +669,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             NinaLog.tap("Drive", "invert", "L=$left R=$right")
-            client.robotDriveInvert(url, bearer, left, right)
+            addDriveLog("send invert left=${left ?: "-"} right=${right ?: "-"}")
+            val result = client.robotDriveInvert(url, bearer, left, right)
+            addDriveLog("recv invert ok=${result.optBoolean("ok", true)} err=${result.optString("error").ifBlank { "-" }}")
+            result
         } catch (_: Exception) {
+            addDriveLog("recv invert failed")
             null
         }
     }
@@ -741,7 +764,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         NinaLog.tap("Drive", "emergency_stop", "")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
-        return client.robotEmergencyStop(url, bearer)
+        addDriveLog("send emergency-stop")
+        return try {
+            val result = client.robotEmergencyStop(url, bearer)
+            addDriveLog("recv emergency-stop ok=${result.optBoolean("ok", true)} err=${result.optString("error").ifBlank { "-" }}")
+            result
+        } catch (e: Exception) {
+            addDriveLog("recv emergency-stop failed=${e.message ?: e.javaClass.simpleName}")
+            throw e
+        }
     }
 
     fun requestJetsonShutdown(onResult: (String?) -> Unit) {
@@ -1246,6 +1277,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    /** Jetson ALSA/Pulse output level (`GET /v1/system/volume`). */
     suspend fun fetchSystemVolumePct(): Int? =
         try {
             val url = prefs.baseUrl.first()
@@ -1253,7 +1285,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 null
             } else {
                 val j = client.systemVolumeGet(url)
-                if (!j.optBoolean("available", false)) {
+                if (!j.optBoolean("ok", false) || !j.optBoolean("available", false)) {
                     null
                 } else {
                     j.optInt("volume_pct").takeIf { !j.isNull("volume_pct") }
@@ -1263,15 +1295,40 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
-    suspend fun setSystemVolumePct(pct: Int): Boolean =
+    /**
+     * Set Jetson speaker volume (`POST /v1/system/volume`, requires pair token).
+     * Returns null on success, or a short error for the UI.
+     */
+    suspend fun setSystemVolumePct(pct: Int): String? =
         try {
             val url = prefs.baseUrl.first()
+            if (url.isBlank()) return "No robot URL"
             val bearer = prefs.bearerToken.first()
+            if (bearer.isNullOrBlank()) {
+                return "Pair with the robot first to change volume"
+            }
             val j = client.systemVolumeSet(url, bearer, pct)
-            j.optBoolean("ok", false)
-        } catch (_: Exception) {
-            false
+            when {
+                j.optBoolean("ok", false) && j.optBoolean("available", true) -> null
+                !j.optBoolean("available", true) ->
+                    "Volume control unavailable on robot (install alsa-utils or check audio sink)"
+                else ->
+                    j.optString("detail").trim().ifBlank {
+                        j.optString("error").trim().ifBlank { "Volume change failed" }
+                    }
+            }
+        } catch (e: Exception) {
+            e.message?.trim().orEmpty().ifBlank { "Volume change failed" }
         }
+
+    /** Warm Dynamixel + hoverboard stack while the Drive screen is open (reduces first D-pad delay). */
+    suspend fun prefetchRobotDriveStatus() {
+        if (prefs.baseUrl.first().isBlank()) return
+        repeat(4) {
+            fetchRobotDriveStatus()
+            delay(180L)
+        }
+    }
 
     suspend fun saveSlamMapPgm(filename: String): JSONObject? =
         try {
@@ -1477,6 +1534,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             return "Unauthorized — set a fleet token or pair with PIN (Setup tab)."
         }
         return cleaned ?: "HTTP ${e.code}"
+    }
+
+    private fun addDriveLog(message: String) {
+        val row = DriveCommandLogUi(timestamp = driveLogTimeFmt.format(Date()), line = message)
+        _driveCommandLog.update { (it + row).takeLast(80) }
     }
 }
 

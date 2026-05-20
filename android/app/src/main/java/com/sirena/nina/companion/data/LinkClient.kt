@@ -32,24 +32,27 @@ class LinkClient {
             .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
             .build()
 
-    /** Fast path: hold/stop/brake/E-stop/status (must return quickly). */
+    /** Hold stop / status / E-stop — no Dynamixel bus prime on the Jetson. */
     private val driveFastClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 
-    /** Straight/turn can wait for Jetson BLDC prime on the Qt thread (up to ~15s). */
+    /**
+     * Hold start, brake release, straight, turn — Jetson may run ``_prime_drive_hardware``
+     * (up to ~10s) on the Qt thread before replying. Must exceed that plus command-plane queueing.
+     */
     private val driveCommandClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(28, TimeUnit.SECONDS)
+            .readTimeout(35, TimeUnit.SECONDS)
             .writeTimeout(12, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
@@ -187,7 +190,7 @@ class LinkClient {
     ): JSONObject = withContext(Dispatchers.IO) {
         val json = JSONObject().put("direction", direction).put("duration_ms", durationMs)
         if (speedPercent != null) json.put("speed_percent", speedPercent)
-        post("$baseUrl/v1/robot/drive", bearer, json.toString())
+        postDriveCommand("$baseUrl/v1/robot/drive", bearer, json.toString())
     }
 
     /** Kiosk D-pad press: ``DriveController.drive`` until [robotDriveHoldStop]. */
@@ -197,7 +200,7 @@ class LinkClient {
         direction: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            postDrive(
+            postDriveCommand(
                 "$baseUrl/v1/robot/drive/hold",
                 bearer,
                 JSONObject().put("direction", direction).toString(),
@@ -239,11 +242,13 @@ class LinkClient {
     /** Same stack as kiosk ``DriveController.set_brake`` (servo brake pose on lean axes). */
     suspend fun robotDriveBrake(baseUrl: String, bearer: String?, on: Boolean): JSONObject =
         withContext(Dispatchers.IO) {
-            postDrive(
-                "$baseUrl/v1/robot/drive/brake",
-                bearer,
-                JSONObject().put("on", on).toString(),
-            )
+            val body = JSONObject().put("on", on).toString()
+            val url = "$baseUrl/v1/robot/drive/brake"
+            if (on) {
+                postDrive(url, bearer, body)
+            } else {
+                postDriveCommand(url, bearer, body)
+            }
         }
 
     suspend fun robotEmergencyStop(baseUrl: String, bearer: String?): JSONObject =

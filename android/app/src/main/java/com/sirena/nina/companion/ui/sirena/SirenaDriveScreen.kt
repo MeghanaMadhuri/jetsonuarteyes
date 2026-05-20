@@ -46,8 +46,10 @@ import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.util.NinaLog
 import kotlin.math.sqrt
+import java.net.SocketTimeoutException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -76,22 +78,27 @@ private fun batteryLabelFromHealth(h: JSONObject?): String {
     return "n/a"
 }
 
-/** Matches kiosk ``STRAIGHT_READY_POLL_MS`` / ``STRAIGHT_READY_MAX_POLLS``. */
+/** Matches kiosk ``STRAIGHT_READY_POLL_MS``; shorter cap than kiosk (HTTP already waited on prime). */
 private const val STRAIGHT_READY_POLL_MS = 50L
-private const val STRAIGHT_READY_MAX_POLLS = 100
+private const val STRAIGHT_READY_MAX_POLLS = 30
 /** Pulse bench can run up to ~120s; never leave the UI locked longer. */
 private const val STRAIGHT_BENCH_MAX_MS = 130_000L
-private const val DRIVE_STATUS_POLL_MS = 800L
+/** Slower idle poll so status GETs do not queue ahead of hold/turn POSTs on the Jetson. */
+private const val DRIVE_STATUS_POLL_MS = 1200L
 private const val DRIVE_STATUS_FAIL_DISCONNECT = 3
 
 private fun driveHttpError(e: Exception): String =
     when (e) {
+        is SocketTimeoutException ->
+            "Drive timeout — robot still starting motors. Wait for green status, then retry."
         is LinkApiException ->
             when (e.code) {
                 500 -> "Drive server error (HTTP 500) — tap E‑STOP, release brake, retry"
                 503 -> "Drive bridge busy or off (HTTP 503)"
                 else -> e.message?.trim().orEmpty().ifBlank { "HTTP ${e.code}" }
             }
+        is IOException ->
+            e.message?.trim().orEmpty().ifBlank { "Network error — check Wi‑Fi to the Jetson" }
         else -> e.message?.trim().orEmpty().ifBlank { "Drive request failed" }
     }
 
@@ -211,7 +218,9 @@ fun SirenaDriveScreen(
 
     val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
     val bearer by vm.bearerToken.collectAsStateWithLifecycle(initialValue = null)
+    val driveLogs by vm.driveCommandLog.collectAsStateWithLifecycle()
     val jetsonOnline = jetsonLink.isOnline
+    var driveHoldJob by remember { mutableStateOf<Job?>(null) }
     val slimBanner = rememberSlimStatusBanner()
     val slimCopy = slimBanner || shellCompact
     val focusRequester = remember { FocusRequester() }
@@ -254,8 +263,9 @@ fun SirenaDriveScreen(
             bldcDetail = null
             return@LaunchedEffect
         }
-        delay(400)
+        delay(120)
         focusRequester.requestFocus()
+        launch { vm.prefetchRobotDriveStatus() }
         var statusFailStreak = 0
         while (isActive) {
             val pollMs = if (straightRunning) 50L else DRIVE_STATUS_POLL_MS
@@ -639,22 +649,32 @@ fun SirenaDriveScreen(
                                     actionErr = "Wait for straight test to finish."
                                 brakeOn ->
                                     actionErr = "Release brake to drive."
-                                else ->
-                                    scope.launch {
-                                        try {
-                                            val j = vm.robotDriveHold(dir)
-                                            actionErr = j.driveCommandErrorOrNull()
-                                        } catch (e: Exception) {
-                                            actionErr = driveHttpError(e)
+                                else -> {
+                                    actionErr = null
+                                    driveHoldJob?.cancel()
+                                    driveHoldJob =
+                                        scope.launch {
+                                            try {
+                                                val j = vm.robotDriveHold(dir)
+                                                val err = j.driveCommandErrorOrNull()
+                                                if (err != null) actionErr = err
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                actionErr = driveHttpError(e)
+                                            }
                                         }
-                                    }
+                                }
                             }
                         },
                         onDriveHoldStop = {
+                            driveHoldJob?.cancel()
+                            driveHoldJob = null
                             scope.launch {
                                 try {
                                     val j = vm.robotDriveHoldStop()
-                                    actionErr = j.driveCommandErrorOrNull()
+                                    val err = j.driveCommandErrorOrNull()
+                                    if (err != null) actionErr = err
                                 } catch (e: Exception) {
                                     actionErr = driveHttpError(e)
                                 }
@@ -830,6 +850,26 @@ fun SirenaDriveScreen(
                             color = SirenaColors.text,
                             maxLines = if (shellCompact) 2 else 6,
                         )
+                    }
+                    SirenaCard(kind = SirenaCardKind.Subtle) {
+                        Text(
+                            "Drive command log",
+                            fontSize = SirenaType.base,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SirenaColors.text,
+                        )
+                        if (driveLogs.isEmpty()) {
+                            SirenaMutedText("No drive commands sent yet.")
+                        } else {
+                            driveLogs.takeLast(8).forEach { row ->
+                                Text(
+                                    "${row.timestamp}  ${row.line}",
+                                    fontSize = SirenaType.quickBlurb,
+                                    color = SirenaColors.text,
+                                )
+                            }
+                            SirenaMutedText("Full log file: files/logs/nina_companion.log")
+                        }
                     }
                 }
             }

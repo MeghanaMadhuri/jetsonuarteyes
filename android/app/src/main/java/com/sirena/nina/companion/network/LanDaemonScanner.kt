@@ -112,6 +112,7 @@ object LanDaemonScanner {
                                     }
                                 } catch (_: Exception) {
                                 }
+                                Unit
                             }
                         }.awaitAll()
                 }
