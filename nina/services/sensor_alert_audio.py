@@ -184,6 +184,20 @@ def play_obstacle_alert(*, phrase: str | None = None) -> None:
     )
 
 
+def maybe_speak_obstacle_alert(phrase: Optional[str] = None) -> None:
+    """Play the obstacle alert on a daemon thread so safety motion is not delayed."""
+
+    def _run() -> None:
+        try:
+            play_obstacle_alert(phrase=phrase)
+        except Exception:
+            log.exception("Obstacle alert playback failed")
+
+    threading.Thread(
+        target=_run, daemon=True, name="obstacle-alert"
+    ).start()
+
+
 def play_cant_move_alert(*, phrase: str | None = None) -> None:
     """Drift-abort safety stop (bundled US English gTTS clip)."""
     play_bundled_or_gtts(

@@ -38,7 +38,7 @@ from nina.sensors.ir_obstacle_stop_monitor import IrObstacleStopMonitor
 from nina.services.audio_player import AudioPlayer
 from nina.services.sensor_alert_audio import (
     maybe_speak_low_battery,
-    play_obstacle_alert,
+    maybe_speak_obstacle_alert,
     play_touch_alert,
 )
 from sirena_ui.workers.autonomy_controller import AutonomyController
@@ -198,7 +198,7 @@ class NinaService:
         return st
 
     def run_obstacle_stop_reaction(self) -> None:
-        """JYQD stop, neutral action, lean brake, then US-English gTTS phrase."""
+        """JYQD stop, immediate obstacle alert, then neutral action + lean brake."""
         try:
             if self._face_follow is not None:
                 try:
@@ -208,6 +208,12 @@ class NinaService:
             self.drive.stop(drain=True)
         except Exception:
             log.exception("Obstacle stop: drive / face-follow stop failed")
+
+        phrase = (self.settings.ir_obstacle_stop.tts_text or "").strip()
+        try:
+            maybe_speak_obstacle_alert(phrase=phrase)
+        except Exception:
+            log.exception("Obstacle stop alert playback failed")
 
         if not self._bus_ready:
             try:
@@ -233,12 +239,6 @@ class NinaService:
                 )
             except Exception:
                 log.exception("Obstacle stop: neutral / brake pose failed")
-
-        phrase = (self.settings.ir_obstacle_stop.tts_text or "").strip()
-        try:
-            play_obstacle_alert(phrase=phrase)
-        except Exception:
-            log.exception("Obstacle stop alert playback failed")
 
     def start_battery_ads1115_monitor(self) -> None:
         """Start ADS1115 pack-voltage monitor when enabled in settings."""

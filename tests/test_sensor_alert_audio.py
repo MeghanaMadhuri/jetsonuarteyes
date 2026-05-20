@@ -18,6 +18,7 @@ from nina.services.sensor_alert_audio import (
     _low_battery_cooldown_sec,
     _reset_low_battery_cooldown_for_tests,
     maybe_speak_low_battery,
+    maybe_speak_obstacle_alert,
 )
 
 
@@ -111,6 +112,22 @@ def test_maybe_speak_low_battery_swallows_playback_failures(
     # Must not raise even though the playback path throws.
     maybe_speak_low_battery()
     _reset_low_battery_cooldown_for_tests()
+
+
+def test_maybe_speak_obstacle_alert_runs_on_background_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+    calls: list[dict] = []
+
+    def fake_play(*, phrase: str | None = None) -> None:
+        calls.append({"phrase": phrase})
+
+    monkeypatch.setattr(sal, "play_obstacle_alert", fake_play)
+
+    maybe_speak_obstacle_alert("Obstacle close")
+
+    assert calls == [{"phrase": "Obstacle close"}]
 
 
 def test_maybe_speak_low_battery_cooldown_dedups_rapid_calls(
