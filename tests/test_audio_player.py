@@ -147,7 +147,7 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     assert str(fake_aplay) in cmd
     assert "48000" in cmd
     assert "left" in cmd
-    assert "150" in cmd
+    assert "100" in cmd
     assert '"$python_bin" -' in cmd[2]
 
 
