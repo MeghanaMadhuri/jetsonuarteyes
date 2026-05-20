@@ -946,6 +946,12 @@ class DriveScreen(QWidget):
             self._finish_straight_test()
         elif self._straight_pending:
             self._restore_after_straight_test()
+        if self._vision_acquired:
+            try:
+                self._service.vision.release()
+            except Exception:
+                pass
+            self._vision_acquired = False
 
     def _on_camera_frame(self, image: QImage) -> None:
         """Render an incoming RGB frame into the Front-camera card."""

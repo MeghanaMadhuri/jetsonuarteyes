@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterator, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from nina.jetson_net import actions_manifest
@@ -49,6 +49,7 @@ from sirena_ui.android_gateway import depth_stream
 from sirena_ui.android_gateway.vision_mjpeg import VisionMjpegHub
 from sirena_ui.android_gateway import vision_tablet
 from sirena_ui.workers import slam_worker as slam_mod
+from sirena_ui.resource_limits import fd_pressure_ratio, open_fd_count
 from sirena_ui.workers.background_tasks import run_blocking as _run_bg
 from sirena_ui.workers.nina_service import NinaService
 
@@ -59,7 +60,7 @@ _mjpeg_stream_active = 0
 
 
 def _mjpeg_max_streams() -> int:
-    raw = os.environ.get("NINA_MJPEG_MAX_STREAMS", "4").strip()
+    raw = os.environ.get("NINA_MJPEG_MAX_STREAMS", "2").strip()
     try:
         return max(1, min(32, int(raw)))
     except ValueError:
@@ -400,6 +401,39 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             return
         coordinator.ps.pairing_pin = f"{secrets.randbelow(1000000):06d}"
         coordinator.store.save(coordinator.ps)
+
+    @app.middleware("http")
+    async def guard_open_fds(request: Request, call_next):
+        """Reject new tablet work when the process is nearly out of file descriptors."""
+        if request.url.path in ("/health", "/docs", "/openapi.json", "/redoc"):
+            return await call_next(request)
+        ratio = fd_pressure_ratio()
+        if ratio >= 0.85:
+            n = open_fd_count()
+            log.error(
+                "tablet gateway FD pressure %.0f%% (%s open) — rejecting %s %s",
+                ratio * 100.0,
+                n,
+                request.method,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "ok": False,
+                    "error": "Jetson file descriptor limit reached — close camera previews and restart Sirena",
+                    "open_fds": n,
+                },
+            )
+        if ratio >= 0.70:
+            log.warning(
+                "tablet gateway FD pressure %.0f%% (%s open) on %s %s",
+                ratio * 100.0,
+                open_fd_count(),
+                request.method,
+                request.url.path,
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def touch_clients(request: Request, call_next):
@@ -903,10 +937,9 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         from sirena_ui.android_gateway.drive_http import drive_status_payload
 
         try:
-            st = gw.plane.submit(
-                lambda: drive_status_payload(gw.service),
-                timeout=30.0,
-            )
+            # Read-only snapshot — safe without blocking the Qt command plane so
+            # burst tablet polls do not pin HTTP worker threads and leak sockets.
+            st = drive_status_payload(gw.service)
         except Exception as exc:
             log.exception("GET /v1/robot/drive/status failed")
             st = {

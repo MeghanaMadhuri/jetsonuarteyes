@@ -7,6 +7,10 @@ import logging
 import os
 import sys
 
+from sirena_ui.resource_limits import log_startup_limits, raise_nofile_limit
+
+raise_nofile_limit()
+
 from PyQt5.QtCore import QLibraryInfo, Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
@@ -75,6 +79,7 @@ def _pin_qt_platform_plugins() -> None:
 
 def main() -> int:
     _configure_logging()
+    log_startup_limits()
     _pin_qt_platform_plugins()
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)

@@ -352,7 +352,7 @@ def navigation_hw_status(service: NinaService) -> Dict[str, Any]:
 
 
 def drive_status_payload(service: NinaService) -> Dict[str, Any]:
-    """Extended drive snapshot for tablet HUD (matches kiosk ``drive_screen``)."""
+    """Extended drive snapshot for tablet HUD (read-only; safe from HTTP poll threads)."""
     body = navigation_hw_status(service)
     dc = getattr(service, "_drive", None)
     if dc is None:

@@ -30,6 +30,9 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 
+# Qt + tablet gateway (8787) + cameras need more than the default 1024 FDs.
+LimitNOFILE=8192
+
 # This is the toggle introduced in sirena_ui main_window for the 10.1"
 # panel: makes the GUI launch frameless and fullscreen at the panel's
 # native 1024x600. F11 toggles fullscreen, F10 quits, both kept as

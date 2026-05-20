@@ -338,8 +338,10 @@ EXIT=0
     fi
     cd "${REPO_ROOT}"
     # Tablet gateway MJPEG + camera/GPIO handles need more FDs than the default 1024.
+    # Python also calls setrlimit() at import — log the shell ulimit for diagnostics.
     if command -v ulimit >/dev/null 2>&1; then
         ulimit -n 8192 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+        echo "ulimit -n: $(ulimit -n 2>/dev/null || echo '?')"
     fi
     "${PYTHON_BIN}" -m sirena_ui
     EXIT=$?
