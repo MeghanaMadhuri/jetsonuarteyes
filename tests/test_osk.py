@@ -256,6 +256,18 @@ def test_mouse_press_on_lineedit_spawns_osk(
     edit.deleteLater()
 
 
+def test_focusin_after_mouse_does_not_double_spawn(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """One tap must not start two onboard processes (mouse + focus)."""
+    osk = make_osk(mode="auto")
+    edit = QLineEdit()
+    _send_mouse_press(edit)
+    _send_focus_in(edit)
+    assert len(fake_subprocess.instances) == 1
+    edit.deleteLater()
+
+
 def test_focus_in_lineedit_spawns_osk(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
@@ -600,6 +612,7 @@ def test_first_spawn_runs_gsettings_force_to_top_and_clears_docking(
     keys_seen = {(call[2], call[3], call[4]) for call in set_calls}
     assert ("org.onboard.window", "force-to-top", "true") in keys_seen
     assert ("org.onboard.window", "docking-enabled", "false") in keys_seen
+    assert ("org.onboard.auto-show", "enabled", "false") in keys_seen
 
     # docking-enabled must explicitly be false, NEVER true.
     docking_true = {
@@ -686,6 +699,36 @@ def test_gsettings_failure_does_not_block_spawn(
     osk = make_osk(mode="always")
     assert osk.is_running
     assert len(fake_subprocess.instances) == 1
+
+
+def test_dbus_singleton_avoids_second_onboard_spawn(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If GNOME already owns org.onboard.Onboard, only D-Bus Show — no Popen."""
+    from sirena_ui.workers import osk as osk_module
+
+    class _RunResult:
+        returncode = 0
+        stdout = "boolean true\n"
+        stderr = ""
+
+    def _fake_run(argv, **_kw):
+        fake_subprocess.run_calls.append(tuple(argv))  # type: ignore[attr-defined]
+        if len(argv) >= 4 and argv[-1] == "string:org.onboard.Onboard":
+            return _RunResult()
+        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Show" in argv:
+            return _RunResult()
+        return _RunResult()
+
+    monkeypatch.setattr(osk_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(osk_module.subprocess, "run", _fake_run)
+
+    osk = make_osk(mode="auto")
+    edit = QLineEdit()
+    _send_focus_in(edit)
+    assert fake_subprocess.instances == []
+    edit.deleteLater()
 
 
 def test_show_uses_dbus_when_onboard_already_running(

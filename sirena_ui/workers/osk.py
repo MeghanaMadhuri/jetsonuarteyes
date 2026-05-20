@@ -40,6 +40,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from typing import Iterable, Optional, Tuple
 
 from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
@@ -89,6 +90,9 @@ _OSK_TRIGGER_EVENTS: Tuple[int, ...] = (
     QEvent.MouseButtonPress,
     QEvent.TouchBegin,
 )
+
+# One touchscreen tap often delivers MouseButtonPress and FocusIn back-to-back.
+_SHOW_DEBOUNCE_SEC = 0.35
 
 
 def _env_truthy(name: str) -> bool:
@@ -192,6 +196,9 @@ class OnScreenKeyboardManager(QObject):
         # the binary is "onboard" - we deliberately do nothing for
         # custom OSK binaries because we don't know their config keys.
         self._onboard_configured: bool = False
+        self._last_show_mono: float = -1e30
+        self._last_activation_mono: float = -1e30
+        self._last_activation_target_id: Optional[int] = None
 
         if not self._enabled:
             return
@@ -231,14 +238,30 @@ class OnScreenKeyboardManager(QObject):
         return self._process is not None and self._process.poll() is None
 
     def show(self) -> None:
-        """Ensure the OSK is visible. Spawns onboard or raises it via D-Bus."""
+        """Ensure a single OSK is visible (D-Bus singleton preferred over spawn)."""
         if not self._enabled:
             return
-        if self.is_running:
+        now = time.monotonic()
+        if (now - self._last_show_mono) < _SHOW_DEBOUNCE_SEC:
+            return
+        self._last_show_mono = now
+
+        if self._is_onboard_binary():
+            self._configure_onboard_window_mode()
             if self._raise_onboard():
                 return
-            # Process alive but not visible (operator dismissed/hid it).
-            self._kill_process()
+            # GNOME may already run onboard on the session bus — do not spawn a second.
+            if self._onboard_dbus_name_owned():
+                log.debug(
+                    "OSK: org.onboard.Onboard on D-Bus but Show failed — "
+                    "not spawning a duplicate onboard"
+                )
+                return
+            if self.is_running:
+                self._kill_process()
+        elif self.is_running:
+            return
+
         self._spawn()
 
     def shutdown(self) -> None:
@@ -300,6 +323,17 @@ class OnScreenKeyboardManager(QObject):
         return False
 
     def _on_text_widget_activated(self, target: QWidget, event_type: int) -> None:
+        target_id = id(target)
+        now = time.monotonic()
+        if (
+            event_type == QEvent.FocusIn
+            and self._last_activation_target_id == target_id
+            and (now - self._last_activation_mono) < _SHOW_DEBOUNCE_SEC
+        ):
+            return
+        self._last_activation_target_id = target_id
+        self._last_activation_mono = now
+
         if event_type != QEvent.FocusIn:
             self._focus_for_keyboard(target)
         if not self._first_focus_logged:
@@ -373,9 +407,42 @@ class OnScreenKeyboardManager(QObject):
         except Exception:
             pass
 
+    @staticmethod
+    def _is_onboard_binary(binary: str) -> bool:
+        return os.path.basename(binary) == "onboard"
+
+    def _is_onboard_binary(self) -> bool:
+        return self._is_onboard_binary(self._binary)
+
+    def _onboard_dbus_name_owned(self) -> bool:
+        """True when a session onboard service is already registered."""
+        if not self._is_onboard_binary():
+            return False
+        if shutil.which("dbus-send") is None:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    "dbus-send",
+                    "--print-reply",
+                    "--dest=org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus.NameHasOwner",
+                    "string:org.onboard.Onboard",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+            if result.returncode != 0:
+                return False
+            return "boolean true" in (result.stdout or "").lower()
+        except Exception:
+            return False
+
     def _raise_onboard(self) -> bool:
         """Show an already-running onboard via D-Bus (best effort)."""
-        if os.path.basename(self._binary) != "onboard":
+        if not self._is_onboard_binary():
             return False
         if shutil.which("dbus-send") is None:
             return False
@@ -453,6 +520,9 @@ class OnScreenKeyboardManager(QObject):
             # docking-enabled MUST be false - see docstring for why.
             # This is a remediation write, not a feature toggle.
             ("org.onboard.window", "docking-enabled", "false"),
+            # Nina shows/hides the keyboard explicitly; AT-SPI auto-show
+            # would stack a second keyboard on top of our D-Bus Show/spawn.
+            ("org.onboard.auto-show", "enabled", "false"),
         )
         for schema, key, value in tweaks:
             try:

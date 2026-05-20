@@ -253,8 +253,9 @@ Behaviour you can rely on:
   **Preferences**). `NINA_UI_OSK_ARGS` lets you preset a theme via
   `--theme=Nightshade` or similar at launch.
 - The first onboard launch each session writes
-  `org.onboard.window force-to-top=true` via `gsettings` so the
-  keyboard claims `_NET_WM_STATE_ABOVE` and stacks above the kiosk.
+  `org.onboard.window force-to-top=true` and disables
+  `org.onboard.auto-show` via `gsettings` so only Nina summons one
+  keyboard (not AT-SPI auto-show plus a second spawn).
   We deliberately leave `docking-enabled` alone — turning it on
   switches onboard from "floating window dismissed by its X button"
   into a persistent dock that auto-hides on focus-out, and Qt apps
