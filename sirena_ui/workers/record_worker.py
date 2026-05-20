@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any, Dict
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -48,9 +49,29 @@ class RecordWorker(QThread):
         self._register = register
         self._hold_after = hold_after
         self._stop_event = threading.Event()
+        self._status_lock = threading.Lock()
+        self._status: Dict[str, Any] = {
+            "phase": "idle",
+            "countdown_remaining": 0,
+            "captured": 0,
+            "target": 0,
+            "elapsed_sec": 0.0,
+        }
 
     def request_stop(self) -> None:
         self._stop_event.set()
+
+    def _set_status(self, **fields: Any) -> None:
+        with self._status_lock:
+            self._status.update(fields)
+
+    def snapshot_status(self) -> Dict[str, Any]:
+        """Thread-safe status for tablet ``GET /v1/actions/record/status``."""
+        with self._status_lock:
+            snap = dict(self._status)
+        snap["running"] = self.isRunning()
+        snap["name"] = self._name
+        return snap
 
     def run(self) -> None:
         if is_battery_motion_blocked():
@@ -63,6 +84,13 @@ class RecordWorker(QThread):
             )
             return
         try:
+            self._set_status(
+                phase="preparing",
+                countdown_remaining=0,
+                captured=0,
+                target=0,
+                elapsed_sec=0.0,
+            )
             with self._service.bus_lock:
                 dxl = self._service.dxl
                 # Verified torque-off: keeps retrying any motor that
@@ -83,14 +111,23 @@ class RecordWorker(QThread):
                 for remaining in range(whole, 0, -1):
                     if self._stop_event.is_set():
                         return self._abort("Stopped before recording started.")
+                    self._set_status(phase="countdown", countdown_remaining=remaining)
                     self.countdown.emit(remaining)
                     time.sleep(1.0)
                 fractional = self._countdown_sec - whole
                 if fractional > 0:
+                    self._set_status(phase="countdown", countdown_remaining=0)
                     time.sleep(fractional)
 
                 interval = 1.0 / max(1.0, self._hz)
                 target_frames = max(1, int(self._seconds * self._hz))
+                self._set_status(
+                    phase="recording",
+                    countdown_remaining=0,
+                    captured=0,
+                    target=target_frames,
+                    elapsed_sec=0.0,
+                )
                 frames = []
                 # Re-assert torque-off roughly once a second as cheap
                 # insurance. The SyncWrite is a single bus packet
@@ -110,9 +147,17 @@ class RecordWorker(QThread):
                             pass
                     frames.append(dxl.capture_frame(duration=interval))
                     elapsed = time.monotonic() - start
-                    self.progress.emit(i + 1, target_frames, elapsed)
+                    captured = i + 1
+                    self._set_status(
+                        phase="recording",
+                        captured=captured,
+                        target=target_frames,
+                        elapsed_sec=elapsed,
+                    )
+                    self.progress.emit(captured, target_frames, elapsed)
                     time.sleep(interval)
 
+                self._set_status(phase="saving")
                 if self._hold_after:
                     dxl.set_torque_for_ids(ACTION_MOTOR_IDS, True)
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,7 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.ActionRowUi
 import com.sirena.nina.companion.CompanionViewModel
@@ -91,6 +95,37 @@ private fun formatAudioMeta(row: ActionRowUi): String {
     return "Audio: $fileName$suffix"
 }
 
+/** Status line for remote record polling (matches kiosk ``ActionsScreen``). */
+private fun formatRemoteRecordStatus(st: JSONObject?): String {
+    if (st == null) return "—"
+    if (!st.optBoolean("running")) return "Idle"
+    return when (st.optString("phase", "recording")) {
+        "preparing" -> "Preparing to record…"
+        "countdown" -> {
+            val n = st.optInt("countdown_remaining", 0)
+            if (n > 0) {
+                "Torque released — starting in $n…"
+            } else {
+                "Torque released — starting…"
+            }
+        }
+        "recording" -> {
+            val cap = st.optInt("captured", 0)
+            val tot = st.optInt("target", 0)
+            val el = st.optDouble("elapsed_sec", 0.0)
+            String.format(
+                Locale.US,
+                "● RECORDING | Torque released | Frames %d/%d • %.1fs",
+                cap,
+                tot,
+                el,
+            )
+        }
+        "saving" -> "Saving recording…"
+        else -> "Recording in progress"
+    }
+}
+
 /**
  * Actions: Playback / Record / Audio — same sub-tabs as [sirena_ui.screens.actions_screen.ActionsScreen],
  * backed by manifest + record HTTP on the link daemon. Content uses the full content area.
@@ -135,6 +170,12 @@ fun SirenaActionsScreen(
     var recordErr by remember { mutableStateOf<String?>(null) }
     var recordLine by remember { mutableStateOf("—") }
     var recordingActive by remember { mutableStateOf(false) }
+    var recordPhase by remember { mutableStateOf("") }
+    var recordCountdownRemaining by remember { mutableIntStateOf(0) }
+    var recordCaptured by remember { mutableIntStateOf(0) }
+    var recordTarget by remember { mutableIntStateOf(0) }
+    var recordElapsedSec by remember { mutableStateOf(0.0) }
+    var wasRecording by remember { mutableStateOf(false) }
 
     var selectedActionName by remember { mutableStateOf("") }
     var audioSpeechText by remember { mutableStateOf("") }
@@ -172,25 +213,35 @@ fun SirenaActionsScreen(
     LaunchedEffect(subtab, link.isOnline) {
         if (subtab != ActionsSubtab.Record || !link.isOnline) {
             recordingActive = false
+            recordPhase = ""
             return@LaunchedEffect
         }
         while (isActive) {
             try {
                 val st = vm.fetchRecordStatus()
-                recordLine =
-                    if (st != null) {
-                        if (st.optBoolean("running")) {
-                            "Recording in progress"
-                        } else {
-                            "Idle"
-                        }
-                    } else {
-                        "—"
-                    }
-                recordingActive = st?.optBoolean("running") == true
+                val running = st?.optBoolean("running") == true
+                recordingActive = running
+                if (running && st != null) {
+                    recordPhase = st.optString("phase", "recording")
+                    recordCountdownRemaining = st.optInt("countdown_remaining", 0)
+                    recordCaptured = st.optInt("captured", 0)
+                    recordTarget = st.optInt("target", 0)
+                    recordElapsedSec = st.optDouble("elapsed_sec", 0.0)
+                } else if (!running) {
+                    recordPhase = ""
+                    recordCountdownRemaining = 0
+                    recordCaptured = 0
+                    recordTarget = 0
+                    recordElapsedSec = 0.0
+                }
+                recordLine = formatRemoteRecordStatus(st)
+                if (wasRecording && !running) {
+                    vm.refreshManifestActions()
+                }
+                wasRecording = running
             } catch (_: Exception) {
             }
-            delay(800)
+            delay(if (recordingActive) 280L else 800L)
         }
     }
 
@@ -345,6 +396,7 @@ fun SirenaActionsScreen(
                         onValueChange = { recordName = it },
                         label = { Text("Motion name") },
                         singleLine = true,
+                        enabled = !recordingActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -352,6 +404,7 @@ fun SirenaActionsScreen(
                         onValueChange = { recordSeconds = it },
                         label = { Text("Duration (s)") },
                         singleLine = true,
+                        enabled = !recordingActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -359,6 +412,7 @@ fun SirenaActionsScreen(
                         onValueChange = { recordHz = it },
                         label = { Text("Sample rate (Hz)") },
                         singleLine = true,
+                        enabled = !recordingActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -366,29 +420,95 @@ fun SirenaActionsScreen(
                         onValueChange = { recordCountdown = it },
                         label = { Text("Countdown (s)") },
                         singleLine = true,
+                        enabled = !recordingActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Checkbox(checked = recordRegister, onCheckedChange = { recordRegister = it })
+                        Checkbox(
+                            checked = recordRegister,
+                            onCheckedChange = { recordRegister = it },
+                            enabled = !recordingActive,
+                        )
                         Text("Register in manifest", color = SirenaColors.text)
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Checkbox(checked = recordHoldAfter, onCheckedChange = { recordHoldAfter = it })
+                        Checkbox(
+                            checked = recordHoldAfter,
+                            onCheckedChange = { recordHoldAfter = it },
+                            enabled = !recordingActive,
+                        )
                         Text("Hold after capture", color = SirenaColors.text)
                     }
                     if (recordingActive) {
-                        LinearProgressIndicator(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp),
-                        )
+                        when (recordPhase) {
+                            "countdown" ->
+                                if (recordCountdownRemaining > 0) {
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = SirenaColors.calloutBg,
+                                    ) {
+                                        Column(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 20.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Text(
+                                                recordCountdownRemaining.toString(),
+                                                fontSize = 56.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SirenaColors.text,
+                                                textAlign = TextAlign.Center,
+                                            )
+                                            Text(
+                                                "Torque released — pose the robot",
+                                                fontSize = SirenaType.muted,
+                                                color = SirenaColors.muted,
+                                                textAlign = TextAlign.Center,
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                                }
+                            "recording" -> {
+                                val frac =
+                                    if (recordTarget > 0) {
+                                        recordCaptured.toFloat() / recordTarget.toFloat()
+                                    } else {
+                                        0f
+                                    }
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    LinearProgressIndicator(
+                                        progress = { frac.coerceIn(0f, 1f) },
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .height(8.dp),
+                                    )
+                                    Text(
+                                        String.format(
+                                            Locale.US,
+                                            "Frames %d / %d • %.1f s elapsed",
+                                            recordCaptured,
+                                            recordTarget.coerceAtLeast(1),
+                                            recordElapsedSec,
+                                        ),
+                                        fontSize = SirenaType.muted,
+                                        color = SirenaColors.muted,
+                                    )
+                                }
+                            }
+                            else ->
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                        }
                     }
                     recordErr?.let {
                         SirenaCard(kind = SirenaCardKind.Error) {
@@ -398,10 +518,11 @@ fun SirenaActionsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SirenaPrimaryButton(
                             text = "Start recording",
+                            enabled = !recordingActive,
                             onClick = {
                                 scope.launch {
                                     recordErr = null
-                                    recordErr =
+                                    val err =
                                         vm.startRemoteRecord(
                                             name = recordName.trim().ifBlank { "motion" },
                                             seconds = parseDoubleOr(recordSeconds, 5.0),
@@ -410,22 +531,35 @@ fun SirenaActionsScreen(
                                             holdAfter = recordHoldAfter,
                                             register = recordRegister,
                                         )
+                                    recordErr = err
+                                    if (err == null) {
+                                        recordingActive = true
+                                        recordPhase = "preparing"
+                                        recordLine = "Preparing to record…"
+                                    }
                                 }
                             },
                             modifier = buttonTall,
                         )
                         SirenaSecondaryButton(
-                            text = "Stop",
+                            text = "Stop recording",
+                            enabled = recordingActive,
                             onClick = {
                                 scope.launch {
                                     recordErr = vm.stopRemoteRecord()
+                                    recordLine = "Stopping recording…"
                                 }
                             },
                             modifier = buttonTall,
                         )
                     }
                     SirenaCardTitle("Record status")
-                    Text(recordLine, fontSize = SirenaType.muted, color = SirenaColors.muted)
+                    Text(
+                        recordLine,
+                        fontSize = if (recordingActive) SirenaType.base else SirenaType.muted,
+                        fontWeight = if (recordingActive) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (recordingActive) SirenaColors.text else SirenaColors.muted,
+                    )
                 }
             }
 

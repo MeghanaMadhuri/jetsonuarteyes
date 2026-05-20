@@ -129,4 +129,4 @@ class RobotActionController(QObject):
         w = self._record_worker
         if w is None or not w.isRunning():
             return {"running": False}
-        return {"running": True, "name": getattr(w, "_name", "")}
+        return w.snapshot_status()
