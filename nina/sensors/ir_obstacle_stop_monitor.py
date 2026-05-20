@@ -68,6 +68,8 @@ class IrObstacleStopMonitor:
         self._thread: Optional[threading.Thread] = None
         self._hits = 0
         self._last_fire_mono = -1e30
+        self._last_distance_mm: Optional[int] = None
+        self._last_read_mono: Optional[float] = None
 
     def start(self) -> None:
         ok, msg = is_available(self._svc.settings.ir_obstacle_stop.i2c_bus)
@@ -96,6 +98,40 @@ class IrObstacleStopMonitor:
                 log.warning("IR obstacle stop monitor thread did not exit in time")
         self._close_sensor()
         log.info("IR obstacle stop monitor stopped")
+
+    def status(self) -> dict:
+        """Small UI-facing status snapshot for Health/Home indicators."""
+        thread = self._thread
+        running = bool(thread is not None and thread.is_alive())
+        age_sec = (
+            None
+            if self._last_read_mono is None
+            else max(0.0, time.monotonic() - self._last_read_mono)
+        )
+        blocked = (
+            self._last_distance_mm is not None
+            and self._last_distance_mm <= self._threshold_mm
+        )
+        if not running:
+            detail = "monitor stopped"
+        elif not self._sensor_open:
+            detail = "sensor not open"
+        elif self._last_distance_mm is None:
+            detail = f"ready, no valid reading (threshold {self._threshold_mm} mm)"
+        elif blocked:
+            detail = f"BLOCKED {self._last_distance_mm} mm <= {self._threshold_mm} mm"
+        else:
+            detail = f"clear {self._last_distance_mm} mm > {self._threshold_mm} mm"
+        return {
+            "running": running,
+            "sensor_open": bool(self._sensor_open),
+            "motion_gated": bool(self._motion_gated),
+            "threshold_mm": int(self._threshold_mm),
+            "distance_mm": self._last_distance_mm,
+            "age_sec": age_sec,
+            "blocked": bool(blocked),
+            "detail": detail,
+        }
 
     def _open_sensor(self) -> None:
         if self._sensor_open:
@@ -130,6 +166,8 @@ class IrObstacleStopMonitor:
 
             r = self._sensor.read()
             dmm = r.distance_mm if r is not None else None
+            self._last_distance_mm = dmm
+            self._last_read_mono = time.monotonic()
             fire, self._hits = obstacle_debounce_step(
                 dmm,
                 threshold_mm=self._threshold_mm,

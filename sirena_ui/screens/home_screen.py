@@ -142,6 +142,14 @@ def _overview_pill_caption_kind(row: object) -> Tuple[str, str]:
             return ("Offline", Pill.KIND_NEUTRAL)
         if "connect" in low:
             return ("Online", Pill.KIND_OK)
+    if key == "ir":
+        low = detail.lower()
+        if "blocked" in low:
+            return ("Blocked", Pill.KIND_ERROR)
+        if "clear" in low:
+            return ("Clear", Pill.KIND_OK)
+        if "ready" in low:
+            return ("Ready", kind)
     if detail:
         return (detail[:22], kind)
     return ("—", kind)
@@ -410,7 +418,7 @@ class HomeScreen(QWidget):
 
     def _refresh_overview_strip(self, rows: list) -> None:
         """System overview row under quick actions — same subsystem keys as Health."""
-        for key in ("bus", "camera", "lidar", "battery", "wifi"):
+        for key in ("bus", "camera", "lidar", "ir", "battery", "wifi"):
             pill = self._ov_pills.get(key)
             if pill is None:
                 continue
@@ -451,6 +459,7 @@ class HomeScreen(QWidget):
             ("bus", "Bus"),
             ("camera", "Camera"),
             ("lidar", "Lidar"),
+            ("ir", "IR"),
             ("battery", "Battery"),
             ("wifi", "Wi-Fi"),
         ):

@@ -71,6 +71,30 @@ class IrObstacleMotionGatingTests(unittest.TestCase):
         mon._open_sensor()
         mock_gp2y.return_value.open.assert_called_once()
 
+    def test_status_reports_blocked_distance(self) -> None:
+        svc = MagicMock()
+        svc.settings.ir_obstacle_stop = IrObstacleStopSettings(
+            enabled=True,
+            motion_gated=False,
+            i2c_bus=7,
+            i2c_address=0x40,
+            threshold_mm=400,
+            debounce_reads=2,
+            cooldown_sec=15.0,
+            poll_interval_sec=0.02,
+            tts_text="There is an obstacle in my way",
+        )
+        mon = IrObstacleStopMonitor(svc, in_motion_fn=lambda: False)
+        mon._sensor_open = True
+        mon._last_distance_mm = 350
+        mon._last_read_mono = 1.0
+
+        st = mon.status()
+
+        self.assertTrue(st["blocked"])
+        self.assertEqual(st["distance_mm"], 350)
+        self.assertEqual(st["threshold_mm"], 400)
+
 
 if __name__ == "__main__":
     unittest.main()

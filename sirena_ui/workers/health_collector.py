@@ -290,18 +290,32 @@ def _lidar_row(service: NinaService) -> HealthRow:
 
 
 def _ir_row(service: NinaService) -> HealthRow:
-    health = _autonomy_health_dict(service)
-    if health is None:
+    try:
+        st = service.ir_obstacle_status()
+    except Exception as exc:
         return HealthRow(
-            "ir", "IR cliff (GP2Y0E02B)", "\u25A6",
-            "Not opened yet (enable Autonomous mode)", STATUS_PENDING,
+            "ir", "IR obstacle stop", "\u25A6",
+            f"status query failed: {exc}", STATUS_ERROR,
         )
-    state = health.get("ir") or (False, "no data")
-    ok, msg = _unpack_pair(state)
+    enabled = bool(st.get("enabled"))
+    running = bool(st.get("running"))
+    sensor_open = bool(st.get("sensor_open"))
+    blocked = bool(st.get("blocked"))
+    msg = str(st.get("detail") or "")
+    if not enabled:
+        status = STATUS_PENDING
+    elif blocked:
+        status = STATUS_ERROR
+    elif running and sensor_open:
+        status = STATUS_OK
+    elif running:
+        status = STATUS_WARN
+    else:
+        status = STATUS_PENDING
     return HealthRow(
-        "ir", "IR cliff (GP2Y0E02B)", "\u25A6",
-        msg or ("ready" if ok else "not detected"),
-        STATUS_OK if ok else STATUS_WARN,
+        "ir", "IR obstacle stop", "\u25A6",
+        msg or ("ready" if running else "not started"),
+        status,
     )
 
 

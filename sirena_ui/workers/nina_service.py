@@ -159,6 +159,44 @@ class NinaService:
         except Exception as exc:
             log.warning("IR obstacle stop monitor did not start: %s", exc)
 
+    def ir_obstacle_status(self) -> Dict[str, Any]:
+        """Status for the standalone IR obstacle-stop monitor."""
+        if not self.settings.ir_obstacle_stop.enabled:
+            return {
+                "enabled": False,
+                "running": False,
+                "sensor_open": False,
+                "blocked": False,
+                "distance_mm": None,
+                "threshold_mm": int(self.settings.ir_obstacle_stop.threshold_mm),
+                "detail": "IR obstacle stop disabled",
+            }
+        mon = self._ir_obstacle_monitor
+        if mon is None:
+            return {
+                "enabled": True,
+                "running": False,
+                "sensor_open": False,
+                "blocked": False,
+                "distance_mm": None,
+                "threshold_mm": int(self.settings.ir_obstacle_stop.threshold_mm),
+                "detail": "IR obstacle monitor not started",
+            }
+        try:
+            st = mon.status()
+        except Exception as exc:
+            return {
+                "enabled": True,
+                "running": False,
+                "sensor_open": False,
+                "blocked": False,
+                "distance_mm": None,
+                "threshold_mm": int(self.settings.ir_obstacle_stop.threshold_mm),
+                "detail": f"IR status failed: {exc}",
+            }
+        st["enabled"] = True
+        return st
+
     def run_obstacle_stop_reaction(self) -> None:
         """JYQD stop, neutral action, lean brake, then US-English gTTS phrase."""
         try:
