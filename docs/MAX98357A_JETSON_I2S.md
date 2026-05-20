@@ -25,11 +25,17 @@ NINA_AUDIO_MPG123_DEVICE=<alsa-pcm>
 NINA_AUDIO_MP3_VIA_APLAY=1
 NINA_AUDIO_APLAY_STEREO_MODE=left
 NINA_AUDIO_OUTPUT_RATE=48000
+NINA_AUDIO_APE_ROUTE=1
+NINA_AUDIO_APE_I2S=I2S5
+NINA_AUDIO_APE_MUX=ADMAIF1
+NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
+NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_FSYNC_WIDTH=1
 ```
 
 `scripts/setup-max98357a-audio.sh` writes those values into
-`/etc/nina-link/navigation.env` and plays a 1-second test tone through the
-selected PCM.
+`/etc/nina-link/navigation.env`, applies the Orin Nano APE -> I2S5 route
+immediately, and plays a 1-second left-slot test tone through the selected PCM.
 
 The script does **not** create the Jetson device-tree / pinmux overlay. That
 part is Jetson module + carrier + JetPack specific. Use Jetson-IO when
@@ -165,6 +171,16 @@ NINA_AUDIO_OUTPUT_RATE=48000
 NINA_AUDIO_OUTPUT_WARMUP_MS=100
 NINA_AUDIO_PREROLL_MS=0
 NINA_AUDIO_MUTE_PREROLL_SEC=0
+NINA_AUDIO_APE_ROUTE=1
+NINA_AUDIO_APE_CARD=APE
+NINA_AUDIO_APE_I2S=I2S5
+NINA_AUDIO_APE_MUX=ADMAIF1
+NINA_AUDIO_APE_CHANNELS=2
+NINA_AUDIO_APE_BITS=16
+NINA_AUDIO_APE_FRAME_MODE=i2s
+NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
+NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_FSYNC_WIDTH=1
 ```
 
 Then restart Nina:
@@ -180,6 +196,24 @@ Raw ALSA sine test:
 ```bash
 speaker-test -D plughw:CARD=max98357a,DEV=0 -c 2 -r 48000 -t sine -f 440
 ```
+
+On the reference Jetson Orin Nano + MAX98357A build the validated APE route is:
+
+```bash
+amixer -c APE cset name='I2S5 Mux' ADMAIF1
+amixer -c APE cset name='I2S5 Sample Rate' 48000
+amixer -c APE cset name='I2S5 Playback Audio Channels' 2
+amixer -c APE cset name='I2S5 Playback Audio Bit Format' 16
+amixer -c APE cset name='I2S5 Client Channels' 2
+amixer -c APE cset name='I2S5 Client Bit Format' 16
+amixer -c APE cset name='I2S5 codec frame mode' i2s
+amixer -c APE cset name='I2S5 codec master mode' cbs-cfs
+amixer -c APE cset name='I2S5 BCLK Ratio' 64
+amixer -c APE cset name='I2S5 FSYNC Width' 1
+```
+
+`scripts/launch-sirena.sh` applies those automatically at every Nina startup
+when `NINA_AUDIO_APE_ROUTE=1` is present in `/etc/nina-link/navigation.env`.
 
 Repo alert MP3 through the same PCM (the same decode-to-WAV path Nina uses
 when `NINA_AUDIO_MP3_VIA_APLAY=1`):

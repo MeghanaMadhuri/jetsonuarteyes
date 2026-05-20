@@ -165,6 +165,50 @@ except Exception:
 }
 _pin_qt_plugins_for_sirena
 
+# ---------------------------------------------------------------------
+# Optional Jetson APE -> I2S route setup for MAX98357A.
+#
+# The Orin Nano APE mixer controls are runtime ALSA state, not persisted by
+# the Python app. If the operator configured the MAX98357A via
+# scripts/setup-max98357a-audio.sh, /etc/nina-link/navigation.env exports
+# NINA_AUDIO_APE_ROUTE=1 plus the exact I2S5 parameters that were validated on
+# the bench. Apply them here before the UI starts and before Nina opens the
+# ALSA PCM. Best-effort: a route failure is logged but does not block the app.
+# ---------------------------------------------------------------------
+_apply_audio_ape_route_for_sirena() {
+    case "${NINA_AUDIO_APE_ROUTE:-}" in
+        1|true|TRUE|yes|YES|y|Y|on|ON) ;;
+        *) return 0 ;;
+    esac
+    if ! command -v amixer >/dev/null 2>&1; then
+        echo "[audio] WARNING: NINA_AUDIO_APE_ROUTE=1 but amixer is not installed" >&2
+        return 0
+    fi
+
+    local card="${NINA_AUDIO_APE_CARD:-APE}"
+    local i2s="${NINA_AUDIO_APE_I2S:-I2S5}"
+    local mux="${NINA_AUDIO_APE_MUX:-ADMAIF1}"
+    local rate="${NINA_AUDIO_OUTPUT_RATE:-48000}"
+    local channels="${NINA_AUDIO_APE_CHANNELS:-2}"
+    local bits="${NINA_AUDIO_APE_BITS:-16}"
+    local frame="${NINA_AUDIO_APE_FRAME_MODE:-i2s}"
+    local master="${NINA_AUDIO_APE_MASTER_MODE:-cbs-cfs}"
+    local bclk="${NINA_AUDIO_APE_BCLK_RATIO:-64}"
+    local fsync="${NINA_AUDIO_APE_FSYNC_WIDTH:-1}"
+
+    echo "[audio] applying ${card} route: ${i2s}<=${mux} rate=${rate} ch=${channels} bits=${bits} frame=${frame} master=${master} bclk=${bclk} fsync=${fsync}"
+    amixer -c "${card}" cset name="${i2s} Mux" "${mux}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Mux=${mux}" >&2
+    amixer -c "${card}" cset name="${i2s} Sample Rate" "${rate}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Sample Rate=${rate}" >&2
+    amixer -c "${card}" cset name="${i2s} Playback Audio Channels" "${channels}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Playback Audio Channels=${channels}" >&2
+    amixer -c "${card}" cset name="${i2s} Playback Audio Bit Format" "${bits}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Playback Audio Bit Format=${bits}" >&2
+    amixer -c "${card}" cset name="${i2s} Client Channels" "${channels}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Client Channels=${channels}" >&2
+    amixer -c "${card}" cset name="${i2s} Client Bit Format" "${bits}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} Client Bit Format=${bits}" >&2
+    amixer -c "${card}" cset name="${i2s} codec frame mode" "${frame}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} codec frame mode=${frame}" >&2
+    amixer -c "${card}" cset name="${i2s} codec master mode" "${master}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} codec master mode=${master}" >&2
+    amixer -c "${card}" cset name="${i2s} BCLK Ratio" "${bclk}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} BCLK Ratio=${bclk}" >&2
+    amixer -c "${card}" cset name="${i2s} FSYNC Width" "${fsync}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} FSYNC Width=${fsync}" >&2
+}
+
 # Legacy Pi UART bridge vars — remove so GUI / children never inherit stale
 # NINA_NAV_MODE=remote from ~/.bashrc or old navigation.env (Jetson is GPIO-only).
 unset NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD \
@@ -287,6 +331,7 @@ EXIT=0
     echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
     echo "PYTHONPATH=${PYTHONPATH}"
     _force_panel_resolution_1024x600
+    _apply_audio_ape_route_for_sirena
     if [[ -z "${PYTHON_BIN}" ]]; then
         echo "FATAL: no python3 interpreter found on PATH" >&2
         exit 127

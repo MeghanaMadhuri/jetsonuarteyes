@@ -45,6 +45,13 @@ This writes:
   NINA_AUDIO_OUTPUT_WARMUP_MS=<warmup-ms>
   NINA_AUDIO_PREROLL_MS=0
   NINA_AUDIO_MUTE_PREROLL_SEC=0
+  NINA_AUDIO_APE_ROUTE=1
+  NINA_AUDIO_APE_CARD=APE
+  NINA_AUDIO_APE_I2S=I2S5
+  NINA_AUDIO_APE_MUX=ADMAIF1
+  NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
+  NINA_AUDIO_APE_BCLK_RATIO=64
+  NINA_AUDIO_APE_FSYNC_WIDTH=1
 
 into:
   ${ENV_FILE}
@@ -165,6 +172,16 @@ sed -i -E \
     -e '/^NINA_AUDIO_OUTPUT_WARMUP_MS=/d' \
     -e '/^NINA_AUDIO_PREROLL_MS=/d' \
     -e '/^NINA_AUDIO_MUTE_PREROLL_SEC=/d' \
+    -e '/^NINA_AUDIO_APE_ROUTE=/d' \
+    -e '/^NINA_AUDIO_APE_CARD=/d' \
+    -e '/^NINA_AUDIO_APE_I2S=/d' \
+    -e '/^NINA_AUDIO_APE_MUX=/d' \
+    -e '/^NINA_AUDIO_APE_CHANNELS=/d' \
+    -e '/^NINA_AUDIO_APE_BITS=/d' \
+    -e '/^NINA_AUDIO_APE_FRAME_MODE=/d' \
+    -e '/^NINA_AUDIO_APE_MASTER_MODE=/d' \
+    -e '/^NINA_AUDIO_APE_BCLK_RATIO=/d' \
+    -e '/^NINA_AUDIO_APE_FSYNC_WIDTH=/d' \
     "${TMP_FILE}"
 
 cat >> "${TMP_FILE}" <<EOF
@@ -178,6 +195,16 @@ NINA_AUDIO_OUTPUT_RATE=${RATE}
 NINA_AUDIO_OUTPUT_WARMUP_MS=${WARMUP_MS}
 NINA_AUDIO_PREROLL_MS=0
 NINA_AUDIO_MUTE_PREROLL_SEC=0
+NINA_AUDIO_APE_ROUTE=1
+NINA_AUDIO_APE_CARD=APE
+NINA_AUDIO_APE_I2S=I2S5
+NINA_AUDIO_APE_MUX=ADMAIF1
+NINA_AUDIO_APE_CHANNELS=2
+NINA_AUDIO_APE_BITS=16
+NINA_AUDIO_APE_FRAME_MODE=i2s
+NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
+NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_FSYNC_WIDTH=1
 EOF
 
 sudo mkdir -p "$(dirname "${ENV_FILE}")"
@@ -185,11 +212,24 @@ sudo install -m 0644 -o root -g root "${TMP_FILE}" "${ENV_FILE}"
 
 echo
 echo "Wrote MAX98357A audio config to ${ENV_FILE}:"
-grep -E '^(NINA_GREET_APLAY_DEVICE|NINA_AUDIO_MPG123_DEVICE|NINA_AUDIO_MP3_VIA_APLAY|NINA_AUDIO_APLAY_STEREO_MODE|NINA_AUDIO_OUTPUT_RATE|NINA_AUDIO_OUTPUT_WARMUP_MS|NINA_AUDIO_PREROLL_MS|NINA_AUDIO_MUTE_PREROLL_SEC)=' "${ENV_FILE}" || true
+grep -E '^(NINA_GREET_APLAY_DEVICE|NINA_AUDIO_MPG123_DEVICE|NINA_AUDIO_MP3_VIA_APLAY|NINA_AUDIO_APLAY_STEREO_MODE|NINA_AUDIO_OUTPUT_RATE|NINA_AUDIO_OUTPUT_WARMUP_MS|NINA_AUDIO_PREROLL_MS|NINA_AUDIO_MUTE_PREROLL_SEC|NINA_AUDIO_APE_)=' "${ENV_FILE}" || true
+
+echo
+echo "Applying Orin Nano APE -> I2S5 route now ..."
+amixer -c APE cset name='I2S5 Mux' ADMAIF1 >/dev/null
+amixer -c APE cset name='I2S5 Sample Rate' "${RATE}" >/dev/null
+amixer -c APE cset name='I2S5 Playback Audio Channels' 2 >/dev/null
+amixer -c APE cset name='I2S5 Playback Audio Bit Format' 16 >/dev/null
+amixer -c APE cset name='I2S5 Client Channels' 2 >/dev/null
+amixer -c APE cset name='I2S5 Client Bit Format' 16 >/dev/null
+amixer -c APE cset name='I2S5 codec frame mode' i2s >/dev/null
+amixer -c APE cset name='I2S5 codec master mode' cbs-cfs >/dev/null
+amixer -c APE cset name='I2S5 BCLK Ratio' 64 >/dev/null
+amixer -c APE cset name='I2S5 FSYNC Width' 1 >/dev/null
 
 if [[ "${RUN_TEST}" -eq 1 ]]; then
     echo
-    echo "Playing a 1-second test tone through ${DEVICE} ..."
+    echo "Playing a 1-second left-slot test tone through ${DEVICE} ..."
     python3 - <<'PY' "${TMP_FILE}.wav" "${RATE}"
 import math
 import sys
@@ -202,13 +242,17 @@ freq = 440.0
 amp = 0.25
 frames = int(rate * duration)
 with wave.open(path, "wb") as w:
-    w.setnchannels(1)
+    # MAX98357A breakout on the reference Orin Nano listens to the left I2S slot.
+    w.setnchannels(2)
     w.setsampwidth(2)
     w.setframerate(rate)
     data = bytearray()
     for i in range(frames):
         sample = int(32767 * amp * math.sin(2 * math.pi * freq * i / rate))
-        data.extend(sample.to_bytes(2, "little", signed=True))
+        left = sample.to_bytes(2, "little", signed=True)
+        right = (0).to_bytes(2, "little", signed=True)
+        data.extend(left)
+        data.extend(right)
     w.writeframes(bytes(data))
 PY
     if ! aplay -D "${DEVICE}" -q "${TMP_FILE}.wav"; then
