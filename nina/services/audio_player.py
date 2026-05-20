@@ -109,6 +109,21 @@ def _mp3_via_aplay_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _aplay_stereo_mode() -> str:
+    """Stereo channel layout for MP3-via-aplay temporary WAV playback.
+
+    ``none`` keeps the decoded WAV as-is. ``left`` / ``right`` / ``dual``
+    convert decoded PCM to 2-channel WAV, placing mono source audio into the
+    requested I2S slot. This is needed for MAX98357A breakouts strapped to a
+    specific slot: the reference Orin Nano build only plays the left slot, while
+    right-only WAVs are silent.
+    """
+    raw = (os.environ.get("NINA_AUDIO_APLAY_STEREO_MODE") or "none").strip().lower()
+    if raw in ("left", "right", "dual", "both", "stereo"):
+        return "dual" if raw in ("both", "stereo") else raw
+    return "none"
+
+
 def _restore_volume_default_pct() -> int:
     try:
         return max(1, min(100, int(os.environ.get("NINA_AUDIO_RESTORE_VOLUME_PCT", "75"))))
@@ -297,25 +312,87 @@ def mp3_via_aplay_command_for(path: Path) -> Optional[List[str]]:
     dev = _aplay_device_flag() or ""
     rate = _pcm_output_rate_hz()
     rate_arg = "" if rate is None else str(rate)
+    mode = _aplay_stereo_mode()
     script = r'''
 set -eu
 src="$1"
 dev="$2"
 rate="$3"
-tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-XXXXXX.wav")"
-cleanup() { rm -f "$tmp"; }
+mode="$4"
+tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-in-XXXXXX.wav")"
+play="$tmp"
+cleanup() { rm -f "$tmp" "$play"; }
 trap cleanup EXIT
 if [ -n "$rate" ]; then
     mpg123 -q -r "$rate" -w "$tmp" "$src"
 else
     mpg123 -q -w "$tmp" "$src"
 fi
-if [ -n "$dev" ]; then
-    exec aplay -q -D "$dev" "$tmp"
+if [ "$mode" != "none" ]; then
+    play="$(mktemp "${TMPDIR:-/tmp}/nina-audio-out-XXXXXX.wav")"
+    python3 - "$tmp" "$play" "$mode" <<'PY'
+import sys
+import wave
+
+src, dst, mode = sys.argv[1:4]
+with wave.open(src, "rb") as r:
+    channels = r.getnchannels()
+    sampwidth = r.getsampwidth()
+    rate = r.getframerate()
+    frames = r.readframes(r.getnframes())
+
+if sampwidth <= 0:
+    raise SystemExit("invalid sample width")
+
+out = bytearray()
+if channels == 1:
+    for i in range(0, len(frames), sampwidth):
+        s = frames[i:i + sampwidth]
+        z = b"\x00" * sampwidth
+        if mode == "left":
+            out.extend(s); out.extend(z)
+        elif mode == "right":
+            out.extend(z); out.extend(s)
+        else:
+            out.extend(s); out.extend(s)
+else:
+    frame_width = channels * sampwidth
+    for i in range(0, len(frames), frame_width):
+        frame = frames[i:i + frame_width]
+        if len(frame) < frame_width:
+            continue
+        left = frame[0:sampwidth]
+        right = frame[sampwidth:2 * sampwidth]
+        z = b"\x00" * sampwidth
+        if mode == "left":
+            out.extend(left); out.extend(z)
+        elif mode == "right":
+            out.extend(z); out.extend(right)
+        else:
+            out.extend(left); out.extend(right)
+
+with wave.open(dst, "wb") as w:
+    w.setnchannels(2)
+    w.setsampwidth(sampwidth)
+    w.setframerate(rate)
+    w.writeframes(bytes(out))
+PY
 fi
-exec aplay -q "$tmp"
+if [ -n "$dev" ]; then
+    exec aplay -q -D "$dev" "$play"
+fi
+exec aplay -q "$play"
 '''.strip()
-    return ["/bin/sh", "-c", script, "nina-mp3-via-aplay", str(path), dev, rate_arg]
+    return [
+        "/bin/sh",
+        "-c",
+        script,
+        "nina-mp3-via-aplay",
+        str(path),
+        dev,
+        rate_arg,
+        mode,
+    ]
 
 
 def _pulse_set_volume_pct(pct: int) -> bool:

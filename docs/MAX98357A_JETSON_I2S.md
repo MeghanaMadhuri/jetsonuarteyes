@@ -23,6 +23,7 @@ The app can be forced to a specific ALSA PCM with:
 NINA_GREET_APLAY_DEVICE=<alsa-pcm>
 NINA_AUDIO_MPG123_DEVICE=<alsa-pcm>
 NINA_AUDIO_MP3_VIA_APLAY=1
+NINA_AUDIO_APLAY_STEREO_MODE=left
 NINA_AUDIO_OUTPUT_RATE=48000
 ```
 
@@ -159,6 +160,7 @@ The script writes these lines into `/etc/nina-link/navigation.env`:
 NINA_GREET_APLAY_DEVICE=plughw:CARD=max98357a,DEV=0
 NINA_AUDIO_MPG123_DEVICE=plughw:CARD=max98357a,DEV=0
 NINA_AUDIO_MP3_VIA_APLAY=1
+NINA_AUDIO_APLAY_STEREO_MODE=left
 NINA_AUDIO_OUTPUT_RATE=48000
 NINA_AUDIO_OUTPUT_WARMUP_MS=100
 NINA_AUDIO_PREROLL_MS=0
@@ -221,6 +223,16 @@ direct `mpg123 -o alsa -a ...` fails or produces garbage. Leave
 `NINA_AUDIO_MP3_VIA_APLAY=1` enabled (the setup script writes it by default).
 Nina will decode MP3 to a temporary WAV with `mpg123 -w`, then play that WAV
 through `aplay -D <device>`.
+
+If the breakout is strapped to the left I2S slot (common on MAX98357A modules),
+set:
+
+```bash
+NINA_AUDIO_APLAY_STEREO_MODE=left
+```
+
+That converts decoded mono MP3s to stereo WAVs with audio only on the left slot
+and silence on the right. Other values are `right`, `dual`, and `none`.
 
 ### WAV / warmup is silent
 

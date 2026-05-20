@@ -128,6 +128,7 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     monkeypatch.setenv("NINA_AUDIO_MP3_VIA_APLAY", "1")
     monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=APE,DEV=0")
     monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
+    monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "left")
     from nina.services.audio_player import AudioPlayer
 
     mp3 = tmp_path / "x.mp3"
@@ -140,6 +141,17 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     assert str(mp3) in cmd
     assert "plughw:CARD=APE,DEV=0" in cmd
     assert "48000" in cmd
+    assert "left" in cmd
+    assert "python3 -" in cmd[2]
+
+
+def test_invalid_aplay_stereo_mode_falls_back_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "garbage")
+    from nina.services.audio_player import _aplay_stereo_mode
+
+    assert _aplay_stereo_mode() == "none"
 
 
 def test_mpg123_command_omits_rate_when_auto(
