@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import hashlib
 import logging
 import os
+import queue
+import threading
 import time
 import secrets
 import socket
@@ -50,6 +53,47 @@ from sirena_ui.workers.background_tasks import run_blocking as _run_bg
 from sirena_ui.workers.nina_service import NinaService
 
 log = logging.getLogger("sirena_ui.android_gateway.fastapi_app")
+
+_mjpeg_stream_lock = threading.Lock()
+_mjpeg_stream_active = 0
+
+
+def _mjpeg_max_streams() -> int:
+    raw = os.environ.get("NINA_MJPEG_MAX_STREAMS", "4").strip()
+    try:
+        return max(1, min(32, int(raw)))
+    except ValueError:
+        return 4
+
+
+def _mjpeg_stream_acquire() -> bool:
+    global _mjpeg_stream_active
+    cap = _mjpeg_max_streams()
+    with _mjpeg_stream_lock:
+        if _mjpeg_stream_active >= cap:
+            return False
+        _mjpeg_stream_active += 1
+        return True
+
+
+def _mjpeg_stream_release() -> None:
+    global _mjpeg_stream_active
+    with _mjpeg_stream_lock:
+        _mjpeg_stream_active = max(0, _mjpeg_stream_active - 1)
+
+
+async def _watch_request_disconnect(request: Request, stop: threading.Event) -> None:
+    """Signal blocking MJPEG producers when the tablet closes the socket."""
+    try:
+        while True:
+            if await request.is_disconnected():
+                stop.set()
+                return
+            await asyncio.sleep(0.05)
+    except asyncio.CancelledError:
+        stop.set()
+        raise
+
 
 _UI_POLL_GET_PATHS = frozenset(
     {
@@ -1534,36 +1578,20 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
 
         return gw.plane.submit(_stop, timeout=30.0)
 
-    def _mjpeg_iter() -> Iterator[bytes]:
-        boundary = b"frame"
-        gw.vision_hub.client_enter(gw.service)
-        try:
-            while True:
-                jpeg = gw.vision_hub.latest_jpeg()
-                if jpeg:
-                    yield (
-                        b"--" + boundary + b"\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n"
-                        + jpeg
-                        + b"\r\n"
-                    )
-                else:
-                    import time as _time
-
-                    _time.sleep(0.016)
-        finally:
-            gw.vision_hub.client_leave()
-            try:
-                gw.plane.submit(lambda: gw.service.vision.release(), timeout=30.0)
-            except Exception:
-                log.exception("vision stream: vision.release after disconnect")
-
     @app.get("/v1/vision/stream")
-    def vision_stream_http() -> StreamingResponse:
+    async def vision_stream_http(request: Request) -> StreamingResponse:
         if not cfg.enable_vision_bridge:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Vision bridge disabled — set NINA_LINK_ENABLE_VISION_BRIDGE=1",
+            )
+        if not _mjpeg_stream_acquire():
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Too many MJPEG streams active — close Vision/Drive preview "
+                    "on other devices and retry"
+                ),
             )
 
         def _prep() -> None:
@@ -1571,8 +1599,35 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             gw.vision_hub.attach(gw.service)
 
         gw.plane.submit(_prep, timeout=60.0)
+        boundary = b"frame"
+
+        async def _gen():
+            gw.vision_hub.client_enter(gw.service)
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    jpeg = gw.vision_hub.latest_jpeg()
+                    if jpeg:
+                        yield (
+                            b"--" + boundary + b"\r\n"
+                            b"Content-Type: image/jpeg\r\n\r\n"
+                            + jpeg
+                            + b"\r\n"
+                        )
+                    await asyncio.sleep(0.016)
+            finally:
+                _mjpeg_stream_release()
+                gw.vision_hub.client_leave()
+                try:
+                    gw.plane.submit(
+                        lambda: gw.service.vision.release(), timeout=30.0
+                    )
+                except Exception:
+                    log.exception("vision stream: vision.release after disconnect")
+
         return StreamingResponse(
-            _mjpeg_iter(),
+            _gen(),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
 
@@ -1783,33 +1838,87 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             }
         return {"ok": True, "bridge_enabled": True, **depth_stream.status_payload()}
 
-    def _depth_mjpeg_iter() -> Iterator[bytes]:
-        boundary = b"frame"
-        for jpeg in depth_stream.iter_depth_mjpeg(lambda: False, fps_cap=12.0):
-            yield (
-                b"--" + boundary + b"\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n"
-                + jpeg
-                + b"\r\n"
-            )
-
     @app.get("/v1/depth/stream")
-    def depth_stream_http() -> StreamingResponse:
+    async def depth_stream_http(request: Request) -> StreamingResponse:
         if not cfg.enable_depth_bridge:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Depth bridge disabled — set NINA_LINK_ENABLE_DEPTH_BRIDGE=1",
             )
+        if not _mjpeg_stream_acquire():
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Too many MJPEG streams active — close other camera previews "
+                    "and retry"
+                ),
+            )
         ok_open, dmsg = depth_stream.acquire("stream_open_probe")
         if ok_open:
             depth_stream.release("stream_open_probe")
         else:
+            _mjpeg_stream_release()
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"depth camera unavailable: {dmsg}",
             )
+        boundary = b"frame"
+        stop = threading.Event()
+
+        async def _gen():
+            stop_task = asyncio.create_task(_watch_request_disconnect(request, stop))
+            frame_q: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=4)
+
+            def _producer() -> None:
+                try:
+                    for jpeg in depth_stream.iter_depth_mjpeg(
+                        stop.is_set, fps_cap=12.0
+                    ):
+                        if stop.is_set():
+                            break
+                        try:
+                            frame_q.put(jpeg, timeout=1.0)
+                        except queue.Full:
+                            try:
+                                frame_q.get_nowait()
+                            except queue.Empty:
+                                pass
+                            frame_q.put(jpeg, timeout=1.0)
+                finally:
+                    frame_q.put(None)
+
+            prod = threading.Thread(
+                target=_producer, daemon=True, name="depth-mjpeg-producer"
+            )
+            prod.start()
+            loop = asyncio.get_running_loop()
+            try:
+                while not stop.is_set():
+                    try:
+                        jpeg = await loop.run_in_executor(
+                            None, lambda: frame_q.get(timeout=0.5)
+                        )
+                    except queue.Empty:
+                        continue
+                    if jpeg is None:
+                        break
+                    yield (
+                        b"--" + boundary + b"\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n"
+                        + jpeg
+                        + b"\r\n"
+                    )
+            finally:
+                stop.set()
+                stop_task.cancel()
+                try:
+                    await stop_task
+                except asyncio.CancelledError:
+                    pass
+                _mjpeg_stream_release()
+
         return StreamingResponse(
-            _depth_mjpeg_iter(),
+            _gen(),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
 

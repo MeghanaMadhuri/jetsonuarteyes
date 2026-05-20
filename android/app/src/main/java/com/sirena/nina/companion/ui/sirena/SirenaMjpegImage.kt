@@ -168,15 +168,12 @@ fun SirenaMjpegImage(
                 bearer?.trim()?.takeIf { it.isNotEmpty() }?.let {
                     reqBuilder.header("Authorization", "Bearer $it")
                 }
-                val call = mjpegHttpClient.newCall(reqBuilder.build())
-                try {
-                    val resp = call.execute()
+                mjpegHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         withContext(Dispatchers.Main) {
                             error = "HTTP ${resp.code}"
                             loading = false
                         }
-                        resp.close()
                         return@withContext
                     }
                     val body = resp.body ?: return@withContext
@@ -222,8 +219,6 @@ fun SirenaMjpegImage(
                             }
                         }
                     }
-                } finally {
-                    call.cancel()
                 }
             }
         } catch (e: CancellationException) {

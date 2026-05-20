@@ -337,6 +337,10 @@ EXIT=0
         exit 127
     fi
     cd "${REPO_ROOT}"
+    # Tablet gateway MJPEG + camera/GPIO handles need more FDs than the default 1024.
+    if command -v ulimit >/dev/null 2>&1; then
+        ulimit -n 8192 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+    fi
     "${PYTHON_BIN}" -m sirena_ui
     EXIT=$?
     echo "exit code: ${EXIT}"
