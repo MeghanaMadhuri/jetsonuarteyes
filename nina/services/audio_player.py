@@ -48,6 +48,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -309,6 +310,7 @@ def mp3_via_aplay_command_for(path: Path) -> Optional[List[str]]:
     aplay = shutil.which("aplay")
     if not mpg or not aplay:
         return None
+    python = sys.executable or shutil.which("python3") or "python3"
     dev = _aplay_device_flag() or ""
     rate = _pcm_output_rate_hz()
     rate_arg = "" if rate is None else str(rate)
@@ -321,6 +323,9 @@ dev="$2"
 rate="$3"
 mode="$4"
 raw_rate="$5"
+mpg="$6"
+aplay_bin="$7"
+python_bin="$8"
 tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-in-XXXXXX.wav")"
 play="$tmp"
 raw=""
@@ -330,9 +335,9 @@ if [ "$mode" != "none" ]; then
     raw="$(mktemp "${TMPDIR:-/tmp}/nina-audio-raw-XXXXXX.pcm")"
     # Decode to raw mono PCM, then write the WAV header ourselves. This avoids
     # Jetson hw playback inheriting an unexpected mpg123 WAV channel/rate shape.
-    mpg123 -q -m -r "$raw_rate" -s "$src" > "$raw"
+    "$mpg" -q -m -r "$raw_rate" -s "$src" > "$raw"
     play="$(mktemp "${TMPDIR:-/tmp}/nina-audio-out-XXXXXX.wav")"
-    python3 - "$raw" "$play" "$mode" "$raw_rate" <<'PY'
+    "$python_bin" - "$raw" "$play" "$mode" "$raw_rate" <<'PY'
 import sys
 import wave
 
@@ -360,15 +365,15 @@ with wave.open(dst, "wb") as w:
 PY
 else:
     if [ -n "$rate" ]; then
-        mpg123 -q -r "$rate" -w "$tmp" "$src"
+        "$mpg" -q -r "$rate" -w "$tmp" "$src"
     else
-        mpg123 -q -w "$tmp" "$src"
+        "$mpg" -q -w "$tmp" "$src"
     fi
 fi
 if [ -n "$dev" ]; then
-    exec aplay -q -D "$dev" "$play"
+    exec "$aplay_bin" -q -D "$dev" "$play"
 fi
-exec aplay -q "$play"
+exec "$aplay_bin" -q "$play"
 '''.strip()
     return [
         "/bin/sh",
@@ -380,6 +385,9 @@ exec aplay -q "$play"
         rate_arg,
         mode,
         raw_rate_arg,
+        mpg,
+        aplay,
+        python,
     ]
 
 

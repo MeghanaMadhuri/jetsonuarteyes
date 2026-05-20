@@ -136,13 +136,15 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     cmd = AudioPlayer()._command_for(mp3)
     assert cmd is not None
     assert cmd[:3] == ["/bin/sh", "-c", cmd[2]]
-    assert "mpg123 -q -m -r" in cmd[2]
-    assert "aplay -q -D" in cmd[2]
+    assert '"$mpg" -q -m -r' in cmd[2]
+    assert 'exec "$aplay_bin" -q -D' in cmd[2]
     assert str(mp3) in cmd
     assert "plughw:CARD=APE,DEV=0" in cmd
+    assert str(fake_mpg) in cmd
+    assert str(fake_aplay) in cmd
     assert "48000" in cmd
     assert "left" in cmd
-    assert "python3 -" in cmd[2]
+    assert '"$python_bin" -' in cmd[2]
 
 
 def test_invalid_aplay_stereo_mode_falls_back_to_none(
