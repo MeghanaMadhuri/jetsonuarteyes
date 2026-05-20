@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QLibraryInfo, Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
@@ -48,8 +48,34 @@ def _configure_logging() -> None:
     )
 
 
+def _pin_qt_platform_plugins() -> None:
+    """Keep OpenCV's bundled Qt plugin directory from hijacking PyQt.
+
+    The pip ``opencv-python`` wheel ships its own Qt plugins under
+    ``cv2/qt/plugins`` and its import side-effect can rewrite
+    ``QT_QPA_PLATFORM_PLUGIN_PATH``. On Jetson that directory often
+    contains an ``xcb`` plugin compiled against a different Qt build than
+    the system ``python3-pyqt5`` bindings, causing:
+
+        Could not load the Qt platform plugin "xcb" in ".../cv2/qt/plugins"
+
+    The launcher pins this too, but do it again in-process immediately
+    before creating ``QApplication`` so any earlier ``cv2`` import cannot
+    win. ``QT_QPA_PLATFORM_PLUGIN_PATH`` should point at the directory
+    containing ``libqxcb.so`` itself (``.../plugins/platforms``), not the
+    parent plugin root.
+    """
+    os.environ.pop("QT_PLUGIN_PATH", None)
+    plugin_root = QLibraryInfo.location(QLibraryInfo.PluginsPath)
+    platforms = os.path.join(plugin_root, "platforms") if plugin_root else ""
+    if platforms and os.path.isfile(os.path.join(platforms, "libqxcb.so")):
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = platforms
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+
 def main() -> int:
     _configure_logging()
+    _pin_qt_platform_plugins()
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)

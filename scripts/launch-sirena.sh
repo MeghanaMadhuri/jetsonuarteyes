@@ -130,8 +130,9 @@ for p in os.environ.get('PYTHONPATH', '').split(':'):
 try:
     from PyQt5.QtCore import QLibraryInfo
     path = QLibraryInfo.location(QLibraryInfo.PluginsPath)
-    if path and os.path.isfile(os.path.join(path, 'platforms', 'libqxcb.so')):
-        print(path)
+    platforms = os.path.join(path, 'platforms') if path else ''
+    if platforms and os.path.isfile(os.path.join(platforms, 'libqxcb.so')):
+        print(platforms)
 except Exception:
     pass
 " 2>/dev/null || true)"
@@ -148,7 +149,7 @@ except Exception:
             "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt5/plugins"
         do
             if [[ -f "${_qt_plugins}/platforms/libqxcb.so" ]]; then
-                _qt_plugins_pin="${_qt_plugins}"
+                _qt_plugins_pin="${_qt_plugins}/platforms"
                 break
             fi
         done
