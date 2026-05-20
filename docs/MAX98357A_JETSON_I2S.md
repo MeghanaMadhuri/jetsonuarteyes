@@ -25,6 +25,7 @@ NINA_AUDIO_MPG123_DEVICE=<alsa-pcm>
 NINA_AUDIO_MP3_VIA_APLAY=1
 NINA_AUDIO_APLAY_STEREO_MODE=left
 NINA_AUDIO_OUTPUT_RATE=48000
+NINA_AUDIO_PERSISTENT_PIPE=1
 NINA_AUDIO_SILENCE_KEEPALIVE=1
 NINA_AUDIO_SILENCE_KEEPALIVE_SEC=2
 NINA_AUDIO_EDGE_SILENCE_MS=80
@@ -193,6 +194,7 @@ NINA_AUDIO_OUTPUT_RATE=48000
 NINA_AUDIO_OUTPUT_WARMUP_MS=100
 NINA_AUDIO_PREROLL_MS=0
 NINA_AUDIO_MUTE_PREROLL_SEC=0
+NINA_AUDIO_PERSISTENT_PIPE=1
 NINA_AUDIO_SILENCE_KEEPALIVE=1
 NINA_AUDIO_SILENCE_KEEPALIVE_SEC=2
 NINA_AUDIO_EDGE_SILENCE_MS=80
@@ -245,12 +247,14 @@ amixer -c APE cset name='I2S5 FSYNC Width' 1
 `scripts/launch-sirena.sh` applies those automatically at every Nina startup
 when `NINA_AUDIO_APE_ROUTE=1` is present in `/etc/nina-link/navigation.env`.
 
-When `NINA_AUDIO_SILENCE_KEEPALIVE=1`, Nina keeps the I2S path warm by playing
-looped digital silence while idle. Before a real clip, it stops the silence
-loop, plays the clip, and starts silence again afterward. `NINA_AUDIO_EDGE_SILENCE_MS`
-adds a small silent pad to generated alert WAVs so stream handoff artifacts
-happen during silence rather than at the speech edge.
-If `SD_MODE` is also wired to a GPIO, silence keepalive keeps the amplifier
+When `NINA_AUDIO_PERSISTENT_PIPE=1`, Nina keeps a single raw `aplay` process
+open for the lifetime of the app. It writes digital silence while idle and
+injects clip PCM into the same pipe for playback, avoiding ALSA close/reopen
+transitions. `NINA_AUDIO_EDGE_SILENCE_MS` adds a small silent pad around
+generated alert PCM so clip boundaries stay quiet. The older
+`NINA_AUDIO_SILENCE_KEEPALIVE=1` loop is ignored when persistent pipe mode is
+enabled.
+If `SD_MODE` is also wired to a GPIO, persistent pipe mode keeps the amplifier
 enabled continuously; it does not toggle `SD_MODE` per clip.
 
 Repo alert MP3 through the same PCM (the same decode-to-WAV path Nina uses

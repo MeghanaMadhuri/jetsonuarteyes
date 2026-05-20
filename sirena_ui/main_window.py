@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from nina.services.audio_player import start_silence_keepalive
+from nina.services.audio_player import start_persistent_audio_pipe, start_silence_keepalive
 from nina.sensors.ads1115 import get_battery_snapshot
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self._service = service
         self.setWindowTitle("Sirena Control Center")
         self._load_persisted_audio_gain()
+        start_persistent_audio_pipe()
         start_silence_keepalive()
 
         # NINA_UI_FULLSCREEN=1 starts the GUI in frameless kiosk mode at
