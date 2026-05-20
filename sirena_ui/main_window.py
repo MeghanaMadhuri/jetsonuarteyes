@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
             "perception": "Nina \u00b7 Perception",
             "map": "Nina \u00b7 Map (SLAM)",
             "actions": "Nina \u00b7 Actions",
+            "lean_cal": "Nina \u00b7 Lean Cal (backward bench)",
             "settings": "Nina \u00b7 Settings",
             "health": "Nina \u00b7 Health Check",
         }
@@ -354,6 +355,9 @@ class MainWindow(QMainWindow):
             screen = ActionsScreen(self._service)
             screen.bus_status_changed.connect(self._status_bar.set_right_text)
             return screen
+        if key == "lean_cal":
+            from sirena_ui.screens.lean_cal_screen import LeanCalScreen
+            return LeanCalScreen(self._service)
         if key == "settings":
             from sirena_ui.screens.settings_screen import SettingsScreen
             return SettingsScreen(self._service)

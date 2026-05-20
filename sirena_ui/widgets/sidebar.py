@@ -28,6 +28,7 @@ NAV_ITEMS: List[Tuple[str, str, str]] = [
     ("perception", "Perception", "\u2299"),    # circled dot - sensor fusion view
     ("map", "Map", "\u25A6"),                  # square with grid
     ("actions", "Actions", "\u2630"),          # trigram (lines)
+    ("lean_cal", "Lean Cal", "\u2696"),        # balance scale - bench backward-lean calibration
     ("settings", "Settings", "\u2699"),        # gear
     ("health", "Health", "\u2665"),            # heart
 ]
