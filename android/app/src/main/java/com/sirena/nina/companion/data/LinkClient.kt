@@ -32,14 +32,25 @@ class LinkClient {
             .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
             .build()
 
-    /** Short timeouts for drive hold/stop/status so the UI never blocks for minutes. */
-    private val driveClient =
+    /** Fast path: hold/stop/brake/E-stop/status (must return quickly). */
+    private val driveFastClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
-            .writeTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
+    /** Straight/turn can wait for Jetson BLDC prime on the Qt thread (up to ~15s). */
+    private val driveCommandClient =
+        OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(28, TimeUnit.SECONDS)
+            .writeTimeout(12, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 
@@ -205,7 +216,7 @@ class LinkClient {
         which: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            postDrive(
+            postDriveCommand(
                 "$baseUrl/v1/robot/drive/turn",
                 bearer,
                 JSONObject().put("which", which).toString(),
@@ -277,7 +288,7 @@ class LinkClient {
         backward: Boolean,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            postDrive(
+            postDriveCommand(
                 "$baseUrl/v1/robot/drive/straight",
                 bearer,
                 JSONObject().put("backward", backward).toString(),
@@ -731,7 +742,7 @@ class LinkClient {
         return execute(req, http)
     }
 
-    private fun getDrive(url: String, bearer: String? = null): JSONObject = get(url, bearer, driveClient)
+    private fun getDrive(url: String, bearer: String? = null): JSONObject = get(url, bearer, driveFastClient)
 
     private fun post(url: String, bearer: String?, jsonBody: String): JSONObject =
         post(url, bearer, jsonBody, client)
@@ -748,7 +759,10 @@ class LinkClient {
     }
 
     private fun postDrive(url: String, bearer: String?, jsonBody: String): JSONObject =
-        post(url, bearer, jsonBody, driveClient)
+        post(url, bearer, jsonBody, driveFastClient)
+
+    private fun postDriveCommand(url: String, bearer: String?, jsonBody: String): JSONObject =
+        post(url, bearer, jsonBody, driveCommandClient)
 
     private fun delete(url: String, bearer: String?): JSONObject {
         val req = Request.Builder()

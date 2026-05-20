@@ -163,10 +163,17 @@ private suspend fun CompanionViewModel.awaitDriveHardwareReady(): JSONObject? {
 
 private suspend fun CompanionViewModel.pollUntilStraightBenchDone() {
     val deadline = System.currentTimeMillis() + STRAIGHT_BENCH_MAX_MS
+    var sawPulseActive = false
     while (System.currentTimeMillis() < deadline) {
         delay(STRAIGHT_READY_POLL_MS)
         val j = fetchRobotDriveStatus() ?: continue
-        if (!j.optBoolean("straight_pulse_active", false)) return
+        val active = j.optBoolean("straight_pulse_active", false)
+        if (active) {
+            sawPulseActive = true
+            continue
+        }
+        // Do not treat idle-before-start as "done" — only end after pulse was seen.
+        if (sawPulseActive) return
     }
 }
 
@@ -281,10 +288,6 @@ fun SirenaDriveScreen(
                     val side = j.optString("imu_drift_side", "n/a")
                     val straightActive = j.optBoolean("straight_pulse_active", false)
                     hudImu = formatImuHud(drift, side, straightActive || straightRunning)
-                    if (straightRunning && !straightActive) {
-                        straightRunning = false
-                        hudImu = "—"
-                    }
                 } else {
                     statusFailStreak += 1
                     bldcInitializing = false
@@ -671,108 +674,126 @@ fun SirenaDriveScreen(
                         },
                         onStraightFront = {
                             scope.launch {
-                                if (!bridgeOn || brakeOn || straightRunning) return@launch
-                                straightRunning = true
-                                try {
-                                    val ready =
-                                        if (bldcConnected == true) {
-                                            vm.fetchRobotDriveStatus()
-                                        } else {
-                                            vm.awaitDriveHardwareReady()
-                                        }
-                                    if (ready?.optBoolean("connected") != true) {
-                                        actionErr =
-                                            ready?.optString("message").orEmpty().ifBlank {
-                                                "Drive hardware not ready — wait for green status."
+                                when {
+                                    !bridgeOn -> actionErr = "Drive bridge off."
+                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                    straightRunning -> actionErr = "Straight test already running."
+                                    else -> {
+                                        straightRunning = true
+                                        actionErr = null
+                                        try {
+                                            if (bldcConnected != true) {
+                                                val ready = vm.awaitDriveHardwareReady()
+                                                if (ready?.optBoolean("connected") != true) {
+                                                    actionErr =
+                                                        ready?.optString("message").orEmpty().ifBlank {
+                                                            "Drive hardware not ready — wait for green status."
+                                                        }
+                                                    return@launch
+                                                }
                                             }
-                                        return@launch
+                                            val j = vm.robotDriveStraight(backward = false)
+                                            val err = j.driveCommandErrorOrNull()
+                                            if (err != null) {
+                                                actionErr = err
+                                                return@launch
+                                            }
+                                            vm.pollUntilStraightBenchDone()
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            actionErr = driveHttpError(e)
+                                        } finally {
+                                            try {
+                                                vm.robotDriveStraightStop()
+                                            } catch (_: Exception) {
+                                            }
+                                            straightRunning = false
+                                            hudImu = "—"
+                                        }
                                     }
-                                    val j = vm.robotDriveStraight(backward = false)
-                                    val err = j.driveCommandErrorOrNull()
-                                    if (err != null) {
-                                        actionErr = err
-                                        return@launch
-                                    }
-                                    actionErr = null
-                                    vm.pollUntilStraightBenchDone()
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    actionErr = driveHttpError(e)
-                                } finally {
-                                    try {
-                                        vm.robotDriveStraightStop()
-                                    } catch (_: Exception) {
-                                    }
-                                    straightRunning = false
-                                    hudImu = "—"
                                 }
                             }
                         },
                         onStraightBack = {
                             scope.launch {
-                                if (!bridgeOn || brakeOn || straightRunning) return@launch
-                                straightRunning = true
-                                try {
-                                    val ready =
-                                        if (bldcConnected == true) {
-                                            vm.fetchRobotDriveStatus()
-                                        } else {
-                                            vm.awaitDriveHardwareReady()
-                                        }
-                                    if (ready?.optBoolean("connected") != true) {
-                                        actionErr =
-                                            ready?.optString("message").orEmpty().ifBlank {
-                                                "Drive hardware not ready — wait for green status."
+                                when {
+                                    !bridgeOn -> actionErr = "Drive bridge off."
+                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                    straightRunning -> actionErr = "Straight test already running."
+                                    else -> {
+                                        straightRunning = true
+                                        actionErr = null
+                                        try {
+                                            if (bldcConnected != true) {
+                                                val ready = vm.awaitDriveHardwareReady()
+                                                if (ready?.optBoolean("connected") != true) {
+                                                    actionErr =
+                                                        ready?.optString("message").orEmpty().ifBlank {
+                                                            "Drive hardware not ready — wait for green status."
+                                                        }
+                                                    return@launch
+                                                }
                                             }
-                                        return@launch
+                                            val j = vm.robotDriveStraight(backward = true)
+                                            val err = j.driveCommandErrorOrNull()
+                                            if (err != null) {
+                                                actionErr = err
+                                                return@launch
+                                            }
+                                            vm.pollUntilStraightBenchDone()
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            actionErr = driveHttpError(e)
+                                        } finally {
+                                            try {
+                                                vm.robotDriveStraightStop()
+                                            } catch (_: Exception) {
+                                            }
+                                            straightRunning = false
+                                            hudImu = "—"
+                                        }
                                     }
-                                    val j = vm.robotDriveStraight(backward = true)
-                                    val err = j.driveCommandErrorOrNull()
-                                    if (err != null) {
-                                        actionErr = err
-                                        return@launch
-                                    }
-                                    actionErr = null
-                                    vm.pollUntilStraightBenchDone()
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    actionErr = driveHttpError(e)
-                                } finally {
-                                    try {
-                                        vm.robotDriveStraightStop()
-                                    } catch (_: Exception) {
-                                    }
-                                    straightRunning = false
-                                    hudImu = "—"
                                 }
                             }
                         },
                         onTurnLeft = {
-                            if (bridgeOn && !brakeOn && !straightRunning) {
-                                scope.launch {
-                                    try {
-                                        val j = vm.robotDriveTurn("left")
-                                        actionErr = j.driveCommandErrorOrNull()
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        actionErr = driveHttpError(e)
+                            scope.launch {
+                                when {
+                                    !bridgeOn -> actionErr = "Drive bridge off."
+                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                    straightRunning -> actionErr = "Wait for straight test to finish."
+                                    else -> {
+                                        actionErr = null
+                                        try {
+                                            val j = vm.robotDriveTurn("left")
+                                            actionErr = j.driveCommandErrorOrNull()
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            actionErr = driveHttpError(e)
+                                        }
                                     }
                                 }
                             }
                         },
                         onTurnRight = {
-                            if (bridgeOn && !brakeOn && !straightRunning) {
-                                scope.launch {
-                                    try {
-                                        val j = vm.robotDriveTurn("right")
-                                        actionErr = j.driveCommandErrorOrNull()
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        actionErr = driveHttpError(e)
+                            scope.launch {
+                                when {
+                                    !bridgeOn -> actionErr = "Drive bridge off."
+                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                    straightRunning -> actionErr = "Wait for straight test to finish."
+                                    else -> {
+                                        actionErr = null
+                                        try {
+                                            val j = vm.robotDriveTurn("right")
+                                            actionErr = j.driveCommandErrorOrNull()
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            actionErr = driveHttpError(e)
+                                        }
                                     }
                                 }
                             }
