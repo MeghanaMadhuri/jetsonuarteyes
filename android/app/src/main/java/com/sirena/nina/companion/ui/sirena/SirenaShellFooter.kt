@@ -11,8 +11,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -21,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Status strip under the main column — same **cloud / panel** vocabulary as the shell (no charcoal band).
+ * Charcoal footer strip — mirrors Qt [sirena_ui.widgets.status_bar.StatusBar] (`footerBar`).
  * ``Bus / Wi‑Fi / Battery / Voice`` + right caption and optional **Retry / Continue**.
  */
 @Composable
@@ -29,6 +27,7 @@ fun SirenaShellFooter(
     busOk: Boolean,
     wifiOk: Boolean,
     batteryOk: Boolean,
+    batteryWarn: Boolean = false,
     voiceOk: Boolean,
     /** When true and [voiceOk] is false, dot uses warn (amber) like Qt ESP placeholder. */
     voiceWarn: Boolean = false,
@@ -43,24 +42,15 @@ fun SirenaShellFooter(
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 28.dp, max = 44.dp)
-            .background(SirenaColors.panel)
-            .drawBehind {
-                val stroke = 1.dp.toPx()
-                drawLine(
-                    color = SirenaColors.rule,
-                    start = Offset(0f, 0f),
-                    end = Offset(size.width, 0f),
-                    strokeWidth = stroke,
-                )
-            }
+            .heightIn(min = 26.dp, max = 44.dp)
+            .background(SirenaColors.charcoal)
             .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         FooterDotLabel("Bus", busOk)
         FooterDotLabel("Wi-Fi", wifiOk)
-        FooterDotLabel("Battery", batteryOk)
+        FooterDotLabel("Battery", ok = batteryOk, warn = batteryWarn)
         FooterDotLabel("Voice", ok = voiceOk, warn = voiceWarn)
         Text(
             text = rightCaption,
@@ -72,7 +62,7 @@ fun SirenaShellFooter(
                 if (connectionCaptionIsError) {
                     SirenaColors.pillErrorFg
                 } else {
-                    SirenaColors.muted
+                    SirenaColors.navRailTextSecondary
                 },
             fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
@@ -129,7 +119,7 @@ private fun FooterDotLabel(label: String, ok: Boolean, warn: Boolean = false) {
         Text("\u25CF", color = dotColor, fontSize = 12.sp)
         Text(
             label,
-            color = SirenaColors.text.copy(alpha = 0.82f),
+            color = SirenaColors.navRailTextPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
         )

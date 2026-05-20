@@ -477,3 +477,22 @@ class AudioPlayer:
         if ext == ".wav" and self._ffplay:
             return [self._ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
         return None
+
+
+def get_system_output_volume_pct() -> Optional[int]:
+    """Current Jetson speaker/output level (ALSA Master or Pulse default sink)."""
+    v = _alsa_get_volume_pct()
+    if v is not None:
+        return int(max(0, min(100, v)))
+    v = _pulse_get_volume_pct()
+    if v is not None:
+        return int(max(0, min(100, v)))
+    return None
+
+
+def set_system_output_volume_pct(pct: int) -> bool:
+    """Set Jetson output volume 0–100. Returns True if amixer or pactl succeeded."""
+    pct = max(0, min(100, int(pct)))
+    if _alsa_set_volume_pct(pct):
+        return True
+    return _pulse_set_volume_pct(pct)

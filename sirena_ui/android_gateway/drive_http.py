@@ -13,6 +13,8 @@ from sirena_ui.workers.nina_service import NinaService
 log = logging.getLogger("sirena_ui.android_gateway.drive_http")
 
 _valid = frozenset({"forward", "back", "left", "right", "stop"})
+_hold_dirs = frozenset({"forward", "back", "left", "right"})
+_turn_dirs = frozenset({"left", "right"})
 
 _last_drive_error_lock = threading.Lock()
 _last_drive_error: Optional[str] = None
@@ -104,6 +106,61 @@ def momentary_drive(
 
     dc._enqueue(run)  # type: ignore[attr-defined]
     return {"ok": True, "queued": True, "direction": direction, "duration_ms": duration_ms}
+
+
+def drive_hold_start(service: NinaService, *, direction: str) -> Dict[str, Any]:
+    """Match kiosk D-pad press: ``DriveController.drive`` until release."""
+    direction = direction.strip().lower()
+    if direction not in _hold_dirs:
+        return {"ok": False, "error": f"invalid direction {direction!r}"}
+    if _autonomy_blocks(service):
+        return {
+            "ok": False,
+            "error": "autonomy active — disable autonomy before manual drive",
+        }
+    dc = service.drive
+    dc.ensure_hardware()
+    with dc._lock:  # noqa: SLF001
+        if dc._state.get("brake"):  # noqa: SLF001
+            return {"ok": False, "error": "Release brake to drive."}
+    dc.drive(direction)
+    _set_last_drive_error(None)
+    return {"ok": True, "direction": direction, "mode": "hold"}
+
+
+def drive_hold_stop(service: NinaService) -> Dict[str, Any]:
+    """Match kiosk D-pad release: ``DriveController.stop``."""
+    service.drive.stop()
+    _set_last_drive_error(None)
+    return {"ok": True, "mode": "hold_stop"}
+
+
+def drive_turn(service: NinaService, *, which: str) -> Dict[str, Any]:
+    """Match kiosk **Turn left/right** (``DriveController.turn_90``)."""
+    which = which.strip().lower()
+    if which not in _turn_dirs:
+        return {"ok": False, "error": f"which must be 'left' or 'right', got {which!r}"}
+    if _autonomy_blocks(service):
+        return {
+            "ok": False,
+            "error": "autonomy active — disable autonomy before manual turns",
+        }
+    dc = service.drive
+    dc.ensure_hardware()
+    with dc._lock:  # noqa: SLF001
+        if dc._state.get("brake"):  # noqa: SLF001
+            return {"ok": False, "error": "Release brake before running a turn."}
+    dc.turn_90(which)
+    _set_last_drive_error(None)
+    return {"ok": True, "which": which, "queued": True}
+
+
+def set_drive_reverse(service: NinaService, *, on: bool) -> Dict[str, Any]:
+    """Match kiosk reverse pill (``DriveController.set_reverse``)."""
+    dc = service.drive
+    dc.set_reverse(bool(on))
+    st = dc.state()
+    return {"ok": True, "reverse": bool(st.get("reverse", on))}
 
 
 def navigation_hw_status(service: NinaService) -> Dict[str, Any]:

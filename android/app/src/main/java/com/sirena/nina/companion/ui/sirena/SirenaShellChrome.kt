@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,15 +22,42 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import com.sirena.nina.companion.CompanionViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -48,40 +76,16 @@ import com.sirena.nina.companion.util.NinaLog
 /** Qt-checked row surface on charcoal nav ([sirena_ui.styles] `BRAND_CHARCOAL_ACTIVE`). */
 private val SidebarRowActive = SirenaColors.navRailRowActive
 
-/**
- * Charcoal glass rail — frosted stack (translucent base + vertical frost + hairlines),
- * aligned with desktop Sirena sidebar intent.
- */
-private fun Modifier.sirenaNavRailGlassMorph(): Modifier =
+/** Solid dark sidebar — flat fill, single right edge (no gradient). */
+private fun Modifier.sirenaNavRailSolid(): Modifier =
     this
-        .background(SirenaColors.navRailGlassBase)
+        .background(SirenaColors.navRailSolid)
         .drawBehind {
             val w = size.width
             val h = size.height
-            drawRect(
-                brush =
-                    Brush.verticalGradient(
-                        colors =
-                            listOf(
-                                Color.White.copy(alpha = 0.16f),
-                                Color.White.copy(alpha = 0.04f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.34f),
-                            ),
-                        startY = 0f,
-                        endY = h,
-                    ),
-                size = size,
-            )
             val stroke = 1.dp.toPx()
             drawLine(
                 color = SirenaColors.navRailEdge,
-                start = Offset(0f, stroke * 0.5f),
-                end = Offset(w, stroke * 0.5f),
-                strokeWidth = stroke,
-            )
-            drawLine(
-                color = SirenaColors.navRailEdgeSoft,
                 start = Offset(w - stroke, 0f),
                 end = Offset(w - stroke, h),
                 strokeWidth = stroke,
@@ -117,7 +121,7 @@ fun SirenaSidebar(
         Column(
             Modifier
                 .fillMaxSize()
-                .sirenaNavRailGlassMorph(),
+                .sirenaNavRailSolid(),
         ) {
             SirenaSidebarBrandRow(compact = compact)
             Spacer(Modifier.padding(vertical = if (compact) 2.dp else 4.dp))
@@ -144,16 +148,7 @@ fun SirenaSidebar(
                         .fillMaxWidth()
                         .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 4.dp)
                         .height(1.dp)
-                        .background(
-                            Brush.horizontalGradient(
-                                colors =
-                                    listOf(
-                                        Color.Transparent,
-                                        SirenaColors.navRailEdgeSoft,
-                                        Color.Transparent,
-                                    ),
-                            ),
-                        ),
+                        .background(SirenaColors.navRailEdgeSoft),
                 )
                 companionItems.forEach { entry ->
                     SidebarNavRow(
@@ -278,14 +273,25 @@ internal fun SidebarNavRow(
         } else {
             "${entry.glyph}  ${entry.label}"
         }
+    val rowBg by animateColorAsState(
+        targetValue = if (selected) SidebarRowActive else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "navRowBg",
+    )
+    val rowScale by animateFloatAsState(
+        targetValue = if (selected) 1.02f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "navRowScale",
+    )
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .scale(rowScale)
                 .padding(horizontal = if (compact) 2.dp else 6.dp, vertical = if (compact) 2.dp else 3.dp)
                 .heightIn(min = if (compact) 40.dp else 42.dp)
                 .clip(pillShape)
-                .background(if (selected) SidebarRowActive else Color.Transparent)
+                .background(rowBg)
                 .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start,
@@ -335,7 +341,7 @@ fun SirenaNavDrawerSheetContent(
     Column(
         Modifier
             .fillMaxSize()
-            .sirenaNavRailGlassMorph(),
+            .sirenaNavRailSolid(),
     ) {
         SirenaSidebarBrandRow(compact = false)
         Spacer(Modifier.height(4.dp))
@@ -408,23 +414,57 @@ fun SirenaNavDrawerSheetContent(
 }
 
 /**
- * Red header with optional back to product hub, centered title, robot name on one line, clock.
- * Title and trailing cluster use horizontal insets so long labels ellipsize instead of overlapping.
+ * Red header — title, link status, Jetson volume, overflow menu (health export, Wi‑Fi).
  */
 @Composable
 fun SirenaShellHeader(
     title: String,
     clockText: String,
+    vm: CompanionViewModel,
     connectedLabel: String? = null,
     jetsonOnline: Boolean = false,
     showProductHubBack: Boolean = false,
     onProductHubBack: (() -> Unit)? = null,
-    /** Hamburger opens [ModalNavigationDrawer] when the persistent sidebar is hidden (phones). */
     showNavDrawerMenu: Boolean = false,
     onNavDrawerMenuClick: (() -> Unit)? = null,
+    onExportHealthShare: () -> Unit,
+    onExportHealthDownload: () -> Unit,
+    onOpenWifiSettings: () -> Unit,
     compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
+    var menuOpen by remember { mutableStateOf(false) }
+    var exportDialogOpen by remember { mutableStateOf(false) }
+    var volumeOpen by remember { mutableStateOf(false) }
+    var jetsonVolume by remember { mutableFloatStateOf(70f) }
+    var volumeAvailable by remember { mutableStateOf(false) }
+    var volumeBusy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(volumeOpen, jetsonOnline) {
+        if (!volumeOpen || !jetsonOnline) return@LaunchedEffect
+        while (true) {
+            val pct = vm.fetchSystemVolumePct()
+            if (pct != null) {
+                volumeAvailable = true
+                if (!volumeBusy) {
+                    jetsonVolume = pct.toFloat()
+                }
+            } else {
+                volumeAvailable = false
+            }
+            delay(900L)
+        }
+    }
+
+    LaunchedEffect(jetsonVolume, volumeOpen, volumeAvailable) {
+        if (!volumeOpen || !volumeAvailable || !jetsonOnline) return@LaunchedEffect
+        delay(220L)
+        volumeBusy = true
+        vm.setSystemVolumePct(jetsonVolume.toInt())
+        volumeBusy = false
+    }
+
     val trimmed = connectedLabel?.trim()?.takeIf { it.isNotEmpty() }
     val robotLine =
         if (jetsonOnline) {
@@ -432,6 +472,8 @@ fun SirenaShellHeader(
         } else {
             "No connection"
         }
+    val trailingReserve = if (compact) 156.dp else 248.dp
+
     Box(
         modifier
             .fillMaxWidth()
@@ -455,44 +497,33 @@ fun SirenaShellHeader(
                     strokeWidth = stroke,
                 )
                 drawLine(
-                    color = Color.Black.copy(alpha = 0.1f),
+                    color = Color.Black.copy(alpha = 0.12f),
                     start = Offset(0f, size.height - stroke),
                     end = Offset(size.width, size.height - stroke),
                     strokeWidth = stroke,
                 )
             }
-            .padding(start = 4.dp, top = 4.dp, end = 8.dp, bottom = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {
         val leadingActionsDp =
-            (if (showProductHubBack && onProductHubBack != null) 44 else 0) +
-                (if (showNavDrawerMenu && onNavDrawerMenuClick != null) 44 else 0)
-        val titleStartPadding = if (leadingActionsDp == 0) 8.dp else leadingActionsDp.dp
+            (if (showProductHubBack && onProductHubBack != null) 40 else 0) +
+                (if (showNavDrawerMenu && onNavDrawerMenuClick != null) 40 else 0)
         Row(
             Modifier.align(Alignment.CenterStart),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (showProductHubBack && onProductHubBack != null) {
-                IconButton(
-                    onClick = onProductHubBack,
-                    modifier = Modifier.size(40.dp),
-                ) {
+                IconButton(onClick = onProductHubBack, modifier = Modifier.size(38.dp)) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back to products",
                         tint = SirenaColors.white,
                     )
                 }
             }
             if (showNavDrawerMenu && onNavDrawerMenuClick != null) {
-                IconButton(
-                    onClick = onNavDrawerMenuClick,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Menu,
-                        contentDescription = "Open navigation menu",
-                        tint = SirenaColors.white,
-                    )
+                IconButton(onClick = onNavDrawerMenuClick, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Filled.Menu, contentDescription = "Open menu", tint = SirenaColors.white)
                 }
             }
         }
@@ -503,53 +534,163 @@ fun SirenaShellHeader(
                     .align(Alignment.Center)
                     .fillMaxWidth()
                     .padding(
-                        start = titleStartPadding,
-                        end = if (compact) 108.dp else 212.dp,
+                        start = if (leadingActionsDp == 0) 10.dp else leadingActionsDp.dp,
+                        end = trailingReserve,
                     ),
             fontSize = if (compact) 15.sp else SirenaType.headerTitle,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             color = SirenaColors.white,
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Row(
-            Modifier
-                .align(Alignment.CenterEnd)
-                .widthIn(max = if (compact) 132.dp else 204.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.align(Alignment.CenterEnd),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (jetsonOnline) SirenaColors.success else SirenaColors.danger),
-            )
-            Text(
-                robotLine,
-                color = SirenaColors.white,
-                fontSize = if (compact) 10.sp else 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = if (compact) 72.dp else 132.dp),
-            )
+            if (!compact) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (jetsonOnline) SirenaColors.success else SirenaColors.danger),
+                )
+                Text(
+                    robotLine,
+                    color = SirenaColors.white.copy(alpha = 0.95f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 100.dp),
+                )
+            }
             Text(
                 clockText,
-                color = SirenaColors.white,
+                color = SirenaColors.white.copy(alpha = 0.92f),
                 fontSize = SirenaType.headerClock,
-                modifier = Modifier.widthIn(min = 44.dp),
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 4.dp),
             )
-            Text(
-                "\u22EE",
-                color = SirenaColors.white,
-                fontSize = SirenaType.headerTray,
-                modifier =
-                    Modifier
-                        .clickable { NinaLog.tap("Header", "menu", "kebab") }
-                        .padding(start = 2.dp),
-            )
+            Box {
+                IconButton(
+                    onClick = {
+                        volumeOpen = !volumeOpen
+                        menuOpen = false
+                        NinaLog.tap("Header", "volume", if (volumeOpen) "open" else "close")
+                    },
+                    enabled = jetsonOnline,
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.VolumeUp,
+                        contentDescription = "Jetson volume",
+                        tint = if (jetsonOnline) SirenaColors.white else SirenaColors.white.copy(alpha = 0.45f),
+                    )
+                }
+                if (volumeOpen) {
+                    Popup(
+                        alignment = Alignment.TopEnd,
+                        onDismissRequest = { volumeOpen = false },
+                        properties = PopupProperties(focusable = true),
+                    ) {
+                        SirenaCard(
+                            modifier = Modifier.widthIn(min = 240.dp, max = 300.dp).padding(top = 4.dp, end = 4.dp),
+                            kind = SirenaCardKind.Standard,
+                            contentPadding = PaddingValues(14.dp),
+                        ) {
+                            Text("Jetson speaker", fontWeight = FontWeight.Bold, color = SirenaColors.text)
+                            SirenaMutedText(
+                                if (volumeAvailable) "System output volume" else "Volume control unavailable on robot",
+                                maxLines = 2,
+                            )
+                            Slider(
+                                value = jetsonVolume,
+                                onValueChange = { jetsonVolume = it },
+                                enabled = jetsonOnline && volumeAvailable && !volumeBusy,
+                                valueRange = 0f..100f,
+                                colors =
+                                    SliderDefaults.colors(
+                                        thumbColor = SirenaColors.red,
+                                        activeTrackColor = SirenaColors.red,
+                                        inactiveTrackColor = SirenaColors.border,
+                                    ),
+                            )
+                            Text(
+                                "${jetsonVolume.toInt()}%",
+                                color = SirenaColors.muted,
+                                fontSize = SirenaType.muted,
+                            )
+                        }
+                    }
+                }
+            }
+            Box {
+                IconButton(
+                    onClick = {
+                        menuOpen = true
+                        volumeOpen = false
+                        NinaLog.tap("Header", "menu", "open")
+                    },
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = SirenaColors.white)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Export health report") },
+                        onClick = {
+                            menuOpen = false
+                            exportDialogOpen = true
+                            NinaLog.tap("Header", "export_health", "open")
+                        },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Change Wi‑Fi") },
+                        leadingIcon = { Icon(Icons.Filled.Wifi, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onOpenWifiSettings()
+                        },
+                    )
+                }
+            }
         }
+    }
+
+    if (exportDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { exportDialogOpen = false },
+            title = { Text("Export health report", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Save a JSON snapshot of subsystem health to this device, or share it via WhatsApp, email, or any app.",
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.muted,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        exportDialogOpen = false
+                        onExportHealthDownload()
+                    },
+                ) {
+                    Text("Download", color = SirenaColors.red, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        exportDialogOpen = false
+                        onExportHealthShare()
+                    },
+                ) {
+                    Text("Share", color = SirenaColors.red)
+                }
+            },
+        )
     }
 }

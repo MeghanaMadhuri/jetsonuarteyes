@@ -2,4 +2,5 @@
 <paths>
     <!-- App-private storage: context.filesDir/logs/ -->
     <files-path name="session_logs" path="logs/" />
+    <cache-path name="export_cache" path="exports/" />
 </paths>

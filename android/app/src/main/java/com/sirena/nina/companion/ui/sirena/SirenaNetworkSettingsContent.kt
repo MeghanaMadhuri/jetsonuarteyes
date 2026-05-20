@@ -1,8 +1,10 @@
 package com.sirena.nina.companion.ui.sirena
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +57,7 @@ fun SirenaNetworkSettingsScrollContent(
     var wifiFormHint by remember { mutableStateOf<String?>(null) }
     var modePick by rememberSaveable { mutableStateOf("boot_default") }
     var modeMenu by remember { mutableStateOf(false) }
+    var pendingRemoveProfile by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val shell = LocalSirenaShellCompact.current
     val listGap = if (shell) 5.dp else 8.dp
@@ -65,8 +68,9 @@ fun SirenaNetworkSettingsScrollContent(
     val vXxl = if (shell) 8.dp else 12.dp
     val rowBtnGap = if (shell) 6.dp else 8.dp
 
+    Box(modifier.fillMaxSize()) {
     LazyColumn(
-        modifier.fillMaxSize(),
+        Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(listGap),
         userScrollEnabled = userScrollEnabled,
     ) {
@@ -281,10 +285,24 @@ fun SirenaNetworkSettingsScrollContent(
                         } else {
                             Button(onClick = { vm.connectJetsonHome(n.ssid) }) { Text("Connect") }
                         }
-                        Button(onClick = { vm.deleteProfile(n.id) }) { Text("Remove") }
+                        Button(onClick = { pendingRemoveProfile = n.id to n.ssid }) { Text("Remove") }
                     }
                 }
             }
         }
+    }
+
+    pendingRemoveProfile?.let { (profileId, ssid) ->
+        SirenaConfirmDialog(
+            onDismiss = { pendingRemoveProfile = null },
+            message = "Remove Wi‑Fi profile \"$ssid\" from the Jetson?",
+            confirmText = "Remove",
+            dangerous = true,
+            onConfirm = {
+                pendingRemoveProfile = null
+                vm.deleteProfile(profileId)
+            },
+        )
+    }
     }
 }

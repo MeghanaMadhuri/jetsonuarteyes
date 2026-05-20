@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -24,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -32,6 +34,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +47,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.VisualTransformation
@@ -50,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -74,8 +83,7 @@ fun SirenaCard(
     kind: SirenaCardKind = SirenaCardKind.Standard,
     contentPadding: PaddingValues = PaddingValues(SirenaDimens.cardInnerPad),
     verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(SirenaDimens.cardSpacing),
-    /** Translucent fill, specular stripe, soft border — keeps Sirena palette. */
-    liquidGlass: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") liquidGlass: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shell = LocalSirenaShellCompact.current
@@ -126,44 +134,26 @@ fun SirenaCard(
                 }
         }
     val shape = RoundedCornerShape(radius)
-    if (liquidGlass) {
-        Box(
-            modifier
-                .sirenaGlassDropShadow(shape)
-                .clip(shape)
-                .sirenaGlassCardBackground(shape, kind)
-                .sirenaGlassInnerVignette(radius)
-                .sirenaGlassSpecularLayers(radius)
-                .sirenaGlassCardBorder(shape),
-        ) {
-            Column(
-                Modifier.padding(effectivePadding),
-                verticalArrangement = vSpace,
-                content = content,
-            )
+    val bg =
+        when (kind) {
+            SirenaCardKind.Standard, SirenaCardKind.Hero -> SirenaColors.panel
+            SirenaCardKind.Subtle -> SirenaColors.cloud
+            SirenaCardKind.Callout -> SirenaColors.calloutBg
+            SirenaCardKind.Error -> SirenaColors.pillErrorBg
         }
-    } else {
-        val bg =
-            when (kind) {
-                SirenaCardKind.Standard, SirenaCardKind.Hero -> SirenaColors.panel
-                SirenaCardKind.Subtle -> SirenaColors.cloud
-                SirenaCardKind.Callout -> SirenaColors.calloutBg
-                SirenaCardKind.Error -> SirenaColors.pillErrorBg
-            }
-        Surface(
-            modifier = modifier.clip(shape),
-            shape = shape,
-            color = bg,
-            border = BorderStroke(1.dp, SirenaColors.border),
-            shadowElevation = 0.dp,
-            tonalElevation = 0.dp,
-        ) {
-            Column(
-                Modifier.padding(effectivePadding),
-                verticalArrangement = vSpace,
-                content = content,
-            )
-        }
+    Surface(
+        modifier = modifier.clip(shape),
+        shape = shape,
+        color = bg,
+        border = BorderStroke(1.dp, SirenaColors.border),
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
+    ) {
+        Column(
+            Modifier.padding(effectivePadding),
+            verticalArrangement = vSpace,
+            content = content,
+        )
     }
 }
 
@@ -329,10 +319,15 @@ fun SirenaStatusPill(
             SirenaPillKind.Error -> SirenaColors.pillErrorBg to SirenaColors.pillErrorFg
             SirenaPillKind.Neutral -> SirenaColors.pillNeutralBg to SirenaColors.pillNeutralFg
         }
+    val animatedBg by androidx.compose.animation.animateColorAsState(
+        targetValue = bg,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "pillBg",
+    )
     Surface(
-        modifier = modifier,
+        modifier = modifier.sirenaPulseOnChange("$text|$kind"),
         shape = RoundedCornerShape(if (shell) 8.dp else 10.dp),
-        color = bg,
+        color = animatedBg,
     ) {
         Text(
             text,
@@ -389,9 +384,13 @@ fun SirenaEstopButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    var shakeTick by remember { mutableStateOf(0) }
     Button(
-        onClick = onClick,
-        modifier = modifier.height(40.dp),
+        onClick = {
+            shakeTick++
+            onClick()
+        },
+        modifier = modifier.height(40.dp).sirenaShake(shakeTick),
         enabled = enabled,
         shape = RoundedCornerShape(SirenaDimens.primaryButtonRadius),
         colors =
@@ -407,7 +406,7 @@ fun SirenaEstopButton(
     }
 }
 
-/** Desktop `QPushButton#primary` — liquid-glass gloss (shadow, specular rim) on brand red. */
+/** Desktop `QPushButton#primary` — solid brand red with press scale. */
 @Composable
 fun SirenaPrimaryButton(
     text: String,
@@ -418,11 +417,21 @@ fun SirenaPrimaryButton(
     val shell = LocalSirenaShellCompact.current
     val shape = RoundedCornerShape(SirenaDimens.primaryButtonRadius)
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.96f else 1f,
+        animationSpec = spring(),
+        label = "primaryBtnScale",
+    )
+    val bg = if (enabled) SirenaColors.red else SirenaColors.disabledFill
     Box(
         modifier =
             modifier
+                .scale(scale)
                 .defaultMinSize(minHeight = if (shell) 42.dp else 48.dp)
-                .sirenaGlassPrimaryButtonChrome(shape, enabled = enabled)
+                .clip(shape)
+                .background(bg)
+                .border(1.dp, if (enabled) SirenaColors.redDark else SirenaColors.border, shape)
                 .clickable(
                     interactionSource = interactionSource,
                     indication =
@@ -450,7 +459,7 @@ fun SirenaPrimaryButton(
     }
 }
 
-/** Desktop `QPushButton#secondary` — translucent glass + brand border (matches cards). */
+/** Desktop `QPushButton#secondary` — solid panel + brand border. */
 @Composable
 fun SirenaSecondaryButton(
     text: String,
@@ -461,11 +470,20 @@ fun SirenaSecondaryButton(
     val shell = LocalSirenaShellCompact.current
     val shape = RoundedCornerShape(SirenaDimens.secondaryButtonRadius)
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.97f else 1f,
+        animationSpec = spring(),
+        label = "secondaryBtnScale",
+    )
     Box(
         modifier =
             modifier
+                .scale(scale)
                 .defaultMinSize(minHeight = if (shell) 42.dp else 48.dp)
-                .sirenaGlassSecondaryButtonChrome(shape, enabled = enabled)
+                .clip(shape)
+                .background(if (enabled) SirenaColors.panel else SirenaColors.disabledFill)
+                .border(1.dp, if (enabled) SirenaColors.red else SirenaColors.border, shape)
                 .clickable(
                     interactionSource = interactionSource,
                     indication =
@@ -501,8 +519,15 @@ fun SirenaSegmentedTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shellShape = RoundedCornerShape(12.dp)
     val pillShape = RoundedCornerShape(10.dp)
-    Box(modifier = modifier.sirenaGlassSegmentedTabsShell(12.dp)) {
+    Box(
+        modifier =
+            modifier
+                .clip(shellShape)
+                .background(SirenaColors.cloud)
+                .border(1.dp, SirenaColors.border, shellShape),
+    ) {
         Row(
             Modifier.padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -511,17 +536,20 @@ fun SirenaSegmentedTabs(
             tabs.forEachIndexed { i, label ->
                 val sel = i == selectedIndex
                 val interactionSource = remember(i) { MutableInteractionSource() }
+                val pressed by interactionSource.collectIsPressedAsState()
+                val scale by animateFloatAsState(
+                    targetValue = if (pressed) 0.95f else 1f,
+                    animationSpec = spring(),
+                    label = "tabScale$i",
+                )
                 Box(
                     modifier =
                         Modifier
+                            .scale(scale)
                             .clip(pillShape)
                             .then(
                                 if (sel) {
-                                    Modifier.sirenaGlassPrimaryButtonChrome(
-                                        pillShape,
-                                        enabled = true,
-                                        withDropShadow = false,
-                                    )
+                                    Modifier.background(SirenaColors.red)
                                 } else {
                                     Modifier
                                 },
@@ -639,6 +667,40 @@ fun SirenaOutlinedTextField(
     )
 }
 
+/** Standard destructive / discard confirmation. */
+@Composable
+fun SirenaConfirmDialog(
+    onDismiss: () -> Unit,
+    message: String,
+    onConfirm: () -> Unit,
+    title: String = "Are you sure?",
+    confirmText: String = "Yes, continue",
+    dismissText: String = "Cancel",
+    dangerous: Boolean = false,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold, color = SirenaColors.text) },
+        text = {
+            Text(message, color = SirenaColors.text, fontSize = SirenaType.muted)
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    confirmText,
+                    color = if (dangerous) SirenaColors.danger else SirenaColors.red,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(dismissText, color = SirenaColors.muted)
+            }
+        },
+    )
+}
+
 /** Transparent dialog actions — Qt headerTray-style minimal. */
 @Composable
 fun SirenaTextButton(
@@ -743,43 +805,56 @@ fun SirenaSubTabRow(
     }
 }
 
-/** Hold-to-repeat D-pad direction — same visuals as [SirenaDpadButton]. [onRelease] runs when the press ends (finger up or disabled) so the robot can receive an explicit stop. */
+/** Hold-to-drive D-pad — kiosk parity: one [onPress] on finger down, [onRelease] on finger up. */
 @Composable
 fun SirenaDpadHoldButton(
     label: String,
     enabled: Boolean,
-    repeatIntervalMs: Long,
-    onPulse: suspend () -> Unit,
+    onPress: suspend () -> Unit,
+    onRelease: suspend () -> Unit,
     modifier: Modifier = Modifier,
-    onRelease: (() -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val latestPulse by rememberUpdatedState(onPulse)
+    val latestPress by rememberUpdatedState(onPress)
     val latestRelease by rememberUpdatedState(onRelease)
     var prevPressed by remember { mutableStateOf(false) }
     LaunchedEffect(pressed, enabled) {
-        if (prevPressed && (!pressed || !enabled)) {
-            latestRelease?.invoke()
-        }
-        prevPressed = pressed && enabled
-    }
-    LaunchedEffect(pressed, enabled, repeatIntervalMs) {
-        if (!pressed || !enabled) return@LaunchedEffect
-        while (isActive) {
+        val down = pressed && enabled
+        if (down && !prevPressed) {
             try {
-                latestPulse()
+                latestPress()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
-            delay(repeatIntervalMs)
         }
+        if (prevPressed && !down) {
+            try {
+                latestRelease()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+        prevPressed = down
     }
     val shape = RoundedCornerShape(12.dp)
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.94f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "dpadScale",
+    )
+    val borderColor =
+        when {
+            pressed && enabled -> SirenaColors.red
+            enabled -> SirenaColors.border
+            else -> SirenaColors.border.copy(alpha = 0.5f)
+        }
     Surface(
         modifier =
             modifier
+                .scale(scale)
                 .size(SirenaDimens.dpadMin)
                 .clip(shape)
                 .clickable(
@@ -790,7 +865,7 @@ fun SirenaDpadHoldButton(
                 ),
         shape = shape,
         color = if (enabled) SirenaColors.panel else Color(0xFFF0F0F3),
-        border = BorderStroke(1.dp, if (enabled) SirenaColors.border else SirenaColors.border.copy(alpha = 0.5f)),
+        border = BorderStroke(if (pressed && enabled) 2.dp else 1.dp, borderColor),
     ) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
@@ -853,7 +928,7 @@ fun SirenaDpadStop(
         shape = shape,
         color = if (enabled) SirenaColors.red else SirenaColors.disabledFill,
     ) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
                 label,
                 color = SirenaColors.white,
@@ -861,5 +936,82 @@ fun SirenaDpadStop(
                 fontWeight = FontWeight.ExtraBold,
             )
         }
+    }
+}
+
+/** Blurred backdrop + centered card for features not yet on the companion app. */
+@Composable
+fun SirenaComingSoonGate(
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier,
+    background: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(SirenaColors.cloud),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        Modifier.blur(18.dp)
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
+            background()
+        }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.42f)),
+        )
+        SirenaScaleIn(visible = true) {
+            SirenaCard(
+                modifier =
+                    Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp)
+                        .fillMaxWidth(0.88f),
+                kind = SirenaCardKind.Hero,
+                contentPadding = PaddingValues(20.dp),
+            ) {
+                Text(
+                    title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp,
+                    color = SirenaColors.text,
+                )
+                Text(
+                    message,
+                    color = SirenaColors.muted,
+                    fontSize = SirenaType.muted,
+                )
+                SirenaStatusPill(text = "Coming soon", kind = SirenaPillKind.Warn)
+            }
+        }
+    }
+}
+
+@Composable
+fun BoxScope.PerceptionComingSoonLabel() {
+    Column(
+        Modifier
+            .align(Alignment.Center)
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SirenaStatusPill(text = "Coming soon", kind = SirenaPillKind.Warn)
+        Text(
+            "Companion preview",
+            color = SirenaColors.muted,
+            fontSize = SirenaType.muted,
+            textAlign = TextAlign.Center,
+        )
     }
 }

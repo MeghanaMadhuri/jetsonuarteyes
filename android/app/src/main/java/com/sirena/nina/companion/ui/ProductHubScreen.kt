@@ -50,6 +50,7 @@ import com.sirena.nina.companion.ui.sirena.SirenaCard
 import com.sirena.nina.companion.ui.sirena.SirenaCardKind
 import com.sirena.nina.companion.ui.sirena.SirenaColors
 import com.sirena.nina.companion.ui.sirena.SirenaMutedText
+import com.sirena.nina.companion.ui.sirena.SirenaDaemonConnectButton
 import com.sirena.nina.companion.ui.sirena.SirenaPrimaryButton
 import com.sirena.nina.companion.ui.sirena.SirenaType
 import kotlinx.coroutines.launch
@@ -62,6 +63,8 @@ fun ProductHubScreen(
 ) {
     val discovered by vm.discoveredDaemons.collectAsStateWithLifecycle()
     val diagnostics by vm.discoveryDiagnostics.collectAsStateWithLifecycle()
+    val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(initialValue = "")
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var showDiscovery by remember { mutableStateOf(false) }
@@ -148,17 +151,11 @@ fun ProductHubScreen(
                         discovered.forEach { d ->
                             DiscoveryRow(
                                 d = d,
-                                onConnect = {
-                                    scope.launch {
-                                        discoveryError = null
-                                        val err = vm.connectDiscoveredAndRefresh(d.baseUrl)
-                                        if (err == null) {
-                                            showDiscovery = false
-                                        } else {
-                                            discoveryError = err
-                                        }
-                                    }
-                                },
+                                vm = vm,
+                                savedUrl = savedUrl,
+                                linkOnline = jetsonLink.isOnline,
+                                onConnectError = { discoveryError = it },
+                                onConnected = { showDiscovery = false },
                             )
                         }
                     }
@@ -286,7 +283,6 @@ private fun ProductImageCard(
                 .clip(RoundedCornerShape(14.dp))
                 .clickable(onClick = onClick),
         kind = SirenaCardKind.Hero,
-        liquidGlass = true,
     ) {
         Column(
             Modifier
@@ -318,14 +314,18 @@ private fun ProductImageCard(
 @Composable
 private fun DiscoveryRow(
     d: DiscoveredDaemonUi,
-    onConnect: () -> Unit,
+    vm: CompanionViewModel,
+    savedUrl: String,
+    linkOnline: Boolean,
+    onConnectError: (String) -> Unit,
+    onConnected: () -> Unit,
 ) {
     val title =
         d.displayName?.trim()?.takeIf { it.isNotEmpty() }
             ?: d.hostname?.trim()?.takeIf { it.isNotEmpty() }
             ?: d.systemId?.trim()?.takeIf { it.isNotEmpty() }
             ?: "Link daemon"
-    SirenaCard(kind = SirenaCardKind.Subtle, liquidGlass = true) {
+    SirenaCard(kind = SirenaCardKind.Subtle) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -354,10 +354,14 @@ private fun DiscoveryRow(
                         SirenaMutedText("System ID · $it", maxLines = 1)
                     }
                 }
-                SirenaPrimaryButton(
-                    text = "Connect",
-                    onClick = onConnect,
+                SirenaDaemonConnectButton(
+                    vm = vm,
+                    daemonBaseUrl = d.baseUrl,
+                    savedUrl = savedUrl,
+                    linkOnline = linkOnline,
                     modifier = Modifier.padding(start = 8.dp),
+                    onConnected = onConnected,
+                    onConnectError = onConnectError,
                 )
             }
         }

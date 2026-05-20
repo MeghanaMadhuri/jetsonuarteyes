@@ -50,63 +50,63 @@ def _cpu_line() -> str:
     return "n/a"
 
 
+def _append_row(rows: List[Dict[str, str]], seen: set[str], key: str, label: str, detail: str, status: str) -> None:
+    """Append a row once per key (duplicate keys crash Android LazyColumn)."""
+    if key in seen:
+        return
+    seen.add(key)
+    rows.append(_row(key, label, detail, status))
+
+
 def build_robot_health(
     service: NinaService,
     cfg: LinkDaemonConfig,
     coordinator: LinkCoordinator,
 ) -> Dict[str, Any]:
     rows: List[Dict[str, str]] = []
+    seen: set[str] = set()
 
     try:
         role = coordinator.effective_wifi_role()
-        rows.append(
-            _row(
-                "wifi",
-                "Wi-Fi",
-                f"role={role}",
-                _ROW_OK if role != "unknown" else _ROW_WARN,
-            )
+        _append_row(
+            rows,
+            seen,
+            "wifi",
+            "Wi-Fi",
+            f"role={role}",
+            _ROW_OK if role != "unknown" else _ROW_WARN,
         )
     except Exception as exc:  # noqa: BLE001
-        rows.append(_row("wifi", "Wi-Fi", str(exc)[:400], _ROW_WARN))
+        _append_row(rows, seen, "wifi", "Wi-Fi", str(exc)[:400], _ROW_WARN)
 
     last_err = (coordinator.ps.last_error or "").strip()
     if last_err:
-        rows.append(
-            _row("daemon", "Gateway (last error)", last_err[:500], _ROW_WARN)
-        )
+        _append_row(rows, seen, "daemon", "Gateway (last error)", last_err[:500], _ROW_WARN)
 
     # NinaService health rows (Dynamixel, vision, slam, …) — same as Qt Health screen.
     try:
         for hr in collect(service):
-            rows.append(
-                _row(
-                    hr.key,
-                    hr.label,
-                    hr.detail,
-                    hr.status,
-                )
-            )
+            _append_row(rows, seen, hr.key, hr.label, hr.detail, hr.status)
     except Exception as exc:  # noqa: BLE001
-        rows.append(_row("sirena", "Sirena health", str(exc)[:500], _ROW_ERR))
+        _append_row(rows, seen, "sirena", "Sirena health", str(exc)[:500], _ROW_ERR)
 
     try:
         du = shutil.disk_usage("/")
         free_gb = du.free / (1024**3)
         total_gb = du.total / (1024**3)
         warn = free_gb < max(1.0, total_gb * 0.15)
-        rows.append(
-            _row(
-                "disk",
-                "Disk",
-                f"{free_gb:.1f} GB free of {total_gb:.0f} GB",
-                _ROW_WARN if warn else _ROW_OK,
-            )
+        _append_row(
+            rows,
+            seen,
+            "disk",
+            "Disk",
+            f"{free_gb:.1f} GB free of {total_gb:.0f} GB",
+            _ROW_WARN if warn else _ROW_OK,
         )
     except Exception as exc:  # noqa: BLE001
-        rows.append(_row("disk", "Disk", str(exc)[:200], _ROW_WARN))
+        _append_row(rows, seen, "disk", "Disk", str(exc)[:200], _ROW_WARN)
 
-    rows.append(_row("cpu", "CPU (load avg)", _cpu_line(), _ROW_OK))
+    _append_row(rows, seen, "cpu", "CPU (load avg)", _cpu_line(), _ROW_OK)
 
     return {
         "ok": True,

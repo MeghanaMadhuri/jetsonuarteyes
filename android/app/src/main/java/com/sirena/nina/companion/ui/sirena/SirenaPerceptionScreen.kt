@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,6 +51,7 @@ import org.json.JSONObject
 fun SirenaPerceptionScreen(
     vm: CompanionViewModel,
     daemonUrl: String?,
+    caps: JSONObject? = null,
     shellCompact: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
@@ -57,6 +59,9 @@ fun SirenaPerceptionScreen(
     val bearer by vm.bearerToken.collectAsStateWithLifecycle(initialValue = null)
     val root = daemonUrl?.trimEnd('/') ?: ""
     val online = root.isNotBlank() && jetsonLink.isOnline
+    val visionBridge = caps?.optBoolean("vision_bridge_enabled") != false
+    val slamBridge = caps?.optBoolean("slam_bridge_enabled") != false
+    val depthBridge = caps?.optBoolean("depth_bridge_enabled") != false
 
     var grid by remember { mutableStateOf<SlamOccupancyGrid?>(null) }
     var slamJson by remember { mutableStateOf<JSONObject?>(null) }
@@ -64,29 +69,85 @@ fun SirenaPerceptionScreen(
     var depthJson by remember { mutableStateOf<JSONObject?>(null) }
     var autonomyJson by remember { mutableStateOf<JSONObject?>(null) }
     var autonomyOn by remember { mutableStateOf(false) }
+    val lidarDepthComingSoon = true
 
-    LaunchedEffect(online) {
-        if (!online) return@LaunchedEffect
+    LaunchedEffect(online, visionBridge) {
+        if (!online || !visionBridge) return@LaunchedEffect
+        delay(350)
+        try {
+            if (visionJson?.optBoolean("camera_open") != true) {
+                vm.visionOpen()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    LaunchedEffect(online, slamBridge, depthBridge, visionBridge) {
+        if (!online) {
+            grid = null
+            slamJson = null
+            visionJson = null
+            depthJson = null
+            autonomyJson = null
+            autonomyOn = false
+            return@LaunchedEffect
+        }
         while (isActive) {
             try {
-                grid = vm.fetchSlamOccupancyGrid()
-                slamJson = vm.fetchSlamStatus()
-                visionJson = vm.fetchVisionStatus()
-                depthJson = vm.fetchDepthStatus()
+                slamJson = if (slamBridge) vm.fetchSlamStatus() else null
+                visionJson = if (visionBridge) vm.fetchVisionStatus() else null
+                depthJson =
+                    if (depthBridge && !lidarDepthComingSoon) {
+                        vm.fetchDepthStatus()
+                    } else {
+                        null
+                    }
                 autonomyJson = vm.fetchAutonomyStatus()
                 autonomyOn = autonomyJson?.optBoolean("enabled") == true
+                val lidarLive = slamJson?.optBoolean("lidar_connected") == true
+                grid =
+                    if (!lidarDepthComingSoon && slamBridge && lidarLive) {
+                        vm.fetchSlamOccupancyGrid()
+                    } else {
+                        null
+                    }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
-            delay(650)
+            val lidarLive = slamJson?.optBoolean("lidar_connected") == true
+            val depthLive = depthHardwareLive(depthJson)
+            delay(
+                when {
+                    lidarLive -> 900L
+                    depthLive -> 1800L
+                    else -> 4000L
+                },
+            )
         }
     }
 
-    val lidarPill = remember(slamJson, online) { lidarPillFromSlam(slamJson, online) }
+    val lidarPill =
+        remember(slamJson, online, lidarDepthComingSoon) {
+            if (lidarDepthComingSoon) {
+                PillTriple("Lidar soon", SirenaPillKind.Neutral, "coming soon")
+            } else {
+                lidarPillFromSlam(slamJson, online)
+            }
+        }
     val camPill = remember(visionJson, online) { camPillFromVision(visionJson, online) }
-    val depthPill = remember(depthJson, online) { depthPillFromDepth(depthJson, online) }
+    val depthPill =
+        remember(depthJson, online, lidarDepthComingSoon) {
+            if (lidarDepthComingSoon) {
+                PillTriple("Depth soon", SirenaPillKind.Neutral, "coming soon")
+            } else {
+                depthPillFromDepth(depthJson, online)
+            }
+        }
     val autoKind = if (autonomyOn) SirenaPillKind.Warn else SirenaPillKind.Neutral
+    val rgbStreamOn =
+        online && visionBridge && visionJson?.optBoolean("camera_open") == true
+    val depthStreamOn = online && depthBridge && depthHardwareLive(depthJson)
 
     SirenaAdaptiveContainer(Modifier.padding(10.dp)) { ctx ->
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,22 +182,26 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     ) {
-                        val g = grid
-                        if (g != null && g.width > 0 && g.height > 0) {
-                            val bmp = remember(g) { g.toBitmap().asImageBitmap() }
-                            Image(
-                                bitmap = bmp,
-                                contentDescription = "Occupancy grid",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                            )
+                        if (lidarDepthComingSoon) {
+                            PerceptionComingSoonLabel()
                         } else {
-                            Text(
-                                "Lidar not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
-                            )
+                            val g = grid
+                            if (g != null && g.width > 0 && g.height > 0) {
+                                val bmp = remember(g) { g.toBitmap().asImageBitmap() }
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Occupancy grid",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            } else {
+                                Text(
+                                    "Lidar not connected",
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = SirenaColors.muted,
+                                    fontSize = SirenaType.muted,
+                                )
+                            }
                         }
                     }
                     PerceptionSensorColumn(
@@ -147,21 +212,14 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     ) {
-                        if (online) {
-                            SirenaMjpegImage(
-                                streamUrl = "$root/v1/vision/stream",
-                                bearer = bearer,
-                                modifier = Modifier.fillMaxSize(),
-                                maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
-                            )
-                        } else {
-                            Text(
-                                "USB camera not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
-                            )
-                        }
+                        PerceptionRgbViewport(
+                            online = online,
+                            visionBridge = visionBridge,
+                            rgbStreamOn = rgbStreamOn,
+                            visionJson = visionJson,
+                            streamUrl = "$root/v1/vision/stream",
+                            bearer = bearer,
+                        )
                     }
                     PerceptionSensorColumn(
                         title = "Depth camera",
@@ -171,19 +229,16 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     ) {
-                        if (online && depthJson?.optBoolean("bridge_enabled", true) != false) {
-                            SirenaMjpegImage(
+                        if (lidarDepthComingSoon) {
+                            PerceptionComingSoonLabel()
+                        } else {
+                            PerceptionDepthViewport(
+                                online = online,
+                                depthBridge = depthBridge,
+                                depthStreamOn = depthStreamOn,
+                                depthJson = depthJson,
                                 streamUrl = "$root/v1/depth/stream",
                                 bearer = bearer,
-                                modifier = Modifier.fillMaxSize(),
-                                maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
-                            )
-                        } else {
-                            Text(
-                                "Depth camera not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
                             )
                         }
                     }
@@ -204,22 +259,26 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        val g = grid
-                        if (g != null && g.width > 0 && g.height > 0) {
-                            val bmp = remember(g) { g.toBitmap().asImageBitmap() }
-                            Image(
-                                bitmap = bmp,
-                                contentDescription = "Occupancy grid",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                            )
+                        if (lidarDepthComingSoon) {
+                            PerceptionComingSoonLabel()
                         } else {
-                            Text(
-                                "Lidar not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
-                            )
+                            val g = grid
+                            if (g != null && g.width > 0 && g.height > 0) {
+                                val bmp = remember(g) { g.toBitmap().asImageBitmap() }
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Occupancy grid",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            } else {
+                                Text(
+                                    "Lidar not connected",
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = SirenaColors.muted,
+                                    fontSize = SirenaType.muted,
+                                )
+                            }
                         }
                     }
                     PerceptionSensorColumn(
@@ -230,21 +289,14 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        if (online) {
-                            SirenaMjpegImage(
-                                streamUrl = "$root/v1/vision/stream",
-                                bearer = bearer,
-                                modifier = Modifier.fillMaxSize(),
-                                maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
-                            )
-                        } else {
-                            Text(
-                                "USB camera not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
-                            )
-                        }
+                        PerceptionRgbViewport(
+                            online = online,
+                            visionBridge = visionBridge,
+                            rgbStreamOn = rgbStreamOn,
+                            visionJson = visionJson,
+                            streamUrl = "$root/v1/vision/stream",
+                            bearer = bearer,
+                        )
                     }
                     PerceptionSensorColumn(
                         title = "Depth camera",
@@ -254,19 +306,16 @@ fun SirenaPerceptionScreen(
                         viewportMin = vMin,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        if (online && depthJson?.optBoolean("bridge_enabled", true) != false) {
-                            SirenaMjpegImage(
+                        if (lidarDepthComingSoon) {
+                            PerceptionComingSoonLabel()
+                        } else {
+                            PerceptionDepthViewport(
+                                online = online,
+                                depthBridge = depthBridge,
+                                depthStreamOn = depthStreamOn,
+                                depthJson = depthJson,
                                 streamUrl = "$root/v1/depth/stream",
                                 bearer = bearer,
-                                modifier = Modifier.fillMaxSize(),
-                                maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
-                            )
-                        } else {
-                            Text(
-                                "Depth camera not connected",
-                                modifier = Modifier.align(Alignment.Center),
-                                color = SirenaColors.muted,
-                                fontSize = SirenaType.muted,
                             )
                         }
                     }
@@ -339,13 +388,13 @@ private data class PillTriple(
 )
 
 private fun lidarPillFromSlam(s: JSONObject?, online: Boolean): PillTriple {
-    if (!online || s == null) return PillTriple("Lidar -", SirenaPillKind.Neutral, "waiting")
+    if (!online || s == null) return PillTriple("Lidar -", SirenaPillKind.Neutral, "offline")
     val ok = s.optBoolean("lidar_connected", false)
     val kind = if (ok) SirenaPillKind.Ok else SirenaPillKind.Neutral
     return PillTriple(
         "Lidar " + if (ok) "ok" else "—",
         kind,
-        if (ok) "live" else "waiting",
+        if (ok) "live" else "not connected",
     )
 }
 
@@ -365,13 +414,142 @@ private fun camPillFromVision(v: JSONObject?, online: Boolean): PillTriple {
     return PillTriple(chip, kind, card)
 }
 
+private fun fmtDepthMm(v: Int?): String {
+    if (v == null) return "\u2014"
+    return if (v >= 1000) String.format("%.2f m", v / 1000.0) else "$v mm"
+}
+
+private fun depthOverlayText(d: JSONObject?): String {
+    if (d == null) return "F: \u2014   L: \u2014   R: \u2014"
+    val f = if (d.has("forward_min_mm") && !d.isNull("forward_min_mm")) d.optInt("forward_min_mm") else null
+    val l = if (d.has("left_min_mm") && !d.isNull("left_min_mm")) d.optInt("left_min_mm") else null
+    val r = if (d.has("right_min_mm") && !d.isNull("right_min_mm")) d.optInt("right_min_mm") else null
+    return "F: ${fmtDepthMm(f)}   L: ${fmtDepthMm(l)}   R: ${fmtDepthMm(r)}"
+}
+
+private fun depthHardwareLive(d: JSONObject?): Boolean {
+    if (d == null) return false
+    if (!d.optBoolean("bridge_enabled", true)) return false
+    val msg = d.optString("message", "").trim()
+    return d.optBoolean("ok", true) && !msg.contains("unavailable", ignoreCase = true)
+}
+
+@Composable
+private fun BoxScope.PerceptionRgbViewport(
+    online: Boolean,
+    visionBridge: Boolean,
+    rgbStreamOn: Boolean,
+    visionJson: JSONObject?,
+    streamUrl: String,
+    bearer: String?,
+) {
+    when {
+        !online -> {
+            Text(
+                "Connect to a robot to view cameras",
+                modifier = Modifier.align(Alignment.Center),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+        !visionBridge -> {
+            Text(
+                "Vision bridge off on Jetson",
+                modifier = Modifier.align(Alignment.Center),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+        rgbStreamOn -> {
+            SirenaMjpegImage(
+                streamUrl = streamUrl,
+                bearer = bearer,
+                modifier = Modifier.fillMaxSize(),
+                maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
+                streamEnabled = true,
+                targetFps = SirenaMjpegDefaultTargetFps,
+                idleMessage = "USB camera not streaming",
+            )
+        }
+        else -> {
+            val hint =
+                visionJson?.optString("message")?.trim()?.take(80)?.ifBlank {
+                    "Opening USB camera…"
+                } ?: "Opening USB camera…"
+            Text(
+                hint,
+                modifier = Modifier.align(Alignment.Center).padding(12.dp),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.PerceptionDepthViewport(
+    online: Boolean,
+    depthBridge: Boolean,
+    depthStreamOn: Boolean,
+    depthJson: JSONObject?,
+    streamUrl: String,
+    bearer: String?,
+) {
+    when {
+        !online -> {
+            Text(
+                "Connect to a robot to view depth",
+                modifier = Modifier.align(Alignment.Center),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+        !depthBridge -> {
+            Text(
+                "Depth bridge off on Jetson",
+                modifier = Modifier.align(Alignment.Center),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+        depthStreamOn -> {
+            Box(Modifier.fillMaxSize()) {
+                SirenaMjpegImage(
+                    streamUrl = streamUrl,
+                    bearer = bearer,
+                    modifier = Modifier.fillMaxSize(),
+                    maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
+                    streamEnabled = true,
+                    idleMessage = "Depth stream unavailable",
+                )
+                Text(
+                    depthOverlayText(depthJson),
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(6.dp),
+                    color = SirenaColors.text,
+                    fontSize = SirenaType.muted,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        else -> {
+            Text(
+                "Depth camera not connected",
+                modifier = Modifier.align(Alignment.Center),
+                color = SirenaColors.muted,
+                fontSize = SirenaType.muted,
+            )
+        }
+    }
+}
+
 private fun depthPillFromDepth(d: JSONObject?, online: Boolean): PillTriple {
     if (!online || d == null || d.optBoolean("bridge_enabled", true) == false) {
-        return PillTriple("Depth -", SirenaPillKind.Neutral, "waiting")
+        return PillTriple("Depth -", SirenaPillKind.Neutral, "not installed")
     }
-    val ok = d.optBoolean("ok", true) && d.optString("message", "").contains("unavailable").not()
-    val msg = d.optString("message").trim()
-    val connected = ok && !msg.contains("unavailable", ignoreCase = true)
+    val connected = depthHardwareLive(d)
     return PillTriple(
         if (connected) "Depth ok" else "Depth —",
         if (connected) SirenaPillKind.Ok else SirenaPillKind.Neutral,

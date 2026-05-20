@@ -88,6 +88,70 @@ fun SirenaVisionScreen(
     var objectConfPct by remember { mutableStateOf(80) }
     val objectConfDrag = remember { MutableInteractionSource() }
     val objectConfDragging by objectConfDrag.collectIsDraggedAsState()
+    var arucoMarkerId by remember { mutableStateOf("0") }
+    var arucoLine by remember { mutableStateOf("ArUco: off") }
+    val resOptions = listOf("1280x720", "640x480", "320x240")
+    var resIndex by remember { mutableStateOf(1) }
+    var streamGeneration by remember { mutableStateOf(0) }
+    var resApplying by remember { mutableStateOf(false) }
+
+    fun resolutionIndexFor(width: Int, height: Int): Int {
+        val label = "${width}x$height"
+        val exact = resOptions.indexOf(label)
+        if (exact >= 0) return exact
+        val area = width * height
+        return resOptions.indices.minByOrNull { i ->
+            val parts = resOptions[i].split("x")
+            val w = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            val h = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            kotlin.math.abs(w * h - area)
+        } ?: 1
+    }
+
+    fun applyResolutionChoice(index: Int) {
+        if (!visionOn || index !in resOptions.indices) return
+        scope.launch {
+            resApplying = true
+            err = null
+            try {
+                val label = resOptions[index]
+                val r =
+                    vm.postVisionOptionsSync(
+                        face = null,
+                        objects = null,
+                        objectConfidence = null,
+                        resolution = label,
+                    )
+                if (r != null && !r.optBoolean("ok", true)) {
+                    err = r.optString("error").ifBlank { "Resolution not applied" }
+                    return@launch
+                }
+                resIndex = index
+                r?.optString("resolution")?.trim()?.let { applied ->
+                    val idx = resOptions.indexOf(applied)
+                    if (idx >= 0) resIndex = idx
+                }
+                vm.visionOpen()
+                streamGeneration++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                err = e.message ?: "Resolution failed"
+            } finally {
+                resApplying = false
+            }
+        }
+    }
+
+    LaunchedEffect(visionOn, caps?.optBoolean("vision_bridge_enabled")) {
+        if (!visionOn) return@LaunchedEffect
+        if (caps != null && !caps.optBoolean("vision_bridge_enabled")) return@LaunchedEffect
+        delay(300)
+        try {
+            vm.visionOpen()
+        } catch (_: Exception) {
+        }
+    }
 
     LaunchedEffect(visionOn, caps?.optBoolean("vision_bridge_enabled")) {
         if (!visionOn) return@LaunchedEffect
@@ -104,9 +168,21 @@ fun SirenaVisionScreen(
                     val flDef = async { vm.fetchVisionFollowStatus() }
                     val st = stDef.await()
                     statusJson = st
-                    if (!objectConfDragging) {
+                    if (!objectConfDragging && !resApplying) {
                         st?.optDouble("object_confidence")?.let { c ->
                             objectConfPct = (c * 100.0).toInt().coerceIn(50, 99)
+                        }
+                        st?.let { s ->
+                            val w = s.optInt("capture_width", 0)
+                            val h = s.optInt("capture_height", 0)
+                            if (w > 0 && h > 0) {
+                                resIndex = resolutionIndexFor(w, h)
+                            } else {
+                                s.optString("resolution").trim().takeIf { it.isNotEmpty() }?.let { label ->
+                                    val idx = resOptions.indexOf(label)
+                                    if (idx >= 0) resIndex = idx
+                                }
+                            }
                         }
                     }
                     val fc = fcDef.await()
@@ -121,6 +197,18 @@ fun SirenaVisionScreen(
             }
             // Tighter poll for autonomy-relevant vision JSON (MJPEG is continuous via Compose decoder).
             delay(320)
+        }
+    }
+
+    LaunchedEffect(visionOn) {
+        if (!visionOn) return@LaunchedEffect
+        while (isActive) {
+            try {
+                val st = vm.fetchVisionArucoStatus()
+                arucoLine = st?.optString("message")?.take(48) ?: "ArUco: off"
+            } catch (_: Exception) {
+            }
+            delay(1000L)
         }
     }
 
@@ -201,16 +289,27 @@ fun SirenaVisionScreen(
                         },
                     ),
             ) {
-                if (visionOn) {
+                if (visionOn && camOpen) {
                     SirenaMjpegImage(
                         streamUrl = "$root/v1/vision/stream",
                         bearer = bearer,
                         modifier = Modifier.fillMaxSize(),
                         maxLongEdge = SirenaMjpegPreviewMaxLongEdge,
+                        streamEnabled = true,
+                        targetFps = SirenaMjpegDefaultTargetFps,
+                        streamGeneration = streamGeneration,
+                        idleMessage = "USB camera not streaming",
+                    )
+                } else if (visionOn) {
+                    Text(
+                        camPillText,
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        color = SirenaColors.muted,
+                        fontSize = SirenaType.muted,
                     )
                 } else {
                     Text(
-                        "Plug in a USB camera to see the live feed here.",
+                        "Connect to a robot to view the live feed.",
                         modifier = Modifier.align(Alignment.Center).padding(16.dp),
                         color = SirenaColors.muted,
                         fontSize = SirenaType.muted,
@@ -253,16 +352,31 @@ fun SirenaVisionScreen(
             SirenaSectionLabel("Camera")
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SirenaMutedText("Resolution", maxLines = 1)
                 Text(
-                    "640\u00d7480",
+                    resOptions[resIndex],
                     color = SirenaColors.text,
                     fontWeight = FontWeight.Medium,
-                    fontSize = SirenaType.muted,
+                    modifier = Modifier.weight(1f),
                 )
+                SirenaSecondaryButton(
+                    text = if (resApplying) "Applying…" else "Apply",
+                    onClick = { applyResolutionChoice(resIndex) },
+                    enabled = visionOn && !resApplying,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                resOptions.forEachIndexed { i, label ->
+                    SirenaTogglePill(
+                        text = label,
+                        checked = resIndex == i,
+                        onClick = { applyResolutionChoice(i) },
+                        enabled = visionOn && !resApplying,
+                    )
+                }
             }
             Row(
                 Modifier.fillMaxWidth(),
@@ -291,17 +405,8 @@ fun SirenaVisionScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SirenaMutedText("Exposure", maxLines = 1)
-                Text(
-                    "Auto",
-                    color = SirenaColors.text,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = SirenaType.muted,
-                )
+                Text("Auto", color = SirenaColors.text, fontWeight = FontWeight.Medium, fontSize = SirenaType.muted)
             }
-            SirenaMutedText(
-                "Changing resolution, brightness, or exposure from the tablet is not wired yet; use the Jetson Sirena UI for live tuning.",
-                maxLines = 3,
-            )
         }
 
         @Composable
@@ -472,6 +577,47 @@ fun SirenaVisionScreen(
                 )
                 SirenaStatusPill("$objectConfPct%", SirenaPillKind.Neutral)
             }
+
+            SirenaSectionLabel("ArUco marker approach")
+            SirenaMutedText(
+                "Uses the live camera to approach the chosen marker ID at straight-bench speed.",
+                maxLines = 4,
+            )
+            OutlinedTextField(
+                value = arucoMarkerId,
+                onValueChange = { arucoMarkerId = it.filter { c -> c.isDigit() }.take(3) },
+                label = { Text("Marker ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = visionOn,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SirenaPrimaryButton(
+                    text = "Start approach",
+                    onClick = {
+                        scope.launch {
+                            val id = arucoMarkerId.toIntOrNull() ?: 0
+                            val r = vm.postVisionArucoStart(id)
+                            if (r?.optBoolean("ok") != true) {
+                                err = r?.optString("error") ?: "ArUco start failed"
+                            }
+                        }
+                    },
+                    enabled = visionOn,
+                    modifier = Modifier.weight(1f),
+                )
+                SirenaSecondaryButton(
+                    text = "Stop approach",
+                    onClick = {
+                        scope.launch {
+                            vm.postVisionArucoStop()
+                        }
+                    },
+                    enabled = visionOn,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            SirenaStatusPill(arucoLine, SirenaPillKind.Neutral)
 
             OutlinedTextField(
                 value = enrollName,

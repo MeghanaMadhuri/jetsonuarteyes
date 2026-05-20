@@ -24,8 +24,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.SystemClock
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -40,7 +43,10 @@ import java.util.concurrent.TimeUnit
 const val SirenaMjpegAndroidMaxLongEdgeDefault = 1152
 
 /** Smaller decode for in-app preview tiles (Vision / Perception / Drive camera card). */
-const val SirenaMjpegPreviewMaxLongEdge = 896
+const val SirenaMjpegPreviewMaxLongEdge = 768
+
+/** Cap UI updates so Compose is not flooded (smoother than decoding every JPEG). */
+const val SirenaMjpegDefaultTargetFps = 24
 
 /** Cap multipart buffer so backlog does not delay first frame / cause stutter. */
 private const val MJPEG_MAX_BUFFER_BYTES = 393_216
@@ -123,19 +129,39 @@ fun SirenaMjpegImage(
     modifier: Modifier = Modifier,
     /** Downscale decoded frames so GPU upload stays smooth on tablets / Wi‑Fi. */
     maxLongEdge: Int = SirenaMjpegAndroidMaxLongEdgeDefault,
+    /** When false, no HTTP stream is opened (saves battery when hardware is absent). */
+    streamEnabled: Boolean = true,
+    /** Stop spinner and show [idleMessage] if no frame arrives in time. */
+    loadingTimeoutMs: Long = 12_000L,
+    idleMessage: String? = null,
+    /** Max frames pushed to the UI thread per second (drops extras for smooth playback). */
+    targetFps: Int = SirenaMjpegDefaultTargetFps,
+    /** Bump to restart the HTTP reader (e.g. after camera resolution change). */
+    streamGeneration: Int = 0,
 ) {
     var image by remember { mutableStateOf<ImageBitmap?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    val minFrameIntervalMs = (1000f / targetFps.coerceIn(8, 60)).toLong()
 
-    LaunchedEffect(streamUrl, bearer, maxLongEdge) {
-        loading = true
+    LaunchedEffect(streamUrl, bearer, maxLongEdge, streamEnabled, streamGeneration) {
+        loading = streamEnabled && streamUrl.isNotBlank()
         error = null
         image = null
-        if (streamUrl.isBlank()) {
+        if (!streamEnabled || streamUrl.isBlank()) {
             loading = false
             return@LaunchedEffect
         }
+        var frameReceived = false
+        var lastUiFrameMs = 0L
+        val timeoutJob =
+            launch {
+                delay(loadingTimeoutMs)
+                if (!frameReceived && isActive) {
+                    error = idleMessage ?: "No video signal — open camera on Jetson or check USB"
+                    loading = false
+                }
+            }
         try {
             withContext(Dispatchers.IO) {
                 val reqBuilder = Request.Builder().url(streamUrl).get()
@@ -181,9 +207,17 @@ fun SirenaMjpegImage(
                                 for (i in 0 until frames.size - 1) {
                                     frames[i].recycle()
                                 }
-                                withContext(Dispatchers.Main) {
-                                    image = latest.asImageBitmap()
-                                    loading = false
+                                frameReceived = true
+                                val now = SystemClock.uptimeMillis()
+                                if (now - lastUiFrameMs >= minFrameIntervalMs) {
+                                    lastUiFrameMs = now
+                                    withContext(Dispatchers.Main) {
+                                        image = latest.asImageBitmap()
+                                        loading = false
+                                        error = null
+                                    }
+                                } else {
+                                    latest.recycle()
                                 }
                             }
                         }
@@ -199,6 +233,8 @@ fun SirenaMjpegImage(
                 error = e.message ?: "stream error"
                 loading = false
             }
+        } finally {
+            timeoutJob.cancel()
         }
     }
 

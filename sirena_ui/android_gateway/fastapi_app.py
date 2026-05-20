@@ -29,12 +29,17 @@ from nina.jetson_net.state import LinkCoordinator, UserMode
 from nina.jetson_net.nm import NMError
 from sirena_ui.android_gateway.command_plane import QtCommandPlane
 from sirena_ui.android_gateway.drive_http import (
+    drive_hold_start,
+    drive_hold_stop,
+    drive_turn,
     emergency_stop,
     momentary_drive,
     navigation_hw_status,
     robot_set_brake,
+    set_drive_reverse,
     set_wheel_invert,
 )
+from sirena_ui.workers import drive_controller as drive_controller_mod
 from sirena_ui.android_gateway.health_build import build_robot_health, safe_map_filename
 from sirena_ui.android_gateway.robot_actions import RobotActionController
 from sirena_ui.android_gateway import depth_stream
@@ -158,6 +163,18 @@ class DriveBrakeBody(BaseModel):
     on: bool = Field(..., description="True = brake engaged (servos to brake pose)")
 
 
+class DriveHoldBody(BaseModel):
+    direction: str = Field(..., description="forward | back | left | right")
+
+
+class DriveTurnBody(BaseModel):
+    which: str = Field(..., description="left | right")
+
+
+class DriveReverseBody(BaseModel):
+    on: bool = Field(..., description="True = swap forward/back at the drive layer")
+
+
 class PlayActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
 
@@ -196,6 +213,35 @@ class VisionOptionsBody(BaseModel):
     face: Optional[bool] = None
     objects: Optional[bool] = None
     object_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    resolution: Optional[str] = Field(
+        default=None,
+        description="e.g. 640x480 — forwarded to vision worker when camera open",
+    )
+
+
+class HoverStraightBody(BaseModel):
+    backward: bool = False
+
+
+class HoverCalibrationPreviewBody(BaseModel):
+    left: int = Field(..., ge=0, le=4095)
+    right: int = Field(..., ge=0, le=4095)
+
+
+class HoverCalibrationSaveBody(BaseModel):
+    forward_pos_left: Optional[int] = Field(default=None, ge=0, le=4095)
+    forward_pos_right: Optional[int] = Field(default=None, ge=0, le=4095)
+    backward_pos_left: Optional[int] = Field(default=None, ge=0, le=4095)
+    backward_pos_right: Optional[int] = Field(default=None, ge=0, le=4095)
+    turn_left_pos_left: Optional[int] = Field(default=None, ge=0, le=4095)
+    turn_left_pos_right: Optional[int] = Field(default=None, ge=0, le=4095)
+    turn_right_pos_left: Optional[int] = Field(default=None, ge=0, le=4095)
+    turn_right_pos_right: Optional[int] = Field(default=None, ge=0, le=4095)
+    turn_duration_sec: Optional[float] = Field(default=None, ge=0.01, le=1.0)
+
+
+class ArucoStartBody(BaseModel):
+    marker_id: int = Field(default=0, ge=0, le=999)
 
 
 class VisionEnrollBody(BaseModel):
@@ -231,6 +277,10 @@ class DeleteManifestActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
     delete_recording: bool = Field(default=True)
     delete_audio: bool = Field(default=False)
+
+
+class SystemVolumeBody(BaseModel):
+    volume_pct: int = Field(ge=0, le=100)
 
 
 class RobotDisplayNameBody(BaseModel):
@@ -567,6 +617,11 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             "drive_speed_min_percent": 8,
             "drive_speed_max_percent": 14,
             "drive_status_endpoint": "/v1/robot/drive/status",
+            "drive_hold_endpoint": "/v1/robot/drive/hold",
+            "drive_hold_stop_endpoint": "/v1/robot/drive/hold/stop",
+            "drive_turn_endpoint": "/v1/robot/drive/turn",
+            "drive_reverse_endpoint": "/v1/robot/drive/reverse",
+            "manual_drive_speed_pct": int(drive_controller_mod.FIXED_MANUAL_DRIVE_SPEED_PCT),
             "drive_invert_endpoint": "/v1/robot/drive/invert",
             "actions_endpoint": "/v1/actions",
             "action_play_endpoint": "/v1/actions/play",
@@ -622,6 +677,37 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             timeout=60.0,
         )
 
+    @app.get("/v1/system/volume")
+    def system_volume_get_http() -> Dict[str, Any]:
+        from nina.services.audio_player import get_system_output_volume_pct
+
+        pct = get_system_output_volume_pct()
+        return {
+            "ok": True,
+            "available": pct is not None,
+            "volume_pct": pct,
+        }
+
+    @app.post("/v1/system/volume")
+    def system_volume_set_http(
+        body: SystemVolumeBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        from nina.services.audio_player import (
+            get_system_output_volume_pct,
+            set_system_output_volume_pct,
+        )
+
+        ok = set_system_output_volume_pct(int(body.volume_pct))
+        pct = get_system_output_volume_pct()
+        return {
+            "ok": ok,
+            "available": pct is not None,
+            "volume_pct": pct if pct is not None else int(body.volume_pct),
+        }
+
     @app.post("/v1/robot/drive")
     def robot_drive(
         body: DriveBody,
@@ -671,6 +757,70 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             )
         return gw.plane.submit(lambda: robot_set_brake(gw.service, on=body.on), timeout=30.0)
 
+    @app.post("/v1/robot/drive/hold")
+    def robot_drive_hold_http(
+        body: DriveHoldBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        direction = body.direction.strip().lower()
+        if direction not in frozenset({"forward", "back", "left", "right"}):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="direction must be forward, back, left, or right",
+            )
+        return gw.plane.submit(
+            lambda: drive_hold_start(gw.service, direction=direction),
+            timeout=30.0,
+        )
+
+    @app.post("/v1/robot/drive/hold/stop")
+    def robot_drive_hold_stop_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        return gw.plane.submit(lambda: drive_hold_stop(gw.service), timeout=30.0)
+
+    @app.post("/v1/robot/drive/turn")
+    def robot_drive_turn_http(
+        body: DriveTurnBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        which = body.which.strip().lower()
+        if which not in frozenset({"left", "right"}):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="which must be left or right",
+            )
+        return gw.plane.submit(
+            lambda: drive_turn(gw.service, which=which),
+            timeout=60.0,
+        )
+
+    @app.post("/v1/robot/drive/reverse")
+    def robot_drive_reverse_http(
+        body: DriveReverseBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        return gw.plane.submit(
+            lambda: set_drive_reverse(gw.service, on=body.on),
+            timeout=30.0,
+        )
+
     @app.post("/v1/robot/emergency-stop")
     def robot_emergency_stop(
         request: Request,
@@ -693,9 +843,102 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "invert_right": False,
                 "brake": True,
             }
-        st = _run_bg(lambda: navigation_hw_status(gw.service), timeout=30.0)
+        from sirena_ui.android_gateway.tablet_drive_extras import drive_status_payload
+
+        st = _run_bg(lambda: drive_status_payload(gw.service), timeout=30.0)
         st["bridge_enabled"] = True
         return st
+
+    @app.post("/v1/robot/drive/straight")
+    def robot_drive_straight_http(
+        body: HoverStraightBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_straight_start
+
+        return gw.plane.submit(
+            lambda: hover_straight_start(gw.service, backward=body.backward),
+            timeout=30.0,
+        )
+
+    @app.post("/v1/robot/drive/straight/stop")
+    def robot_drive_straight_stop_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_straight_stop
+
+        return gw.plane.submit(lambda: hover_straight_stop(gw.service), timeout=30.0)
+
+    @app.get("/v1/robot/drive/calibration")
+    def robot_drive_calibration_get_http() -> Dict[str, Any]:
+        if not cfg.enable_robot_bridge:
+            return {"ok": False, "bridge_enabled": False}
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_calibration_snapshot
+
+        return _run_bg(lambda: hover_calibration_snapshot(gw.service), timeout=30.0)
+
+    @app.post("/v1/robot/drive/calibration/preview")
+    def robot_drive_calibration_preview_http(
+        body: HoverCalibrationPreviewBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_calibration_preview
+
+        return gw.plane.submit(
+            lambda: hover_calibration_preview(gw.service, left=body.left, right=body.right),
+            timeout=30.0,
+        )
+
+    @app.post("/v1/robot/drive/calibration/neutral")
+    def robot_drive_calibration_neutral_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_calibration_neutral
+
+        return gw.plane.submit(lambda: hover_calibration_neutral(gw.service), timeout=30.0)
+
+    @app.post("/v1/robot/drive/calibration/save")
+    def robot_drive_calibration_save_http(
+        body: HoverCalibrationSaveBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
+        from sirena_ui.android_gateway.tablet_drive_extras import hover_calibration_persist
+
+        return gw.plane.submit(
+            lambda: hover_calibration_persist(
+                gw.service,
+                forward_pos_left=body.forward_pos_left,
+                forward_pos_right=body.forward_pos_right,
+                backward_pos_left=body.backward_pos_left,
+                backward_pos_right=body.backward_pos_right,
+                turn_left_pos_left=body.turn_left_pos_left,
+                turn_left_pos_right=body.turn_left_pos_right,
+                turn_right_pos_left=body.turn_right_pos_left,
+                turn_right_pos_right=body.turn_right_pos_right,
+                turn_duration_sec=body.turn_duration_sec,
+            ),
+            timeout=60.0,
+        )
 
     @app.post("/v1/robot/drive/invert")
     def robot_drive_invert(
@@ -976,6 +1219,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             st = gw.service.vision.status()
             vw = gw.service.vision
             fps_val = float(getattr(vw, "_last_loop_fps", 0.0) or 0.0)
+            cap_w, cap_h = vw._pipeline.capture_dimensions()  # noqa: SLF001
             return {
                 "ok": True,
                 "camera_open": st.camera_open,
@@ -986,6 +1230,9 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "object_enabled": st.object_enabled,
                 "object_confidence": float(gw.service.vision.get_object_confidence()),
                 "fps": round(fps_val, 2),
+                "capture_width": int(cap_w),
+                "capture_height": int(cap_h),
+                "resolution": f"{int(cap_w)}x{int(cap_h)}",
             }
 
         return _run_bg(_st, timeout=30.0)
@@ -1015,7 +1262,14 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                     err_obj = str(e)
             if body.object_confidence is not None:
                 gw.service.vision.set_object_confidence(float(body.object_confidence))
+            if body.resolution:
+                try:
+                    w, h = (int(x) for x in body.resolution.lower().split("x", 1))
+                    gw.service.vision.set_resolution(w, h)
+                except ValueError:
+                    pass
             st = gw.service.vision.status()
+            cap_w, cap_h = gw.service.vision._pipeline.capture_dimensions()  # noqa: SLF001
             return {
                 "ok": True,
                 "camera_open": st.camera_open,
@@ -1025,6 +1279,9 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "object_enabled": st.object_enabled,
                 "message": st.message,
                 "object_confidence": float(gw.service.vision.get_object_confidence()),
+                "capture_width": int(cap_w),
+                "capture_height": int(cap_h),
+                "resolution": f"{int(cap_w)}x{int(cap_h)}",
                 "toggle_face_error": err_face,
                 "toggle_object_error": err_obj,
             }
@@ -1200,6 +1457,48 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         def _stop() -> Dict[str, Any]:
             gw.service.face_follow.stop()
             return {"ok": True}
+
+        return gw.plane.submit(_stop, timeout=30.0)
+
+    @app.get("/v1/vision/aruco/status")
+    def vision_aruco_status_http() -> Dict[str, Any]:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+        from sirena_ui.android_gateway import tablet_aruco
+
+        return tablet_aruco.aruco_status()
+
+    @app.post("/v1/vision/aruco/start")
+    def vision_aruco_start_http(
+        body: ArucoStartBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+
+        def _start() -> Dict[str, Any]:
+            from sirena_ui.android_gateway import tablet_aruco
+
+            vision_tablet.install_vision_hooks(gw.service)
+            return tablet_aruco.aruco_start(gw.service, body.marker_id)
+
+        return gw.plane.submit(_start, timeout=60.0)
+
+    @app.post("/v1/vision/aruco/stop")
+    def vision_aruco_stop_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+
+        def _stop() -> Dict[str, Any]:
+            from sirena_ui.android_gateway import tablet_aruco
+
+            return tablet_aruco.aruco_stop(gw.service)
 
         return gw.plane.submit(_stop, timeout=30.0)
 

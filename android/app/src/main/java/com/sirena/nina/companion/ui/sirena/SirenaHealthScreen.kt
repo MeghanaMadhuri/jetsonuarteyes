@@ -1,5 +1,11 @@
 package com.sirena.nina.companion.ui.sirena
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
@@ -51,7 +58,6 @@ import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * Health Check — mirrors [sirena_ui.screens.health_screen.HealthScreen]:
@@ -63,7 +69,7 @@ fun SirenaHealthScreen(
     shellCompact: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
-    var rows by remember { mutableStateOf<JSONArray?>(null) }
+    var rows by remember { mutableStateOf<List<HealthRowUi>>(emptyList()) }
     var loadErr by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var lastRunLabel by remember { mutableStateOf("Last run \u2014 · 0 checks") }
@@ -78,10 +84,10 @@ fun SirenaHealthScreen(
                 val h = vm.fetchRobotHealth()
                 if (h == null) {
                     loadErr = "Could not load health (daemon offline, wrong URL, or HTTP error)."
-                    rows = null
+                    rows = emptyList()
                 } else {
-                    rows = h.optJSONArray("rows")
-                    val n = rows?.length() ?: 0
+                    rows = parseHealthRows(h.optJSONArray("rows"))
+                    val n = rows.size
                     val t = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
                     lastRunLabel = "Last run · $t · $n checks"
                 }
@@ -89,7 +95,7 @@ fun SirenaHealthScreen(
                 throw e
             } catch (e: Exception) {
                 loadErr = e.message ?: "failed"
-                rows = null
+                rows = emptyList()
             } finally {
                 loading = false
             }
@@ -111,82 +117,111 @@ fun SirenaHealthScreen(
         SirenaBreadcrumbLine(listOf("Nina", "Health"))
 
         SirenaCard(kind = SirenaCardKind.Hero, contentPadding = PaddingValues(16.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                HealthDonutGauge(
-                    ok = summary.ok,
-                    warn = summary.warn,
-                    err = summary.err,
-                    total = summary.total,
-                )
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        summaryHeadline(summary, rows, loadErr),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp,
-                        color = SirenaColors.text,
-                    )
-                    Text(
-                        lastRunLabel,
-                        fontSize = SirenaType.muted,
-                        color = SirenaColors.muted,
-                    )
-                    loadErr?.let {
-                        Text(it, fontSize = SirenaType.muted, color = SirenaColors.muted, modifier = Modifier.padding(top = 4.dp))
-                    }
-                }
+            if (shellCompact) {
                 Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    SirenaPrimaryButton(
-                        text = if (loading) "Running…" else "Run all checks",
-                        onClick = { load() },
-                        enabled = !loading,
-                        modifier = Modifier.height(40.dp),
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        HealthDonutGauge(
+                            ok = summary.ok,
+                            warn = summary.warn,
+                            err = summary.err,
+                            total = summary.total,
+                        )
+                        HealthHeroSummaryColumn(
+                            summary = summary,
+                            rows = rows,
+                            loadErr = loadErr,
+                            lastRunLabel = lastRunLabel,
+                        )
+                    }
+                    HealthHeroActionsRow(loading = loading, onRun = { load() }, onExport = { exportOpen = true })
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HealthDonutGauge(
+                        ok = summary.ok,
+                        warn = summary.warn,
+                        err = summary.err,
+                        total = summary.total,
                     )
-                    SirenaSecondaryButton(
-                        text = "Export report",
-                        onClick = { exportOpen = true },
-                        modifier = Modifier.height(40.dp),
+                    HealthHeroSummaryColumn(
+                        summary = summary,
+                        rows = rows,
+                        loadErr = loadErr,
+                        lastRunLabel = lastRunLabel,
+                        modifier = Modifier.weight(1f),
                     )
+                    HealthHeroActionsColumn(loading = loading, onRun = { load() }, onExport = { exportOpen = true })
                 }
             }
         }
 
-        SirenaCard(modifier = Modifier.weight(1f), contentPadding = PaddingValues(12.dp)) {
-            SirenaCardTitle("Subsystems")
-            Spacer(Modifier.height(8.dp))
-            val r = rows
-            if (r == null || r.length() == 0) {
-                SirenaMutedText(
-                    if (loadErr != null) {
-                        "Fix the connection above, then tap Run all checks."
-                    } else {
-                        "No rows yet — tap Run all checks."
-                    },
-                    maxLines = 3,
-                )
-            } else {
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    items(
-                        count = r.length(),
-                        key = { index ->
-                            r.optJSONObject(index)?.optString("key")?.ifBlank { "$index" } ?: "$index"
-                        },
-                    ) { index ->
-                        val o = r.optJSONObject(index) ?: return@items
-                        HealthSubsystemRow(
-                            o = o,
-                            stripe = index % 2 == 0,
-                            onViewLogs = { logsDialogKey = o.optString("key").ifBlank { o.optString("label") } },
-                        )
+        SirenaCard(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(12.dp),
+        ) {
+            Column(Modifier.fillMaxSize().fillMaxWidth()) {
+                SirenaCardTitle("Subsystems")
+                Spacer(Modifier.height(8.dp))
+                val r = rows
+                when {
+                    loading -> {
+                        LazyColumn(
+                            Modifier.fillMaxSize().fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            items(8, key = { "skel_$it" }) { index ->
+                                HealthSubsystemSkeletonRow(stripe = index % 2 == 0)
+                            }
+                        }
+                    }
+                    r.isEmpty() -> {
+                        Box(
+                            Modifier.fillMaxSize().fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            SirenaMutedText(
+                                if (loadErr != null) {
+                                    "Fix the connection above, then tap Run all checks."
+                                } else {
+                                    "No rows yet — tap Run all checks."
+                                },
+                                maxLines = 3,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    else -> {
+                        LazyColumn(
+                            Modifier.fillMaxSize().fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            itemsIndexed(
+                                items = r,
+                                key = { _, row -> row.id },
+                            ) { index, row ->
+                                SirenaAnimatedEnter(
+                                    visible = true,
+                                    delayIndex = index.coerceAtMost(10),
+                                ) {
+                                    HealthSubsystemRow(
+                                        row = row,
+                                        stripe = index % 2 == 0,
+                                        onViewLogs = { logsDialogKey = row.key.ifBlank { row.label } },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -232,31 +267,159 @@ fun SirenaHealthScreen(
     }
 }
 
+private data class HealthRowUi(
+    /** Stable LazyColumn key (index suffix — gateway may repeat subsystem keys). */
+    val id: String,
+    val key: String,
+    val label: String,
+    val detail: String,
+    val status: String,
+)
+
+/** Parse JSON rows; assign unique [HealthRowUi.id] per index. */
+private fun parseHealthRows(arr: JSONArray?): List<HealthRowUi> {
+    if (arr == null || arr.length() == 0) return emptyList()
+    val out = ArrayList<HealthRowUi>(arr.length())
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val key = o.optString("key").ifBlank { "row" }
+        out.add(
+            HealthRowUi(
+                id = "${key}_$i",
+                key = key,
+                label = o.optString("label").ifBlank { key },
+                detail = o.optString("detail"),
+                status = o.optString("status").trim().lowercase(),
+            ),
+        )
+    }
+    return out
+}
+
+@Composable
+private fun HealthHeroSummaryColumn(
+    summary: HealthSummary,
+    rows: List<HealthRowUi>,
+    loadErr: String?,
+    lastRunLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            summaryHeadline(summary, rows, loadErr),
+            fontWeight = FontWeight.Bold,
+            fontSize = 22.sp,
+            color = SirenaColors.text,
+        )
+        Text(lastRunLabel, fontSize = SirenaType.muted, color = SirenaColors.muted)
+        loadErr?.let {
+            Text(it, fontSize = SirenaType.muted, color = SirenaColors.muted, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun HealthHeroActionsColumn(
+    loading: Boolean,
+    onRun: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SirenaPrimaryButton(
+            text = if (loading) "Running…" else "Run all checks",
+            onClick = onRun,
+            enabled = !loading,
+            modifier = Modifier.height(40.dp),
+        )
+        SirenaSecondaryButton(
+            text = "Export report",
+            onClick = onExport,
+            modifier = Modifier.height(40.dp),
+        )
+    }
+}
+
+@Composable
+private fun HealthHeroActionsRow(
+    loading: Boolean,
+    onRun: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SirenaPrimaryButton(
+            text = if (loading) "Running…" else "Run all checks",
+            onClick = onRun,
+            enabled = !loading,
+            modifier = Modifier.weight(1f).height(40.dp),
+        )
+        SirenaSecondaryButton(
+            text = "Export report",
+            onClick = onExport,
+            modifier = Modifier.weight(1f).height(40.dp),
+        )
+    }
+}
+
+@Composable
+private fun HealthSubsystemSkeletonRow(stripe: Boolean) {
+    val transition = rememberInfiniteTransition(label = "healthSkel")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.72f,
+        animationSpec =
+            infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+        label = "healthSkelPulse",
+    )
+    val skel = SirenaColors.muted.copy(alpha = pulse)
+    val bg = if (stripe) SirenaColors.panel else Color(0xFFFAFAFC)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(bg, shape = RoundedCornerShape(6.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(28.dp).clip(RoundedCornerShape(4.dp)).background(skel))
+        Box(Modifier.width(180.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(skel))
+        Box(Modifier.weight(1f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(skel))
+        Box(Modifier.width(56.dp).height(22.dp).clip(RoundedCornerShape(11.dp)).background(skel))
+        Box(Modifier.width(72.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(skel))
+    }
+}
+
 private data class HealthSummary(val ok: Int, val warn: Int, val err: Int, val pending: Int, val total: Int)
 
-private fun summarizeHealthRows(rows: JSONArray?): HealthSummary {
-    if (rows == null) return HealthSummary(0, 0, 0, 0, 0)
+private fun summarizeHealthRows(rows: List<HealthRowUi>): HealthSummary {
+    if (rows.isEmpty()) return HealthSummary(0, 0, 0, 0, 0)
     var ok = 0
     var warn = 0
     var err = 0
     var pending = 0
-    for (i in 0 until rows.length()) {
-        val o = rows.optJSONObject(i) ?: continue
-        when (o.optString("status").trim().lowercase()) {
+    for (row in rows) {
+        when (row.status) {
             "ok" -> ok++
             "warn" -> warn++
             "error" -> err++
             else -> pending++
         }
     }
-    val total = rows.length()
-    return HealthSummary(ok, warn, err, pending, total)
+    return HealthSummary(ok, warn, err, pending, rows.size)
 }
 
-private fun summaryHeadline(s: HealthSummary, rows: JSONArray?, loadErr: String?): String =
+private fun summaryHeadline(s: HealthSummary, rows: List<HealthRowUi>, loadErr: String?): String =
     when {
-        loadErr != null && (rows == null || rows.length() == 0) -> "Health unavailable"
-        rows == null || rows.length() == 0 -> "Run a check to see status"
+        loadErr != null && rows.isEmpty() -> "Health unavailable"
+        rows.isEmpty() -> "Run a check to see status"
         s.err > 0 -> "Action required"
         s.warn > 0 -> "System degraded"
         s.pending > 0 -> "Partial integration"
@@ -357,14 +520,14 @@ private fun HealthDonutGauge(
 
 @Composable
 private fun HealthSubsystemRow(
-    o: JSONObject,
+    row: HealthRowUi,
     stripe: Boolean,
     onViewLogs: () -> Unit,
 ) {
-    val key = o.optString("key")
-    val label = o.optString("label").ifBlank { key }
-    val detail = o.optString("detail")
-    val st = o.optString("status").trim().lowercase()
+    val key = row.key
+    val label = row.label
+    val detail = row.detail
+    val st = row.status
     val kind =
         when (st) {
             "ok" -> SirenaPillKind.Ok

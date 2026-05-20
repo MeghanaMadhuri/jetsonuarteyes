@@ -37,6 +37,7 @@ object SirenaNavCatalog {
             "actions" -> "Nina · Actions"
             "settings" -> "Nina · Settings"
             "health" -> "Nina · Health Check"
+            "motion_calibration" -> "Nina · Motion calibration"
             "find" -> "Nina · Find robot"
             "network" -> "Nina · Network"
             "products" -> "Products"

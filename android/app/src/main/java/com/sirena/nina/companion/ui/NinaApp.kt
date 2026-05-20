@@ -38,8 +38,20 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.platform.LocalContext
+import com.sirena.nina.companion.util.HealthReportExport
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sirena.nina.companion.BuildConfig
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.DiscoveryDiagnosticsUi
@@ -48,15 +60,18 @@ import com.sirena.nina.companion.ui.sirena.SirenaBreadcrumbLine
 import com.sirena.nina.companion.ui.sirena.SirenaCard
 import com.sirena.nina.companion.ui.sirena.SirenaCardKind
 import com.sirena.nina.companion.ui.sirena.SirenaColors
+import com.sirena.nina.companion.ui.sirena.SirenaConfirmDialog
 import com.sirena.nina.companion.ui.sirena.SirenaActionsScreen
 import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactHeight
 import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactSmallestWidthDp
 import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactWidth
+import com.sirena.nina.companion.ui.sirena.SirenaDaemonConnectButton
 import com.sirena.nina.companion.ui.sirena.SirenaDriveScreen
 import com.sirena.nina.companion.ui.sirena.SirenaHealthScreen
 import com.sirena.nina.companion.ui.sirena.NavEntry
 import com.sirena.nina.companion.ui.sirena.SirenaHomeScreen
 import com.sirena.nina.companion.ui.sirena.SirenaMapScreen
+import com.sirena.nina.companion.ui.sirena.SirenaMotionCalibrationScreen
 import com.sirena.nina.companion.ui.sirena.SirenaMutedText
 import com.sirena.nina.companion.ui.sirena.SirenaNavCatalog
 import com.sirena.nina.companion.ui.sirena.SirenaNetworkSettingsScrollContent
@@ -105,10 +120,12 @@ fun NinaApp(
     var clockText by remember {
         mutableStateOf(LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")))
     }
-    var batteryRowOk by remember { mutableStateOf(false) }
+    var batteryFooterOk by remember { mutableStateOf(false) }
+    var batteryFooterWarn by remember { mutableStateOf(false) }
 
     val ready = state as? CompanionUiState.Ready
     val hostLabel = resolveRobotDisplayName(ready, discovered)
+    val sidebarVersionLabel = remember { "v${BuildConfig.VERSION_NAME}" }
 
     LaunchedEffect(Unit) {
         vm.refreshStatus()
@@ -133,10 +150,13 @@ fun NinaApp(
     LaunchedEffect(ready?.url, jetsonLink.isOnline) {
         while (isActive) {
             if (ready != null && jetsonLink.isOnline) {
-                val h = vm.fetchDaemonHealth()
-                batteryRowOk = healthBatteryOk(h)
+                val h = vm.fetchRobotHealth()
+                val batt = healthBatteryFooter(h)
+                batteryFooterOk = batt.first
+                batteryFooterWarn = batt.second
             } else {
-                batteryRowOk = false
+                batteryFooterOk = false
+                batteryFooterWarn = false
             }
             delay(5000L)
         }
@@ -165,6 +185,23 @@ fun NinaApp(
                 maxHeight < SirenaBreakpointCompactHeight
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
         val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+        var pendingHealthExportJson by remember { mutableStateOf<String?>(null) }
+        val healthDownloadLauncher =
+            rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.CreateDocument("application/json"),
+            ) { uri ->
+                val json = pendingHealthExportJson ?: return@rememberLauncherForActivityResult
+                if (uri != null) {
+                    try {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(json.toByteArray(Charsets.UTF_8))
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                pendingHealthExportJson = null
+            }
 
         fun applyNavSelection(key: String) {
             if (key == "products") {
@@ -181,6 +218,7 @@ fun NinaApp(
                     modifier = Modifier.fillMaxWidth(),
                     title = SirenaNavCatalog.headerTitle(selectedNav),
                     clockText = clockText,
+                    vm = vm,
                     connectedLabel = hostLabel,
                     jetsonOnline = jetsonLink.isOnline,
                     showProductHubBack = onBackToProductHub != null,
@@ -192,6 +230,29 @@ fun NinaApp(
                         } else {
                             null
                         },
+                    onExportHealthShare = {
+                        scope.launch {
+                            try {
+                                HealthReportExport.share(context, vm)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    },
+                    onExportHealthDownload = {
+                        scope.launch {
+                            try {
+                                val json = HealthReportExport.buildReportJson(vm)
+                                pendingHealthExportJson = json
+                                healthDownloadLauncher.launch(HealthReportExport.defaultFilename())
+                            } catch (_: Exception) {
+                            }
+                        }
+                    },
+                    onOpenWifiSettings = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    },
                     compact = shellCompact,
                 )
                 Row(
@@ -207,7 +268,7 @@ fun NinaApp(
                             selectedKey = selectedNav,
                             compact = false,
                             onSelect = { applyNavSelection(it) },
-                            versionLabel = "v1.0.0",
+                            versionLabel = sidebarVersionLabel,
                             hostLabel = hostLabel,
                         )
                     }
@@ -276,7 +337,15 @@ fun NinaApp(
                             else -> selectedNav = key
                         }
                     }
-                    when (selectedNav) {
+                    AnimatedContent(
+                        targetState = selectedNav,
+                        modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(140))
+                        },
+                        label = "mainNav",
+                    ) { nav ->
+                    when (nav) {
                         "find" ->
                             DiscoveryTab(
                                 vm = vm,
@@ -297,6 +366,12 @@ fun NinaApp(
                                 caps = robotCaps,
                                 daemonUrl = ready?.url,
                                 shellCompact = shellCompact,
+                                onOpenMotionCalibration = { selectedNav = "motion_calibration" },
+                            )
+                        "motion_calibration" ->
+                            SirenaMotionCalibrationScreen(
+                                vm = vm,
+                                onBack = { selectedNav = "drive" },
                             )
                         "vision" ->
                             SirenaVisionScreen(
@@ -309,6 +384,7 @@ fun NinaApp(
                             SirenaPerceptionScreen(
                                 vm = vm,
                                 daemonUrl = ready?.url,
+                                caps = robotCaps,
                                 shellCompact = shellCompact,
                             )
                         "map" ->
@@ -320,11 +396,9 @@ fun NinaApp(
                             )
                         "home" ->
                             SirenaHomeScreen(
+                                vm = vm,
                                 state = state,
                                 jetsonOnline = jetsonLink.isOnline,
-                                robotDisplayName = resolveRobotDisplayName(ready, discovered),
-                                systemId = robotHomeSystemId(ready),
-                                ipv4 = robotHomePublicSubtitle(ready),
                                 onNavigate = navigateQuick,
                                 shellCompact = shellCompact,
                             )
@@ -351,7 +425,8 @@ fun NinaApp(
                                 onBackToProductHub = onBackToProductHub,
                             )
                         "health" -> SirenaHealthScreen(vm = vm, shellCompact = shellCompact)
-                        else -> SirenaPlaceholderScreen(selectedNav, selectedNav)
+                        else -> SirenaPlaceholderScreen(nav, nav)
+                    }
                     }
                     }
                 }
@@ -359,7 +434,8 @@ fun NinaApp(
                     modifier = Modifier.fillMaxWidth(),
                     busOk = jetsonLink.isOnline,
                     wifiOk = jetsonLink.isOnline,
-                    batteryOk = batteryRowOk,
+                    batteryOk = batteryFooterOk,
+                    batteryWarn = batteryFooterWarn,
                     voiceOk = jetsonLink.isOnline,
                     rightCaption =
                         if (jetsonLink.isOnline) {
@@ -387,7 +463,7 @@ fun NinaApp(
                                 scope.launch { drawerState.close() }
                                 applyNavSelection(key)
                             },
-                            versionLabel = "v1.0.0",
+                            versionLabel = sidebarVersionLabel,
                             hostLabel = hostLabel,
                         )
                     }
@@ -440,16 +516,20 @@ private fun discoveredRobotTitle(d: com.sirena.nina.companion.DiscoveredDaemonUi
     return Uri.parse(d.baseUrl).host?.takeIf { it.isNotEmpty() } ?: "Robot"
 }
 
-private fun healthBatteryOk(h: JSONObject?): Boolean {
-    val rows = h?.optJSONArray("rows") ?: return false
+/** Footer battery dot: green = ok, amber = warn (low pack), red = missing/error. */
+private fun healthBatteryFooter(h: JSONObject?): Pair<Boolean, Boolean> {
+    val rows = h?.optJSONArray("rows") ?: return false to false
     for (i in 0 until rows.length()) {
         val o = rows.optJSONObject(i) ?: continue
         if (o.optString("key") == "battery") {
-            val st = o.optString("state").lowercase()
-            return st == "ok" || st == "ready"
+            return when (o.optString("status").trim().lowercase()) {
+                "ok" -> true to false
+                "warn" -> false to true
+                else -> false to false
+            }
         }
     }
-    return false
+    return false to false
 }
 
 @Composable
@@ -461,7 +541,10 @@ private fun DiscoveryTab(
     shellCompact: Boolean,
 ) {
     val scope = rememberCoroutineScope()
+    val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(initialValue = "")
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
     var findConnectError by remember { mutableStateOf<String?>(null) }
+    var confirmDisconnect by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxSize()
@@ -542,17 +625,38 @@ private fun DiscoveryTab(
 
         @Composable
         fun ConnectedCard(modifier: Modifier = Modifier) {
+            val hasSaved = savedUrl.isNotBlank()
             SirenaCard(modifier = modifier) {
-                Text("Currently connected", fontWeight = FontWeight.SemiBold, color = SirenaColors.text)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Currently connected", fontWeight = FontWeight.SemiBold, color = SirenaColors.text)
+                    if (hasSaved && jetsonLink.isOnline) {
+                        SirenaSecondaryButton(
+                            text = "Disconnect",
+                            onClick = { confirmDisconnect = true },
+                        )
+                    }
+                }
                 Spacer(Modifier.height(if (shellCompact) 4.dp else 6.dp))
-                Text(
-                    connectedTitle,
-                    fontWeight = FontWeight.Bold,
-                    color = SirenaColors.text,
-                )
-                SirenaMutedText("Configured name: ${active?.displayName ?: "—"}")
-                SirenaMutedText("Reported host: ${active?.hostname ?: "—"}")
-                SirenaMutedText("System ID: ${active?.systemId ?: "—"} · Role: ${active?.wifiRole ?: "—"}")
+                if (hasSaved && jetsonLink.isOnline) {
+                    Text(
+                        connectedTitle,
+                        fontWeight = FontWeight.Bold,
+                        color = SirenaColors.pillOkFg,
+                    )
+                } else if (hasSaved) {
+                    SirenaMutedText("Saved robot — tap Connect on a nearby system or wait for link.")
+                } else {
+                    SirenaMutedText("No robot selected. Scan LAN and tap Connect.")
+                }
+                if (hasSaved) {
+                    SirenaMutedText("Configured name: ${active?.displayName ?: "—"}")
+                    SirenaMutedText("Reported host: ${active?.hostname ?: "—"}")
+                    SirenaMutedText("System ID: ${active?.systemId ?: "—"} · Role: ${active?.wifiRole ?: "—"}")
+                }
             }
         }
 
@@ -658,15 +762,13 @@ private fun DiscoveryTab(
                                                 }
                                             }
                                         }
-                                        SirenaPrimaryButton(
-                                            text = "Connect",
-                                            onClick = {
-                                                scope.launch {
-                                                    findConnectError =
-                                                        vm.connectDiscoveredAndRefresh(d.baseUrl)
-                                                }
-                                            },
+                                        SirenaDaemonConnectButton(
+                                            vm = vm,
+                                            daemonBaseUrl = d.baseUrl,
+                                            savedUrl = savedUrl,
+                                            linkOnline = jetsonLink.isOnline,
                                             modifier = Modifier.height(40.dp),
+                                            onConnectError = { findConnectError = it },
                                         )
                                     }
                                 }
@@ -676,6 +778,22 @@ private fun DiscoveryTab(
                 }
             }
         }
+    }
+
+    if (confirmDisconnect) {
+        SirenaConfirmDialog(
+            onDismiss = { confirmDisconnect = false },
+            message = "Disconnect from the saved robot on this tablet?",
+            confirmText = "Disconnect",
+            dangerous = true,
+            onConfirm = {
+                confirmDisconnect = false
+                scope.launch {
+                    vm.disconnectRobot()
+                    findConnectError = null
+                }
+            },
+        )
     }
 }
 

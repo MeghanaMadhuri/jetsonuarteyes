@@ -16,11 +16,13 @@ object SirenaColors {
     val cloud = Color(0xFFF5F5F7)
     /**
      * Qt `QFrame#sidebar` / [sirena_ui.styles] `BRAND_CHARCOAL` — nav rail fallback (opaque).
-     * Prefer [navRailGlassBase] + gradient overlay for the live shell.
+     * Prefer [navRailSolid] for the live shell sidebar.
      */
     val navRail = Color(0xFF2C2C2E)
-    /** Translucent charcoal so cloud peeks through — glass-morphic base layer. */
-    val navRailGlassBase = Color(0xD92C2C2E)
+    /** Solid dark rail (no gradient / translucency). */
+    val navRailSolid = Color(0xFF1A1A1C)
+    /** @deprecated Use [navRailSolid] — kept for callers not yet migrated. */
+    val navRailGlassBase = navRailSolid
     /** Qt `BRAND_CHARCOAL_ACTIVE` / checked nav row. */
     val navRailRowActive = Color(0xFF3A3A3C)
     /** Primary labels on dark nav (Qt sidebar text). */
@@ -82,7 +84,7 @@ object SirenaDimens {
     val quickTileMinHeight = 80.dp
     val quickTileHPad = 12.dp
     val quickTileVPad = 8.dp
-    val headerBarHeight = 44.dp
+    val headerBarHeight = 50.dp
     val dpadMin = 60.dp
     val primaryButtonRadius = 14.dp
     val secondaryButtonRadius = 12.dp

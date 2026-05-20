@@ -104,6 +104,24 @@ class LinkClient {
         get("$baseUrl/v1/robot/health")
     }
 
+    suspend fun systemVolumeGet(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/system/volume")
+        }
+
+    suspend fun systemVolumeSet(
+        baseUrl: String,
+        bearer: String?,
+        volumePct: Int,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/system/volume",
+                bearer,
+                JSONObject().put("volume_pct", volumePct.coerceIn(0, 100)).toString(),
+            )
+        }
+
     /** Save current SLAM grid as PGM under ``nina/data/maps/`` on the Jetson. */
     suspend fun slamSave(
         baseUrl: String,
@@ -150,6 +168,52 @@ class LinkClient {
         post("$baseUrl/v1/robot/drive", bearer, json.toString())
     }
 
+    /** Kiosk D-pad press: ``DriveController.drive`` until [robotDriveHoldStop]. */
+    suspend fun robotDriveHold(
+        baseUrl: String,
+        bearer: String?,
+        direction: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/hold",
+                bearer,
+                JSONObject().put("direction", direction).toString(),
+            )
+        }
+
+    suspend fun robotDriveHoldStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/robot/drive/hold/stop", bearer, "{}")
+        }
+
+    /** Kiosk Turn left/right (``DriveController.turn_90``). */
+    suspend fun robotDriveTurn(
+        baseUrl: String,
+        bearer: String?,
+        which: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/turn",
+                bearer,
+                JSONObject().put("which", which).toString(),
+            )
+        }
+
+    suspend fun robotDriveReverse(
+        baseUrl: String,
+        bearer: String?,
+        on: Boolean,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/reverse",
+                bearer,
+                JSONObject().put("on", on).toString(),
+            )
+        }
+
     /** Same stack as kiosk ``DriveController.set_brake`` (servo brake pose on lean axes). */
     suspend fun robotDriveBrake(baseUrl: String, bearer: String?, on: Boolean): JSONObject =
         withContext(Dispatchers.IO) {
@@ -195,6 +259,70 @@ class LinkClient {
         if (right != null) json.put("right", right)
         post("$baseUrl/v1/robot/drive/invert", bearer, json.toString())
     }
+
+    suspend fun robotDriveStraight(
+        baseUrl: String,
+        bearer: String?,
+        backward: Boolean,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/straight",
+                bearer,
+                JSONObject().put("backward", backward).toString(),
+            )
+        }
+
+    suspend fun robotDriveStraightStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/robot/drive/straight/stop", bearer, "{}")
+        }
+
+    suspend fun robotDriveCalibrationGet(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/robot/drive/calibration")
+        }
+
+    suspend fun robotDriveCalibrationPreview(
+        baseUrl: String,
+        bearer: String?,
+        left: Int,
+        right: Int,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/drive/calibration/preview",
+                bearer,
+                JSONObject().put("left", left).put("right", right).toString(),
+            )
+        }
+
+    suspend fun robotDriveCalibrationNeutral(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/robot/drive/calibration/neutral", bearer, "{}")
+        }
+
+    suspend fun robotDriveCalibrationSave(
+        baseUrl: String,
+        bearer: String?,
+        body: JSONObject,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/robot/drive/calibration/save", bearer, body.toString())
+        }
+
+    suspend fun systemDisplayName(
+        baseUrl: String,
+        bearer: String?,
+        displayName: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/system/display-name",
+                bearer,
+                JSONObject().put("display_name", displayName).toString(),
+            )
+        }
 
     /** Manifest-backed action list from the Jetson (`nina/actions/manifest.json`). */
     suspend fun listActions(baseUrl: String): JSONObject =
@@ -333,13 +461,38 @@ class LinkClient {
         face: Boolean?,
         objects: Boolean?,
         objectConfidence: Double?,
+        resolution: String? = null,
     ): JSONObject =
         withContext(Dispatchers.IO) {
             val o = JSONObject()
             if (face != null) o.put("face", face)
             if (objects != null) o.put("objects", objects)
             if (objectConfidence != null) o.put("object_confidence", objectConfidence)
+            if (resolution != null) o.put("resolution", resolution)
             post("$baseUrl/v1/vision/options", bearer, o.toString())
+        }
+
+    suspend fun visionArucoStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/aruco/status")
+        }
+
+    suspend fun visionArucoStart(
+        baseUrl: String,
+        bearer: String?,
+        markerId: Int,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/vision/aruco/start",
+                bearer,
+                JSONObject().put("marker_id", markerId).toString(),
+            )
+        }
+
+    suspend fun visionArucoStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/vision/aruco/stop", bearer, "{}")
         }
 
     suspend fun visionOpen(baseUrl: String, bearer: String?): JSONObject =

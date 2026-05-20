@@ -20,6 +20,11 @@ _status: Dict[str, Any] = {
     "message": "idle",
     "code": "idle",
 }
+_last_min_mm: Dict[str, Optional[int]] = {
+    "forward_min_mm": None,
+    "left_min_mm": None,
+    "right_min_mm": None,
+}
 
 
 def _depth_status_code(message: str, is_open: bool) -> str:
@@ -118,6 +123,9 @@ def status_payload() -> Dict[str, Any]:
                 )
             ),
             "refcount": _refcount,
+            "forward_min_mm": _last_min_mm.get("forward_min_mm"),
+            "left_min_mm": _last_min_mm.get("left_min_mm"),
+            "right_min_mm": _last_min_mm.get("right_min_mm"),
         }
 
 
@@ -141,6 +149,16 @@ def iter_depth_mjpeg(
     while not should_stop():
         t0 = time.monotonic()
         try:
+            depth_frame = cam.read()
+            if depth_frame is not None:
+                with _lock:
+                    _last_min_mm["forward_min_mm"] = getattr(
+                        depth_frame, "forward_min_mm", None
+                    )
+                    _last_min_mm["left_min_mm"] = getattr(depth_frame, "left_min_mm", None)
+                    _last_min_mm["right_min_mm"] = getattr(
+                        depth_frame, "right_min_mm", None
+                    )
             tup = cam.latest_color_image()
             if tup is None:
                 time.sleep(0.03)

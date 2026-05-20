@@ -18,8 +18,10 @@ class Prefs(private val context: Context) {
         val BEARER = stringPreferencesKey("bearer_token")
     }
 
+    /** Empty when the user has not chosen a robot (or after [clearBaseUrl]). */
     val baseUrl: Flow<String> = context.dataStore.data.map { prefs ->
-        normalizeBaseUrl(prefs[Keys.BASE_URL] ?: DEFAULT_BASE_URL)
+        val raw = prefs[Keys.BASE_URL] ?: ""
+        if (raw.isBlank()) "" else normalizeBaseUrl(raw)
     }
 
     val bearerToken: Flow<String?> = context.dataStore.data.map { prefs ->
@@ -28,7 +30,12 @@ class Prefs(private val context: Context) {
 
     suspend fun setBaseUrl(url: String) {
         val normalized = normalizeBaseUrl(url)
+        require(normalized.isNotBlank()) { "URL required" }
         context.dataStore.edit { it[Keys.BASE_URL] = normalized }
+    }
+
+    suspend fun clearBaseUrl() {
+        context.dataStore.edit { it[Keys.BASE_URL] = "" }
     }
 
     suspend fun setBearerToken(token: String?) {
@@ -47,7 +54,7 @@ class Prefs(private val context: Context) {
          */
         fun normalizeBaseUrl(raw: String): String {
             var s = raw.trim().trimEnd('/')
-            if (s.isEmpty()) return DEFAULT_BASE_URL
+            if (s.isEmpty()) return ""
             s = s.trimStart('/')
             if (!s.startsWith("http://", ignoreCase = true) &&
                 !s.startsWith("https://", ignoreCase = true)

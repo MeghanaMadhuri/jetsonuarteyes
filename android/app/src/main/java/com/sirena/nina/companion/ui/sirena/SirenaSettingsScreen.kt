@@ -37,7 +37,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -250,6 +252,7 @@ fun SirenaSettingsScreen(
                         when (selected) {
                             "general" ->
                                 SettingsGeneralPane(
+                                    vm = vm,
                                     ready = ready,
                                     gatewayHint = gatewayHint,
                                     manifestActions = manifestActions.map { it.name }.distinct().sorted(),
@@ -278,12 +281,14 @@ fun SirenaSettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsGeneralPane(
+    vm: CompanionViewModel,
     ready: CompanionUiState.Ready?,
     gatewayHint: String?,
     manifestActions: List<String>,
     onBackToProductHub: (() -> Unit)?,
     onNavigateToHealth: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     var robotName by rememberSaveable { mutableStateOf(ready?.status?.displayName?.trim().orEmpty().ifBlank { "Nina" }) }
     var tzIndex by rememberSaveable { mutableIntStateOf(0) }
     var langIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -297,6 +302,18 @@ private fun SettingsGeneralPane(
     var greet by rememberSaveable { mutableStateOf(true) }
     var diag by rememberSaveable { mutableStateOf(false) }
     var saveHint by remember { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    var confirmResetAll by remember { mutableStateOf(false) }
+
+    fun resetGeneralFields(clearHint: Boolean) {
+        robotName = ready?.status?.displayName?.trim().orEmpty().ifBlank { "Nina" }
+        tzIndex = 0
+        langIndex = 0
+        bootIndex = 0
+        greet = true
+        diag = false
+        if (clearHint) saveHint = null
+    }
 
     SirenaBreadcrumbLine(listOf("Nina", "Settings", "General"))
     Spacer(Modifier.height(6.dp))
@@ -378,38 +395,28 @@ private fun SettingsGeneralPane(
             SirenaSectionLabel("Danger zone")
             SirenaSecondaryButton(
                 text = "Reset all",
-                onClick = {
-                    robotName = ready?.status?.displayName?.trim().orEmpty().ifBlank { "Nina" }
-                    tzIndex = 0
-                    langIndex = 0
-                    bootIndex = 0
-                    greet = true
-                    diag = false
-                    saveHint = "Local fields reset (same as desktop discard)."
-                },
+                onClick = { confirmResetAll = true },
             )
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             SirenaSecondaryButton(
                 text = "Discard",
-                onClick = {
-                    robotName = ready?.status?.displayName?.trim().orEmpty().ifBlank { "Nina" }
-                    tzIndex = 0
-                    langIndex = 0
-                    bootIndex = 0
-                    greet = true
-                    diag = false
-                    saveHint = null
-                },
+                onClick = { confirmDiscard = true },
             )
             Spacer(Modifier.width(8.dp))
             SirenaPrimaryButton(
                 text = "Save changes",
                 onClick = {
-                    saveHint =
-                        "Robot name, time zone, language and boot action saved locally on the tablet.\n\n" +
-                            "Persistent robot settings stay on the Jetson Sirena UI — same message as desktop for now."
+                    scope.launch {
+                        val dn = robotName.trim()
+                        if (dn.isNotEmpty()) {
+                            vm.postSystemDisplayName(dn)
+                        }
+                        saveHint =
+                            "Robot name, time zone, language and boot action saved locally on the tablet.\n\n" +
+                                "Display name is also sent to the Jetson when the link daemon is online."
+                    }
                 },
             )
         }
@@ -433,6 +440,32 @@ private fun SettingsGeneralPane(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+
+    if (confirmDiscard) {
+        SirenaConfirmDialog(
+            onDismiss = { confirmDiscard = false },
+            message = "Discard unsaved changes to robot name, time zone, language, and boot options?",
+            confirmText = "Discard",
+            dangerous = true,
+            onConfirm = {
+                confirmDiscard = false
+                resetGeneralFields(clearHint = true)
+            },
+        )
+    }
+    if (confirmResetAll) {
+        SirenaConfirmDialog(
+            onDismiss = { confirmResetAll = false },
+            message = "Reset all general settings to their defaults on this tablet?",
+            confirmText = "Reset all",
+            dangerous = true,
+            onConfirm = {
+                confirmResetAll = false
+                resetGeneralFields(clearHint = false)
+                saveHint = "Local fields reset (same as desktop discard)."
+            },
+        )
     }
 }
 

@@ -88,6 +88,12 @@ class VisionMjpegHub(QObject):
         if img.isNull():
             return
         try:
+            from sirena_ui.android_gateway.tablet_aruco import ingest_frame_if_active
+
+            ingest_frame_if_active(img)
+        except Exception:
+            pass
+        try:
             from PyQt5.QtCore import QBuffer, QByteArray, QIODevice
 
             ba = QByteArray()

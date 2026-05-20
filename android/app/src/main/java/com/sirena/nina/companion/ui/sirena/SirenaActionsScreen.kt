@@ -145,6 +145,7 @@ fun SirenaActionsScreen(
     var audioErr by remember { mutableStateOf<String?>(null) }
     var audioLast by remember { mutableStateOf("—") }
     var pendingDelete by remember { mutableStateOf<String?>(null) }
+    var pendingRemoveAudio by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(initialSubtab, prefillAudioAction) {
         subtab =
@@ -247,7 +248,7 @@ fun SirenaActionsScreen(
                         ) {
                             items(actions, key = { it.name }) { row: ActionRowUi ->
                                 val cardPad = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                                SirenaCard(contentPadding = cardPad, liquidGlass = true) {
+                                SirenaCard(contentPadding = cardPad) {
                                     Row(
                                         Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -587,18 +588,11 @@ fun SirenaActionsScreen(
                         SirenaSecondaryButton(
                             text = "Remove",
                             onClick = {
-                                scope.launch {
-                                    audioErr = null
-                                    val act = selectedActionName.trim()
-                                    if (act.isEmpty()) {
-                                        audioErr = "Select an action."
-                                        return@launch
-                                    }
-                                    audioErr = vm.postActionAudioClear(act)
-                                    if (audioErr == null) {
-                                        audioLast = "Audio removed from this action."
-                                        vm.refreshManifestActions()
-                                    }
+                                val act = selectedActionName.trim()
+                                if (act.isEmpty()) {
+                                    audioErr = "Select an action."
+                                } else {
+                                    pendingRemoveAudio = act
                                 }
                             },
                             enabled = selectedActionName.isNotBlank(),
@@ -614,40 +608,46 @@ fun SirenaActionsScreen(
 
     Box(Modifier.fillMaxSize()) {
         pendingDelete?.let { name ->
-            AlertDialog(
-                onDismissRequest = { pendingDelete = null },
-                title = {
-                    Text("Delete \"$name\"?", fontWeight = FontWeight.SemiBold)
-                },
-                text = {
-                    Text(
-                        "Remove this motion from the manifest on the robot. Recording files are not deleted automatically.",
-                        color = SirenaColors.muted,
-                        fontSize = SirenaType.muted,
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                if (name != protectedNeutral) {
-                                    vm.deleteManifestAction(
-                                        name,
-                                        deleteRecording = true,
-                                        deleteAudio = false,
-                                    )
-                                    vm.refreshManifestActions()
-                                }
-                                pendingDelete = null
-                            }
-                        },
-                    ) {
-                        Text("Delete", color = SirenaColors.danger, fontWeight = FontWeight.SemiBold)
+            SirenaConfirmDialog(
+                onDismiss = { pendingDelete = null },
+                message =
+                    "Delete \"$name\" from the manifest on the robot? " +
+                        "Recording files are not deleted automatically.",
+                confirmText = "Delete",
+                dangerous = true,
+                onConfirm = {
+                    val action = name
+                    pendingDelete = null
+                    scope.launch {
+                        if (action != protectedNeutral) {
+                            vm.deleteManifestAction(
+                                action,
+                                deleteRecording = true,
+                                deleteAudio = false,
+                            )
+                            vm.refreshManifestActions()
+                        }
                     }
                 },
-                dismissButton = {
-                    TextButton(onClick = { pendingDelete = null }) {
-                        Text("Cancel")
+            )
+        }
+
+        pendingRemoveAudio?.let { act ->
+            SirenaConfirmDialog(
+                onDismiss = { pendingRemoveAudio = null },
+                message = "Remove audio from action \"$act\" on the robot?",
+                confirmText = "Remove",
+                dangerous = true,
+                onConfirm = {
+                    val action = act
+                    pendingRemoveAudio = null
+                    scope.launch {
+                        audioErr = null
+                        audioErr = vm.postActionAudioClear(action)
+                        if (audioErr == null) {
+                            audioLast = "Audio removed from this action."
+                            vm.refreshManifestActions()
+                        }
                     }
                 },
             )

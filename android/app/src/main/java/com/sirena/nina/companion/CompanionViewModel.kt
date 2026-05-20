@@ -342,6 +342,33 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      * Persists [url] and loads status without switching to full-screen [CompanionUiState.Error]
      * (for discovery sheet / product hub). Returns null on success, or a short error message.
      */
+    /** Clear saved robot URL so another daemon can be selected from Find robot / product hub. */
+    suspend fun disconnectRobot() {
+        vmD("disconnectRobot")
+        try {
+            visionStop()
+        } catch (_: Exception) {
+        }
+        prefs.clearBaseUrl()
+        _jetsonLink.value = JetsonLinkState(false, null)
+        _robotCapabilities.value = null
+        _manifestActions.value = emptyList()
+        _state.value = CompanionUiState.Ready(url = "", status = null, message = null)
+    }
+
+    fun isConnectedToDaemon(baseUrl: String): Boolean {
+        val saved =
+            when (val s = _state.value) {
+                is CompanionUiState.Ready -> s.url.trim()
+                else -> ""
+            }
+        if (saved.isBlank()) return false
+        return Prefs.normalizeBaseUrl(saved).equals(
+            Prefs.normalizeBaseUrl(baseUrl),
+            ignoreCase = true,
+        )
+    }
+
     suspend fun connectDiscoveredAndRefresh(url: String): String? {
         return try {
             val norm = Prefs.normalizeBaseUrl(url)
@@ -352,6 +379,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
             _gatewayHint.value = buildDiscoveryHint(myIp, gw)
             _state.value = CompanionUiState.Ready(finalUrl, statusUi, null)
+            _jetsonLink.value = JetsonLinkState(true, null)
             try {
                 _robotCapabilities.value = client.capabilities(finalUrl)
             } catch (_: Exception) {
@@ -579,6 +607,34 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         return client.robotDriveBrake(url, bearer, on)
     }
 
+    suspend fun robotDriveHold(direction: String): JSONObject {
+        NinaLog.tap("Drive", "hold", direction)
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveHold(url, bearer, direction)
+    }
+
+    suspend fun robotDriveHoldStop(): JSONObject {
+        NinaLog.tap("Drive", "hold", "stop")
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveHoldStop(url, bearer)
+    }
+
+    suspend fun robotDriveTurn(which: String): JSONObject {
+        NinaLog.tap("Drive", "turn", which)
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveTurn(url, bearer, which)
+    }
+
+    suspend fun robotDriveReverse(on: Boolean): JSONObject {
+        NinaLog.tap("Drive", "reverse", if (on) "on" else "off")
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveReverse(url, bearer, on)
+    }
+
     suspend fun fetchRobotDriveStatus(): JSONObject? =
         try {
             val url = prefs.baseUrl.first()
@@ -598,6 +654,87 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
     }
+
+    suspend fun robotDriveStraight(backward: Boolean): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        NinaLog.tap("Drive", "straight", if (backward) "back" else "front")
+        return client.robotDriveStraight(url, bearer, backward)
+    }
+
+    suspend fun robotDriveStraightStop(): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.robotDriveStraightStop(url, bearer)
+    }
+
+    suspend fun fetchDriveCalibration(): JSONObject? =
+        try {
+            client.robotDriveCalibrationGet(prefs.baseUrl.first())
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun previewDriveCalibration(left: Int, right: Int): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.robotDriveCalibrationPreview(url, bearer, left, right)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun neutralDriveCalibration(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.robotDriveCalibrationNeutral(url, bearer)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun saveDriveCalibration(body: JSONObject): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.robotDriveCalibrationSave(url, bearer, body)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postSystemDisplayName(name: String): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.systemDisplayName(url, bearer, name)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchVisionArucoStatus(): JSONObject? =
+        try {
+            client.visionArucoStatus(prefs.baseUrl.first())
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postVisionArucoStart(markerId: Int): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionArucoStart(url, bearer, markerId)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postVisionArucoStop(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionArucoStop(url, bearer)
+        } catch (_: Exception) {
+            null
+        }
 
     suspend fun robotEmergencyStop(): JSONObject {
         NinaLog.tap("Drive", "emergency_stop", "")
@@ -933,12 +1070,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         face: Boolean?,
         objects: Boolean?,
         objectConfidence: Double? = null,
+        resolution: String? = null,
     ): JSONObject? =
         try {
-            vmD("postVisionOptionsSync face=$face objects=$objects conf=$objectConfidence")
+            vmD("postVisionOptionsSync face=$face objects=$objects conf=$objectConfidence res=$resolution")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
-            client.visionOptions(url, bearer, face, objects, objectConfidence)
+            client.visionOptions(url, bearer, face, objects, objectConfidence, resolution)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1105,6 +1243,33 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             client.robotHealth(url)
         } catch (_: Exception) {
             null
+        }
+
+    suspend fun fetchSystemVolumePct(): Int? =
+        try {
+            val url = prefs.baseUrl.first()
+            if (url.isBlank()) {
+                null
+            } else {
+                val j = client.systemVolumeGet(url)
+                if (!j.optBoolean("available", false)) {
+                    null
+                } else {
+                    j.optInt("volume_pct").takeIf { !j.isNull("volume_pct") }
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun setSystemVolumePct(pct: Int): Boolean =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            val j = client.systemVolumeSet(url, bearer, pct)
+            j.optBoolean("ok", false)
+        } catch (_: Exception) {
+            false
         }
 
     suspend fun saveSlamMapPgm(filename: String): JSONObject? =
