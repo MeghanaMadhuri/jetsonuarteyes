@@ -80,6 +80,7 @@ class NinaService:
         self._slam: Optional[SlamWorker] = None
         self._autonomy: Optional[AutonomyController] = None
         self._ir_obstacle_monitor: Optional[IrObstacleStopMonitor] = None
+        self._ir_obstacle_start_detail: Optional[str] = None
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
@@ -156,7 +157,9 @@ class NinaService:
             )
             mon.start()
             self._ir_obstacle_monitor = mon
+            self._ir_obstacle_start_detail = None
         except Exception as exc:
+            self._ir_obstacle_start_detail = str(exc)
             log.warning("IR obstacle stop monitor did not start: %s", exc)
 
     def ir_obstacle_status(self) -> Dict[str, Any]:
@@ -173,6 +176,7 @@ class NinaService:
             }
         mon = self._ir_obstacle_monitor
         if mon is None:
+            detail = self._ir_obstacle_start_detail or "IR obstacle monitor not started"
             return {
                 "enabled": True,
                 "running": False,
@@ -180,7 +184,7 @@ class NinaService:
                 "blocked": False,
                 "distance_mm": None,
                 "threshold_mm": int(self.settings.ir_obstacle_stop.threshold_mm),
-                "detail": "IR obstacle monitor not started",
+                "detail": detail,
             }
         try:
             st = mon.status()

@@ -38,13 +38,41 @@ DEFAULT_ADDR = int(os.environ.get("NINA_IR_I2C_ADDR", "0x40"), 0)
 DEFAULT_POSITION = os.environ.get("NINA_IR_POSITION", "front_cliff")
 
 
-def is_available(bus_num: Optional[int] = None) -> Tuple[bool, str]:
+def probe_gp2y0e02b_on_bus(
+    bus_num: int,
+    address: int = DEFAULT_ADDR,
+) -> bool:
+    """Return True if the shift register reads on ``/dev/i2c-<bus_num>`` @ ``address``."""
+    dev = f"/dev/i2c-{int(bus_num)}"
+    if not os.path.exists(dev):
+        return False
+    addr = int(address) & 0x7F
+    try:
+        import smbus2  # type: ignore
+
+        bus = smbus2.SMBus(int(bus_num))
+        try:
+            bus.read_byte_data(addr, 0x35)
+            return True
+        finally:
+            bus.close()
+    except Exception:
+        return False
+
+
+def is_available(
+    bus_num: Optional[int] = None,
+    address: Optional[int] = None,
+    *,
+    probe: bool = True,
+) -> Tuple[bool, str]:
     if os.environ.get("NINA_IR_DISABLE", "").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         return False, "disabled via NINA_IR_DISABLE"
     if bus_num is None:
         bus_num = DEFAULT_BUS
+    addr = int(address if address is not None else DEFAULT_ADDR) & 0x7F
     try:
         import smbus2  # noqa: F401  type: ignore
     except Exception as exc:  # pragma: no cover
@@ -52,6 +80,8 @@ def is_available(bus_num: Optional[int] = None) -> Tuple[bool, str]:
     dev = f"/dev/i2c-{int(bus_num)}"
     if not os.path.exists(dev):
         return False, f"{dev} not present"
+    if probe and not probe_gp2y0e02b_on_bus(int(bus_num), addr):
+        return False, f"GP2Y0E02B not detected on {dev} @ 0x{addr:02X}"
     return True, ""
 
 

@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("nina.sensors.ir_obstacle_stop")
 
+# When the sensor is missing or the bus NAKs, avoid ~20 Hz WARNING spam.
+_OPEN_WARN_INTERVAL_SEC = 60.0
+_OPEN_BACKOFF_MAX_SEC = 30.0
+
 
 def obstacle_debounce_step(
     distance_mm: Optional[int],
@@ -70,9 +74,12 @@ class IrObstacleStopMonitor:
         self._last_fire_mono = -1e30
         self._last_distance_mm: Optional[int] = None
         self._last_read_mono: Optional[float] = None
+        self._open_backoff_sec = self._poll_sec
+        self._last_open_warn_mono = -1e30
 
     def start(self) -> None:
-        ok, msg = is_available(self._svc.settings.ir_obstacle_stop.i2c_bus)
+        s = self._svc.settings.ir_obstacle_stop
+        ok, msg = is_available(s.i2c_bus, s.i2c_address)
         if not ok:
             raise RuntimeError(msg)
         self._stop.clear()
@@ -133,14 +140,26 @@ class IrObstacleStopMonitor:
             "detail": detail,
         }
 
-    def _open_sensor(self) -> None:
+    def _open_sensor(self) -> float:
+        """Try to open the sensor. Returns seconds to sleep before the next poll."""
         if self._sensor_open:
-            return
+            self._open_backoff_sec = self._poll_sec
+            return self._poll_sec
         try:
             self._sensor.open()
             self._sensor_open = True
+            self._open_backoff_sec = self._poll_sec
+            return self._poll_sec
         except Exception as exc:
-            log.warning("GP2Y0E02B open failed: %s", exc)
+            now = time.monotonic()
+            if (now - self._last_open_warn_mono) >= _OPEN_WARN_INTERVAL_SEC:
+                self._last_open_warn_mono = now
+                log.warning("GP2Y0E02B open failed: %s", exc)
+            self._open_backoff_sec = min(
+                _OPEN_BACKOFF_MAX_SEC,
+                max(self._poll_sec, self._open_backoff_sec * 2.0),
+            )
+            return self._open_backoff_sec
 
     def _close_sensor(self) -> None:
         if not self._sensor_open:
@@ -159,9 +178,9 @@ class IrObstacleStopMonitor:
                 time.sleep(self._poll_sec)
                 continue
 
-            self._open_sensor()
+            sleep_sec = self._open_sensor()
             if not self._sensor_open:
-                time.sleep(self._poll_sec)
+                time.sleep(sleep_sec)
                 continue
 
             r = self._sensor.read()
