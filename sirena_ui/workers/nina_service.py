@@ -35,6 +35,7 @@ from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
 from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.ir_obstacle_stop_monitor import IrObstacleStopMonitor
+from nina.services.audio_player import AudioPlayer
 from nina.services.sensor_alert_audio import (
     maybe_speak_low_battery,
     play_obstacle_alert,
