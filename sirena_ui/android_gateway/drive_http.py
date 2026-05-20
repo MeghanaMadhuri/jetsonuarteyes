@@ -61,6 +61,17 @@ def _autonomy_blocks(service: NinaService) -> bool:
     return False
 
 
+def _drive_hardware_ready(service: NinaService) -> bool:
+    """True when hoverboard nav is up and the Drive pill would show connected."""
+    dc = service.drive
+    try:
+        if dc._nav is None:  # noqa: SLF001
+            return False
+        return bool(dc.state().get("connected"))
+    except Exception:
+        return False
+
+
 def _prime_drive_hardware(
     service: NinaService,
     *,
@@ -71,6 +82,8 @@ def _prime_drive_hardware(
     Kiosk ``DriveScreen.on_enter`` only called ``ensure_hardware()``; the bus is
     normally started from ``MainWindow``, but HTTP must not depend on that screen.
     """
+    if _drive_hardware_ready(service):
+        return {"ok": True, "ready": True}
     try:
         service.ensure_bus()
     except Exception as exc:
@@ -100,6 +113,20 @@ def _prime_drive_hardware(
         "hardware_initializing": True,
         "error": msg or "BLDC still initializing — retry in a moment",
     }
+
+
+def _prime_drive_for_manual(
+    service: NinaService,
+    *,
+    wait_timeout_sec: float = 1.2,
+) -> Dict[str, Any]:
+    """Fast path for D-pad / momentary: skip multi-second wait when already warm."""
+    if _drive_hardware_ready(service):
+        return {"ok": True, "ready": True}
+    _kick_drive_for_status_poll(service)
+    if _drive_hardware_ready(service):
+        return {"ok": True, "ready": True}
+    return _prime_drive_hardware(service, wait_timeout_sec=wait_timeout_sec)
 
 
 def _drive_not_ready_response(prime: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -139,7 +166,7 @@ def momentary_drive(
             "error": "autonomy active — disable autonomy before HTTP drive",
         }
 
-    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    prime = _prime_drive_for_manual(service, wait_timeout_sec=1.2)
     blocked = _drive_not_ready_response(prime)
     if blocked is not None:
         return blocked
@@ -202,7 +229,7 @@ def drive_hold_start(service: NinaService, *, direction: str) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before manual drive",
         }
-    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    prime = _prime_drive_for_manual(service, wait_timeout_sec=1.2)
     blocked = _drive_not_ready_response(prime)
     if blocked is not None:
         return blocked
@@ -217,7 +244,7 @@ def drive_hold_start(service: NinaService, *, direction: str) -> Dict[str, Any]:
 
 def drive_hold_stop(service: NinaService) -> Dict[str, Any]:
     """Match kiosk D-pad release: ``DriveController.stop``."""
-    service.drive.stop()
+    service.drive.stop(drain=True)
     _set_last_drive_error(None)
     return {"ok": True, "mode": "hold_stop"}
 
@@ -232,7 +259,7 @@ def drive_turn(service: NinaService, *, which: str) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before manual turns",
         }
-    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    prime = _prime_drive_for_manual(service, wait_timeout_sec=1.2)
     blocked = _drive_not_ready_response(prime)
     if blocked is not None:
         return blocked
@@ -412,8 +439,8 @@ def robot_set_brake(service: NinaService, *, on: bool) -> Dict[str, Any]:
             "ok": False,
             "error": "autonomy active — disable autonomy before releasing brake",
         }
-    prime = _prime_drive_hardware(service, wait_timeout_sec=10.0)
     if not on:
+        prime = _prime_drive_for_manual(service, wait_timeout_sec=1.2)
         blocked = _drive_not_ready_response(prime)
         if blocked is not None:
             return blocked
@@ -424,20 +451,8 @@ def robot_set_brake(service: NinaService, *, on: bool) -> Dict[str, Any]:
 
 
 def emergency_stop(service: NinaService) -> Dict[str, Any]:
-    _prime_drive_hardware(service, wait_timeout_sec=10.0)
+    """Hard stop immediately — same as kiosk Esc (no BLDC prime wait)."""
     dc = service.drive
-
-    def run() -> None:
-        try:
-            if dc._nav is None:  # noqa: SLF001
-                dc._do_init()  # noqa: SLF001
-            nav = dc._nav  # noqa: SLF001
-            if nav is None:
-                return
-            nav.emergency_stop()
-            _set_last_drive_error(None)
-        except Exception:
-            log.exception("emergency_stop")
-
-    dc._enqueue(run)  # type: ignore[attr-defined]
+    dc.emergency_stop()
+    _set_last_drive_error(None)
     return {"ok": True, "queued": True}

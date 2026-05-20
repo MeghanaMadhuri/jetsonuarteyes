@@ -45,8 +45,9 @@ import androidx.compose.ui.unit.sp
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.util.NinaLog
-import kotlin.math.sqrt
+import java.io.IOException
 import java.net.SocketTimeoutException
+import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -83,8 +84,10 @@ private const val STRAIGHT_READY_POLL_MS = 50L
 private const val STRAIGHT_READY_MAX_POLLS = 30
 /** Pulse bench can run up to ~120s; never leave the UI locked longer. */
 private const val STRAIGHT_BENCH_MAX_MS = 130_000L
-/** Slower idle poll so status GETs do not queue ahead of hold/turn POSTs on the Jetson. */
-private const val DRIVE_STATUS_POLL_MS = 1200L
+/** Idle poll — slow enough to stay behind drive POSTs on the Jetson command plane. */
+private const val DRIVE_STATUS_POLL_MS = 2000L
+/** While the operator is holding the D-pad, pause polls so stop/hold are not queued behind GETs. */
+private const val DRIVE_STATUS_POLL_WHILE_DRIVE_MS = 4000L
 private const val DRIVE_STATUS_FAIL_DISCONNECT = 3
 
 private fun driveHttpError(e: Exception): String =
@@ -114,33 +117,29 @@ private fun launchDriveHalt(
     scope.launch {
         var err: String? = null
         supervisorScope {
-            val stops =
-                listOf(
-                    launch {
-                        runCatching { vm.robotDriveHoldStop() }
-                            .onFailure { t ->
-                                if (t is Exception) err = driveHttpError(t)
-                            }
-                    },
-                    launch {
-                        runCatching { vm.robotDriveStraightStop() }
-                    },
-                    launch {
-                        runCatching { vm.robotSetBrake(true) }
-                            .onFailure { t ->
-                                if (err == null && t is Exception) err = driveHttpError(t)
-                            }
-                    },
-                )
             if (emergency) {
                 launch {
                     runCatching { vm.robotEmergencyStop() }
                         .onFailure { t ->
-                            if (err == null && t is Exception) err = driveHttpError(t)
+                            if (t is Exception) err = driveHttpError(t)
                         }
                 }
             }
-            stops.forEach { it.join() }
+            launch {
+                runCatching { vm.robotDriveHoldStop() }
+                    .onFailure { t ->
+                        if (err == null && t is Exception) err = driveHttpError(t)
+                    }
+            }
+            launch {
+                runCatching { vm.robotDriveStraightStop() }
+            }
+            launch {
+                runCatching { vm.robotSetBrake(true) }
+                    .onFailure { t ->
+                        if (err == null && t is Exception) err = driveHttpError(t)
+                    }
+            }
         }
         onError(err)
     }
@@ -268,7 +267,14 @@ fun SirenaDriveScreen(
         launch { vm.prefetchRobotDriveStatus() }
         var statusFailStreak = 0
         while (isActive) {
-            val pollMs = if (straightRunning) 50L else DRIVE_STATUS_POLL_MS
+            val operatorDriving =
+                driveHoldJob?.isActive == true || keyboardDriveDir != null
+            val pollMs =
+                when {
+                    straightRunning -> 50L
+                    operatorDriving -> DRIVE_STATUS_POLL_WHILE_DRIVE_MS
+                    else -> DRIVE_STATUS_POLL_MS
+                }
             try {
                 val j = vm.fetchRobotDriveStatus()
                 if (j != null) {

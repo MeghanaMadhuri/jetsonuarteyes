@@ -32,28 +32,28 @@ class LinkClient {
             .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
             .build()
 
-    /** Hold stop / status / E-stop — no Dynamixel bus prime on the Jetson. */
+    /** Stop / status / E-stop — Jetson urgent queue, no long prime. */
     private val driveFastClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(12, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .writeTimeout(6, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 
     /**
-     * Hold start, brake release, straight, turn — Jetson may run ``_prime_drive_hardware``
-     * (up to ~10s) on the Qt thread before replying. Must exceed that plus command-plane queueing.
+     * Hold start, brake release, straight, turn — short prime when hardware is warm
+     * (Drive screen prefetch + gateway bootstrap).
      */
     private val driveCommandClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(35, TimeUnit.SECONDS)
-            .writeTimeout(12, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 

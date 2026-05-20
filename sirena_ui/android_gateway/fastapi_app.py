@@ -755,7 +755,11 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1",
             )
-        return gw.plane.submit(lambda: robot_set_brake(gw.service, on=body.on), timeout=30.0)
+        return gw.plane.submit(
+            lambda: robot_set_brake(gw.service, on=body.on),
+            timeout=30.0,
+            urgent=bool(body.on),
+        )
 
     @app.post("/v1/robot/drive/hold")
     def robot_drive_hold_http(
@@ -775,6 +779,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         return gw.plane.submit(
             lambda: drive_hold_start(gw.service, direction=direction),
             timeout=30.0,
+            urgent=True,
         )
 
     @app.post("/v1/robot/drive/hold/stop")
@@ -785,7 +790,11 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         auth_mutate(authorization, request)
         if not cfg.enable_robot_bridge:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
-        return gw.plane.submit(lambda: drive_hold_stop(gw.service), timeout=30.0)
+        return gw.plane.submit(
+            lambda: drive_hold_stop(gw.service),
+            timeout=30.0,
+            urgent=True,
+        )
 
     @app.post("/v1/robot/drive/turn")
     def robot_drive_turn_http(
@@ -829,7 +838,11 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         auth_mutate(authorization, request)
         if not cfg.enable_robot_bridge:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
-        return gw.plane.submit(lambda: emergency_stop(gw.service), timeout=30.0)
+        return gw.plane.submit(
+            lambda: emergency_stop(gw.service),
+            timeout=30.0,
+            urgent=True,
+        )
 
     @app.get("/v1/robot/drive/status")
     def robot_drive_status_http() -> Dict[str, Any]:
@@ -890,7 +903,11 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
         from sirena_ui.android_gateway.tablet_drive_extras import hover_straight_stop
 
-        return gw.plane.submit(lambda: hover_straight_stop(gw.service), timeout=30.0)
+        return gw.plane.submit(
+            lambda: hover_straight_stop(gw.service),
+            timeout=30.0,
+            urgent=True,
+        )
 
     @app.get("/v1/robot/drive/calibration")
     def robot_drive_calibration_get_http() -> Dict[str, Any]:

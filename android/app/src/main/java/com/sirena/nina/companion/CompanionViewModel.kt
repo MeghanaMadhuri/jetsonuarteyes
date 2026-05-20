@@ -1299,34 +1299,39 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      * Set Jetson speaker volume (`POST /v1/system/volume`, requires pair token).
      * Returns null on success, or a short error for the UI.
      */
-    suspend fun setSystemVolumePct(pct: Int): String? =
-        try {
+    suspend fun setSystemVolumePct(pct: Int): String? {
+        return try {
             val url = prefs.baseUrl.first()
-            if (url.isBlank()) return "No robot URL"
-            val bearer = prefs.bearerToken.first()
-            if (bearer.isNullOrBlank()) {
-                return "Pair with the robot first to change volume"
-            }
-            val j = client.systemVolumeSet(url, bearer, pct)
-            when {
-                j.optBoolean("ok", false) && j.optBoolean("available", true) -> null
-                !j.optBoolean("available", true) ->
-                    "Volume control unavailable on robot (install alsa-utils or check audio sink)"
-                else ->
-                    j.optString("detail").trim().ifBlank {
-                        j.optString("error").trim().ifBlank { "Volume change failed" }
+            if (url.isBlank()) {
+                "No robot URL"
+            } else {
+                val bearer = prefs.bearerToken.first()
+                if (bearer.isNullOrBlank()) {
+                    "Pair with the robot first to change volume"
+                } else {
+                    val j = client.systemVolumeSet(url, bearer, pct)
+                    when {
+                        j.optBoolean("ok", false) && j.optBoolean("available", true) -> null
+                        !j.optBoolean("available", true) ->
+                            "Volume control unavailable on robot (install alsa-utils or check audio sink)"
+                        else ->
+                            j.optString("detail").trim().ifBlank {
+                                j.optString("error").trim().ifBlank { "Volume change failed" }
+                            }
                     }
+                }
             }
         } catch (e: Exception) {
             e.message?.trim().orEmpty().ifBlank { "Volume change failed" }
         }
+    }
 
     /** Warm Dynamixel + hoverboard stack while the Drive screen is open (reduces first D-pad delay). */
     suspend fun prefetchRobotDriveStatus() {
         if (prefs.baseUrl.first().isBlank()) return
-        repeat(4) {
+        repeat(6) {
             fetchRobotDriveStatus()
-            delay(180L)
+            delay(100L)
         }
     }
 

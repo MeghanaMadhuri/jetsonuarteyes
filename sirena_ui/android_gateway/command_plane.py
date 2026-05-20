@@ -19,7 +19,7 @@ T = TypeVar("T")
 
 # Process at most this many HTTP→GUI jobs per event-loop tick so a burst of
 # tablet polls cannot freeze taps for multiple seconds.
-_MAX_DRAIN_PER_TICK = 2
+_MAX_DRAIN_PER_TICK = 6
 
 
 class QtCommandPlane(QObject):
@@ -28,11 +28,13 @@ class QtCommandPlane(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._pending: "queue.Queue[tuple[Future, Callable[[], object]]]" = queue.Queue()
+        self._urgent: "queue.Queue[tuple[Future, Callable[[], object]]]" = queue.Queue()
 
-    def submit(self, fn: Callable[[], T], *, timeout: float = 120.0) -> T:
+    def submit(self, fn: Callable[[], T], *, timeout: float = 120.0, urgent: bool = False) -> T:
         """Block the caller until ``fn`` runs on the Qt thread and completes."""
         fut: Future = Future()
-        self._pending.put((fut, fn))  # type: ignore[arg-type]
+        target = self._urgent if urgent else self._pending
+        target.put((fut, fn))  # type: ignore[arg-type]
         self._schedule_drain()
         return fut.result(timeout=timeout)  # type: ignore[no-any-return]
 
@@ -41,12 +43,15 @@ class QtCommandPlane(QObject):
 
         QMetaObject.invokeMethod(self, "_drain", Qt.QueuedConnection)
 
-    @pyqtSlot()
-    def _drain(self) -> None:
+    def _drain_queue(
+        self,
+        q: "queue.Queue[tuple[Future, Callable[[], object]]]",
+        budget: int,
+    ) -> int:
         processed = 0
-        while processed < _MAX_DRAIN_PER_TICK:
+        while processed < budget:
             try:
-                fut, fn = self._pending.get_nowait()
+                fut, fn = q.get_nowait()
             except queue.Empty:
                 break
             processed += 1
@@ -54,5 +59,14 @@ class QtCommandPlane(QObject):
                 fut.set_result(fn())
             except Exception as exc:  # noqa: BLE001
                 fut.set_exception(exc)
-        if not self._pending.empty():
+        return processed
+
+    @pyqtSlot()
+    def _drain(self) -> None:
+        # Stop / hold / E-stop jump ahead of status polls and slow primes.
+        used = self._drain_queue(self._urgent, _MAX_DRAIN_PER_TICK)
+        remaining = max(0, _MAX_DRAIN_PER_TICK - used)
+        if remaining:
+            self._drain_queue(self._pending, remaining)
+        if not self._urgent.empty() or not self._pending.empty():
             self._schedule_drain()
