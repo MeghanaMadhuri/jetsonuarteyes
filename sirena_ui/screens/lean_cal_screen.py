@@ -49,6 +49,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from nina.config.navigation_env import (
+    DEFAULT_ENV_PATH as _NAV_ENV_PATH,
+    NavigationEnvWriteError,
+    update_backward_lean as _save_backward_lean_to_env,
+)
 from sirena_ui.widgets.common import Card, CardTitle, MutedLabel
 from sirena_ui.workers.nina_service import NinaService
 
@@ -305,6 +310,25 @@ class LeanCalScreen(QWidget):
         self._btn_apply.clicked.connect(self._push_to_bus)
         actions.addWidget(self._btn_apply)
 
+        # SAVE persists the current L/R into /etc/nina-link/navigation.env
+        # so the calibrated lean survives a service restart. The actual
+        # in-place update + permission handling lives in
+        # nina.config.navigation_env; we just call it and surface the
+        # outcome on the status label.
+        self._btn_save = QPushButton("SAVE to env")
+        self._btn_save.setMinimumHeight(44)
+        self._btn_save.setStyleSheet(
+            "background-color: #2a8a4a; color: white; font-weight: 700;"
+            " font-size: 14px; padding: 6px 16px;"
+        )
+        self._btn_save.setToolTip(
+            "Persist the current L / R values into\n"
+            "/etc/nina-link/navigation.env so they survive a service restart.\n"
+            "May prompt for the operator's password if /etc/ requires root."
+        )
+        self._btn_save.clicked.connect(self._save_to_env)
+        actions.addWidget(self._btn_save)
+
         self._btn_brake = QPushButton("BRAKE / NEUTRAL")
         self._btn_brake.setMinimumHeight(44)
         self._btn_brake.setStyleSheet(
@@ -420,3 +444,52 @@ class LeanCalScreen(QWidget):
         self._right_row.set_ticks(int(axis.backward_pos_right), emit_apply=False)
         # One bus write with both new values.
         self._push_to_bus()
+
+    def _save_to_env(self) -> None:
+        """Persist the current L / R slider values into the navigation
+        env file so they survive a service restart. The systemd unit
+        reads ``EnvironmentFile=-/etc/nina-link/navigation.env`` BEFORE
+        the Python code starts, so once this file is updated, the next
+        ``systemctl restart nina-ui-kiosk.service`` will pick up the
+        new lean calibration.
+
+        We don't restart the service from the UI — that would kill the
+        process we're running in. The operator does that explicitly
+        when they're ready.
+        """
+        l = self._left_row.ticks()
+        r = self._right_row.ticks()
+        try:
+            written = _save_backward_lean_to_env(l, r)
+        except NavigationEnvWriteError as exc:
+            log.warning(
+                "lean-cal: save to %s failed: %s (%s)",
+                _NAV_ENV_PATH, exc, exc.detail,
+            )
+            # Surface a clear hint so the operator can copy/paste
+            # manually if polkit / sudo isn't an option here.
+            self._status.setText(
+                f"SAVE failed: {exc}. "
+                f"Copy manually into {_NAV_ENV_PATH}: "
+                f"NINA_HOVER_REV_POS_LEFT={l}  "
+                f"NINA_HOVER_REV_POS_RIGHT={r}"
+            )
+            return
+        except ValueError as exc:
+            log.error("lean-cal: save validation failed: %s", exc)
+            self._status.setText(f"SAVE rejected: {exc}")
+            return
+        except Exception as exc:
+            log.exception("lean-cal: unexpected save failure")
+            self._status.setText(f"SAVE failed: {exc!r}")
+            return
+        log.info(
+            "lean-cal: saved L=%d R=%d to %s (restart service to apply)",
+            l, r, written,
+        )
+        self._status.setText(
+            f"SAVED to {written}: L(id{self._left_id})={l}  "
+            f"R(id{self._right_id})={r}. "
+            f"Restart the service to load: "
+            f"systemctl --user restart nina-ui-kiosk.service"
+        )
