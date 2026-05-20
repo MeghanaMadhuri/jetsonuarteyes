@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Tuple
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QSettings, Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -46,6 +46,12 @@ from sirena_ui.widgets.common import (
     SectionLabel,
 )
 from sirena_ui.workers.nina_service import NinaService
+from nina.services.audio_player import (
+    get_app_audio_volume_pct,
+    get_system_output_volume_pct,
+    set_app_audio_volume_pct,
+    set_system_output_volume_pct,
+)
 
 
 # (key, label, glyph)
@@ -145,6 +151,8 @@ class SettingsScreen(QWidget):
             return self._build_general_pane()
         if key == "network":
             return self._build_network_pane()
+        if key == "audio":
+            return self._build_audio_pane()
         if key == "power":
             return self._build_power_pane()
         return self._build_placeholder_pane(label)
@@ -504,6 +512,111 @@ class SettingsScreen(QWidget):
         cta.addWidget(discard)
 
         return container
+
+    # ---------- Audio ----------
+
+    def _build_audio_pane(self) -> QWidget:
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+
+        v.addWidget(Breadcrumb("Nina", "Settings", "Audio"))
+
+        card = Card(padding=12, spacing=10)
+        v.addWidget(card, stretch=1)
+
+        title = QLabel("Audio")
+        title.setStyleSheet(
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
+            " background-color: transparent;"
+        )
+        card.add(title)
+        card.add(
+            MutedLabel(
+                "Controls Nina's app playback volume. On MAX98357A I2S this "
+                "uses digital gain because the amplifier has no software mixer."
+            )
+        )
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignRight)
+        card.add_layout(form)
+
+        current = get_app_audio_volume_pct()
+        self._audio_volume_value = QLabel(f"{current}%")
+        self._audio_volume_value.setFixedWidth(56)
+        self._audio_volume_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._audio_volume_value.setStyleSheet(
+            "color: #1c1c1e; font-size: 13px; font-weight: 700;"
+            " background-color: transparent;"
+        )
+
+        self._audio_volume_slider = QSlider(Qt.Horizontal)
+        self._audio_volume_slider.setRange(0, 200)
+        self._audio_volume_slider.setSingleStep(5)
+        self._audio_volume_slider.setPageStep(10)
+        self._audio_volume_slider.setTickInterval(25)
+        self._audio_volume_slider.setValue(max(0, min(200, current)))
+        self._audio_volume_slider.valueChanged.connect(self._on_audio_volume_changed)
+
+        vol_row = QHBoxLayout()
+        vol_row.setSpacing(8)
+        vol_row.addWidget(self._audio_volume_slider, stretch=1)
+        vol_row.addWidget(self._audio_volume_value)
+        vol_wrap = QWidget()
+        vol_wrap.setLayout(vol_row)
+        form.addRow("Speaker volume", vol_wrap)
+
+        self._audio_status = QLabel("")
+        self._audio_status.setWordWrap(True)
+        self._audio_status.setStyleSheet(
+            "color: #6e6e73; font-size: 11px; background-color: transparent;"
+        )
+        card.add(self._audio_status)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        card.add_layout(row)
+        refresh = QPushButton("Refresh")
+        refresh.setObjectName("secondaryButton")
+        refresh.setCursor(Qt.PointingHandCursor)
+        refresh.clicked.connect(self._refresh_audio_volume)
+        row.addWidget(refresh)
+        row.addStretch(1)
+
+        card.add_stretch()
+        self._refresh_audio_volume()
+        return container
+
+    def _on_audio_volume_changed(self, value: int) -> None:
+        value = set_app_audio_volume_pct(value)
+        QSettings("Sirena", "Nina").setValue("audio/gain_pct", value)
+        if self._audio_volume_value is not None:
+            self._audio_volume_value.setText(f"{value}%")
+        # Best-effort OS mixer update for systems that expose Master/Pulse.
+        sys_ok = set_system_output_volume_pct(min(100, value))
+        if self._audio_status is not None:
+            detail = "System mixer updated." if sys_ok else "Using Nina digital gain."
+            self._audio_status.setText(
+                f"Volume set to {value}%. {detail} Changes apply to the next clip."
+            )
+
+    def _refresh_audio_volume(self) -> None:
+        value = get_app_audio_volume_pct()
+        if self._audio_volume_slider is not None:
+            self._audio_volume_slider.blockSignals(True)
+            self._audio_volume_slider.setValue(max(0, min(200, value)))
+            self._audio_volume_slider.blockSignals(False)
+        if self._audio_volume_value is not None:
+            self._audio_volume_value.setText(f"{value}%")
+        sys_pct = get_system_output_volume_pct()
+        if self._audio_status is not None:
+            sys_text = f"System mixer: {sys_pct}%." if sys_pct is not None else "No system mixer detected."
+            self._audio_status.setText(
+                f"Nina digital gain: {value}%. {sys_text}"
+            )
 
     # ---------- Power ----------
 

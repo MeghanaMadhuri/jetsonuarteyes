@@ -125,6 +125,21 @@ def _aplay_stereo_mode() -> str:
     return "none"
 
 
+def _digital_gain_pct() -> int:
+    """App-level gain for decoded WAV playback.
+
+    MAX98357A has no software mixer, and Jetson APE often exposes no useful
+    ``Master`` control for this path. This gain is applied while generating the
+    temporary WAV used by ``NINA_AUDIO_MP3_VIA_APLAY=1``.
+    """
+    raw = (os.environ.get("NINA_AUDIO_GAIN_PCT") or "100").strip()
+    try:
+        pct = int(raw)
+    except ValueError:
+        return 100
+    return max(0, min(300, pct))
+
+
 def _restore_volume_default_pct() -> int:
     try:
         return max(1, min(100, int(os.environ.get("NINA_AUDIO_RESTORE_VOLUME_PCT", "75"))))
@@ -315,6 +330,7 @@ def mp3_via_aplay_command_for(path: Path) -> Optional[List[str]]:
     rate = _pcm_output_rate_hz()
     rate_arg = "" if rate is None else str(rate)
     raw_rate_arg = str(rate if rate is not None else _GREETING_MP3_SAMPLE_RATE_HZ)
+    gain_arg = str(_digital_gain_pct())
     mode = _aplay_stereo_mode()
     script = r'''
 set -eu
@@ -326,6 +342,7 @@ raw_rate="$5"
 mpg="$6"
 aplay_bin="$7"
 python_bin="$8"
+gain_pct="$9"
 tmp="$(mktemp "${TMPDIR:-/tmp}/nina-audio-in-XXXXXX.wav")"
 play="$tmp"
 cleanup() { rm -f "$tmp" "$play"; }
@@ -339,11 +356,11 @@ if [ "$mode" != "none" ]; then
     # Decode to WAV first, then preserve the decoder's actual WAV sample rate
     # while placing audio into the requested I2S slot.
     play="$(mktemp "${TMPDIR:-/tmp}/nina-audio-out-XXXXXX.wav")"
-    "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" <<'PY'
+    "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" "$gain_pct" <<'PY'
 import sys
 import wave
 
-src, dst, mode, rate_s = sys.argv[1:5]
+src, dst, mode, rate_s, gain_s = sys.argv[1:6]
 with wave.open(src, "rb") as r:
     channels = r.getnchannels()
     sampwidth = r.getsampwidth()
@@ -353,10 +370,19 @@ with wave.open(src, "rb") as r:
 if sampwidth <= 0:
     raise SystemExit("invalid sample width")
 
+gain = max(0.0, min(3.0, float(gain_s) / 100.0))
+
+def scale_sample(sample):
+    if sampwidth != 2 or gain == 1.0:
+        return sample
+    v = int.from_bytes(sample, "little", signed=True)
+    v = max(-32768, min(32767, int(round(v * gain))))
+    return v.to_bytes(2, "little", signed=True)
+
 out = bytearray()
 if channels == 1:
     for i in range(0, len(frames), sampwidth):
-        s = frames[i:i + sampwidth]
+        s = scale_sample(frames[i:i + sampwidth])
         z = b"\x00" * sampwidth
         if mode == "left":
             out.extend(s); out.extend(z)
@@ -370,8 +396,8 @@ else:
         frame = frames[i:i + frame_width]
         if len(frame) < frame_width:
             continue
-        left = frame[0:sampwidth]
-        right = frame[sampwidth:2 * sampwidth]
+        left = scale_sample(frame[0:sampwidth])
+        right = scale_sample(frame[sampwidth:2 * sampwidth])
         z = b"\x00" * sampwidth
         if mode == "left":
             out.extend(left); out.extend(z)
@@ -405,6 +431,7 @@ exec "$aplay_bin" -q "$play"
         mpg,
         aplay,
         python,
+        gain_arg,
     ]
 
 
@@ -639,6 +666,18 @@ def get_system_output_volume_pct() -> Optional[int]:
     if v is not None:
         return int(max(0, min(100, v)))
     return None
+
+
+def get_app_audio_volume_pct() -> int:
+    """Current Nina app-level digital gain percentage."""
+    return _digital_gain_pct()
+
+
+def set_app_audio_volume_pct(pct: int) -> int:
+    """Set Nina app-level digital gain for future decoded clips."""
+    value = max(0, min(300, int(pct)))
+    os.environ["NINA_AUDIO_GAIN_PCT"] = str(value)
+    return value
 
 
 def set_system_output_volume_pct(pct: int) -> bool:

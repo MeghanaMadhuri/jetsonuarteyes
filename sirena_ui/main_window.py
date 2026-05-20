@@ -24,7 +24,7 @@ import os
 import socket
 from typing import Dict, Optional
 
-from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._service = service
         self.setWindowTitle("Sirena Control Center")
+        self._load_persisted_audio_gain()
 
         # NINA_UI_FULLSCREEN=1 starts the GUI in frameless kiosk mode at
         # the panel's native resolution - what we want on the bot. Devs
@@ -160,6 +161,16 @@ class MainWindow(QMainWindow):
         # Try to bring up the bus shortly after the window appears so the
         # status bar shows accurate dots without blocking the UI.
         QTimer.singleShot(150, self._initialize_bus)
+
+    def _load_persisted_audio_gain(self) -> None:
+        if os.environ.get("NINA_AUDIO_GAIN_PCT"):
+            return
+        raw = QSettings("Sirena", "Nina").value("audio/gain_pct", "")
+        try:
+            gain = max(0, min(300, int(raw)))
+        except (TypeError, ValueError):
+            return
+        os.environ["NINA_AUDIO_GAIN_PCT"] = str(gain)
 
     def showEvent(self, event) -> None:
         """Honour kiosk mode after the window's first show.

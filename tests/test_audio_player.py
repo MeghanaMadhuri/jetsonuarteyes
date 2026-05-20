@@ -129,6 +129,7 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=APE,DEV=0")
     monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
     monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "left")
+    monkeypatch.setenv("NINA_AUDIO_GAIN_PCT", "175")
     from nina.services.audio_player import AudioPlayer
 
     mp3 = tmp_path / "x.mp3"
@@ -146,6 +147,7 @@ def test_audio_player_can_decode_mp3_via_temp_wav_and_aplay(
     assert str(fake_aplay) in cmd
     assert "48000" in cmd
     assert "left" in cmd
+    assert "175" in cmd
     assert '"$python_bin" -' in cmd[2]
 
 
