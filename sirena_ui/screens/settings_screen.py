@@ -535,8 +535,9 @@ class SettingsScreen(QWidget):
         card.add(
             MutedLabel(
                 "Controls Nina's app playback volume. On MAX98357A I2S this "
-                "uses digital gain because the amplifier has no software mixer. "
-                "If 100% is still too quiet, increase the MAX98357A hardware gain."
+                "can lower playback volume, but does not boost above the "
+                "original clip level. For more loudness, increase the "
+                "MAX98357A hardware gain."
             )
         )
 
@@ -555,11 +556,11 @@ class SettingsScreen(QWidget):
         )
 
         self._audio_volume_slider = QSlider(Qt.Horizontal)
-        self._audio_volume_slider.setRange(0, 150)
+        self._audio_volume_slider.setRange(0, 100)
         self._audio_volume_slider.setSingleStep(5)
         self._audio_volume_slider.setPageStep(10)
         self._audio_volume_slider.setTickInterval(25)
-        self._audio_volume_slider.setValue(max(0, min(150, current)))
+        self._audio_volume_slider.setValue(max(0, min(100, current)))
         self._audio_volume_slider.valueChanged.connect(self._on_audio_volume_changed)
 
         vol_row = QHBoxLayout()
@@ -599,9 +600,7 @@ class SettingsScreen(QWidget):
         # Best-effort OS mixer update for systems that expose Master/Pulse.
         sys_ok = set_system_output_volume_pct(min(100, value))
         if self._audio_status is not None:
-            detail = "System mixer updated." if sys_ok else "Using Nina digital gain."
-            if value > 100:
-                detail += " Boost above 100% may distort; hardware gain is cleaner."
+            detail = "System mixer updated." if sys_ok else "Using Nina app volume."
             self._audio_status.setText(
                 f"Volume set to {value}%. {detail} Changes apply to the next clip."
             )
@@ -610,7 +609,7 @@ class SettingsScreen(QWidget):
         value = get_app_audio_volume_pct()
         if self._audio_volume_slider is not None:
             self._audio_volume_slider.blockSignals(True)
-            self._audio_volume_slider.setValue(max(0, min(150, value)))
+            self._audio_volume_slider.setValue(max(0, min(100, value)))
             self._audio_volume_slider.blockSignals(False)
         if self._audio_volume_value is not None:
             self._audio_volume_value.setText(f"{value}%")
@@ -618,7 +617,7 @@ class SettingsScreen(QWidget):
         if self._audio_status is not None:
             sys_text = f"System mixer: {sys_pct}%." if sys_pct is not None else "No system mixer detected."
             self._audio_status.setText(
-                f"Nina digital gain: {value}%. {sys_text}"
+                f"Nina app volume: {value}%. {sys_text}"
             )
 
     # ---------- Power ----------
