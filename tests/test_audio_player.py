@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import types
+import wave
 from pathlib import Path
 
 import pytest
@@ -237,6 +238,43 @@ def test_silence_keepalive_disables_per_clip_amp_toggle(
     import nina.services.audio_player as ap
 
     assert ap._amp_begin_playback() is False
+
+
+def test_persistent_pipe_disables_old_silence_keepalive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_PERSISTENT_PIPE", "1")
+    monkeypatch.setenv("NINA_AUDIO_SILENCE_KEEPALIVE", "1")
+    import nina.services.audio_player as ap
+
+    assert ap._persistent_pipe_enabled() is True
+    assert ap._silence_keepalive_enabled() is False
+
+
+def test_wav_to_stereo_pcm_adds_edge_silence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "48000")
+    monkeypatch.setenv("NINA_AUDIO_APLAY_STEREO_MODE", "left")
+    monkeypatch.setenv("NINA_AUDIO_EDGE_SILENCE_MS", "10")
+    from nina.services.audio_player import _wav_to_stereo_pcm_bytes
+
+    src = tmp_path / "tone.wav"
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes((1000).to_bytes(2, "little", signed=True) * 2)
+
+    pcm = _wav_to_stereo_pcm_bytes(src)
+    assert pcm is not None
+    edge_bytes = 480 * 4
+    assert len(pcm) == edge_bytes + (2 * 4) + edge_bytes
+    assert pcm[:edge_bytes] == b"\x00" * edge_bytes
+    assert pcm[edge_bytes:edge_bytes + 4] == (
+        (1000).to_bytes(2, "little", signed=True) + b"\x00\x00"
+    )
 
 
 def test_mpg123_command_omits_rate_when_auto(

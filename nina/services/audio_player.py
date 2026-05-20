@@ -53,8 +53,9 @@ import tempfile
 import threading
 import time
 import wave
+from collections import deque
 from pathlib import Path
-from typing import List, Optional
+from typing import Deque, List, Optional, Tuple
 
 # gTTS (``AudioGenerator``) and Google Translate speech MP3s used for greetings
 # and action clips in this repo decode as mono ~64 kb/s at this rate (verify with
@@ -71,6 +72,7 @@ _SILENCE_KEEPALIVE_STOP = threading.Event()
 _SILENCE_KEEPALIVE_THREAD: Optional[threading.Thread] = None
 _SILENCE_KEEPALIVE_PROC: Optional[subprocess.Popen] = None
 _SILENCE_KEEPALIVE_REAL_AUDIO_USERS = 0
+_PERSISTENT_PIPE = None
 
 
 def _repo_root() -> Path:
@@ -124,7 +126,13 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
         return default
 
 
+def _persistent_pipe_enabled() -> bool:
+    return _env_bool("NINA_AUDIO_PERSISTENT_PIPE", False)
+
+
 def _silence_keepalive_enabled() -> bool:
+    if _persistent_pipe_enabled():
+        return False
     return _env_bool("NINA_AUDIO_SILENCE_KEEPALIVE", False)
 
 
@@ -373,6 +381,271 @@ def _ensure_silence_keepalive_wav() -> Optional[Path]:
     return path
 
 
+def _silence_pcm_bytes(ms: int, sample_rate: int) -> bytes:
+    frames = max(0, int(sample_rate * (ms / 1000.0)))
+    return b"\x00\x00\x00\x00" * frames
+
+
+def _wav_to_stereo_pcm_bytes(path: Path, *, edge_ms: Optional[int] = None) -> Optional[bytes]:
+    mode = _aplay_stereo_mode()
+    gain = max(0.0, min(1.0, _digital_gain_pct() / 100.0))
+    expected_rate = _preroll_wav_sample_rate_hz()
+    try:
+        with wave.open(str(path), "rb") as r:
+            channels = r.getnchannels()
+            sampwidth = r.getsampwidth()
+            rate = r.getframerate()
+            frames = r.readframes(r.getnframes())
+    except (OSError, wave.Error):
+        return None
+    if sampwidth != 2 or rate != expected_rate:
+        return None
+
+    edge = _audio_edge_silence_ms() if edge_ms is None else max(0, int(edge_ms))
+    out = bytearray(_silence_pcm_bytes(edge, rate))
+
+    def scale_sample(sample: bytes) -> bytes:
+        if gain == 1.0:
+            return sample
+        v = int.from_bytes(sample, "little", signed=True)
+        return int(round(v * gain)).to_bytes(2, "little", signed=True)
+
+    if channels == 1:
+        for i in range(0, len(frames), sampwidth):
+            s = scale_sample(frames[i:i + sampwidth])
+            z = b"\x00" * sampwidth
+            if mode == "left":
+                out.extend(s)
+                out.extend(z)
+            elif mode == "right":
+                out.extend(z)
+                out.extend(s)
+            else:
+                out.extend(s)
+                out.extend(s)
+    else:
+        frame_width = channels * sampwidth
+        for i in range(0, len(frames), frame_width):
+            frame = frames[i:i + frame_width]
+            if len(frame) < frame_width:
+                continue
+            left = scale_sample(frame[0:sampwidth])
+            right = scale_sample(frame[sampwidth:2 * sampwidth])
+            z = b"\x00" * sampwidth
+            if mode == "left":
+                out.extend(left)
+                out.extend(z)
+            elif mode == "right":
+                out.extend(z)
+                out.extend(right)
+            else:
+                out.extend(left)
+                out.extend(right)
+    if edge:
+        out.extend(_silence_pcm_bytes(edge, rate))
+    return bytes(out)
+
+
+def _mp3_to_stereo_pcm_bytes(path: Path) -> Optional[bytes]:
+    mpg = shutil.which("mpg123")
+    if not mpg:
+        return None
+    rate = _preroll_wav_sample_rate_hz()
+    tmp = tempfile.NamedTemporaryFile(prefix="nina-audio-pipe-", suffix=".wav", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        r = subprocess.run(
+            [mpg, "-q", "-r", str(rate), "-w", str(tmp_path), str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15.0,
+            check=False,
+        )
+        if r.returncode != 0:
+            return None
+        return _wav_to_stereo_pcm_bytes(tmp_path)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+class _PersistentAudioHandle:
+    def __init__(self) -> None:
+        self._done = threading.Event()
+        self._terminated = False
+        self.returncode: Optional[int] = None
+
+    def wait(self, timeout: Optional[float] = None) -> Optional[int]:
+        if not self._done.wait(timeout):
+            raise subprocess.TimeoutExpired("nina-audio-persistent-pipe", timeout)
+        return self.returncode
+
+    def poll(self) -> Optional[int]:
+        return self.returncode if self._done.is_set() else None
+
+    def terminate(self) -> None:
+        self._terminated = True
+        self.returncode = -15
+        self._done.set()
+
+    def _finish(self, returncode: int = 0) -> None:
+        if self._terminated:
+            return
+        self.returncode = returncode
+        self._done.set()
+
+
+class _PersistentAudioPipe:
+    def __init__(self) -> None:
+        self._rate = _preroll_wav_sample_rate_hz()
+        self._aplay = shutil.which("aplay")
+        self._proc: Optional[subprocess.Popen] = None
+        self._queue: Deque[Tuple[bytes, _PersistentAudioHandle]] = deque()
+        self._cv = threading.Condition()
+        self._stop = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> bool:
+        if not _persistent_pipe_enabled() or not self._aplay:
+            return False
+        if _amp_enable_gpio_pin() is not None:
+            _amp_set_enabled(True)
+        with self._cv:
+            if self._thread is not None and self._thread.is_alive():
+                return True
+            self._stop = False
+            self._thread = threading.Thread(
+                target=self._writer,
+                name="nina-audio-persistent-pipe",
+                daemon=True,
+            )
+            self._thread.start()
+            return True
+
+    def enqueue(self, pcm: bytes) -> _PersistentAudioHandle:
+        handle = _PersistentAudioHandle()
+        with self._cv:
+            self._queue.append((pcm, handle))
+            self._cv.notify_all()
+        self.start()
+        return handle
+
+    def stop(self) -> None:
+        with self._cv:
+            self._stop = True
+            self._cv.notify_all()
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+
+    def _start_aplay(self) -> Optional[subprocess.Popen]:
+        if not self._aplay:
+            return None
+        cmd = [
+            self._aplay,
+            "-q",
+            "-t",
+            "raw",
+            "-f",
+            "S16_LE",
+            "-c",
+            "2",
+            "-r",
+            str(self._rate),
+        ]
+        dev = _aplay_device_flag()
+        if dev:
+            cmd.extend(["-D", dev])
+        cmd.append("-")
+        try:
+            return subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            print(f"[audio] persistent pipe failed to start: {exc}")
+            return None
+
+    def _write_all(self, data: bytes) -> bool:
+        proc = self._proc
+        if proc is None or proc.stdin is None or proc.poll() is not None:
+            self._proc = self._start_aplay()
+            proc = self._proc
+        if proc is None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write(data)
+            proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self._proc = None
+            return False
+
+    def _writer(self) -> None:
+        chunk = _silence_pcm_bytes(20, self._rate)
+        while True:
+            with self._cv:
+                if self._stop:
+                    break
+                item = self._queue.popleft() if self._queue else None
+            if item is None:
+                if not self._write_all(chunk):
+                    time.sleep(0.2)
+                continue
+            pcm, handle = item
+            if handle.poll() is not None:
+                continue
+            ok = self._write_all(pcm)
+            handle._finish(0 if ok else 1)
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+
+
+def start_persistent_audio_pipe() -> bool:
+    """Start the one-open-forever raw PCM aplay pipe, if enabled."""
+    global _PERSISTENT_PIPE
+    if not _persistent_pipe_enabled():
+        return False
+    if _PERSISTENT_PIPE is None:
+        _PERSISTENT_PIPE = _PersistentAudioPipe()
+    return _PERSISTENT_PIPE.start()
+
+
+def _persistent_audio_pipe_play(path: Path) -> Optional[_PersistentAudioHandle]:
+    if not _persistent_pipe_enabled():
+        return None
+    pcm: Optional[bytes]
+    ext = path.suffix.lower()
+    if ext == ".mp3":
+        pcm = _mp3_to_stereo_pcm_bytes(path)
+    elif ext == ".wav":
+        pcm = _wav_to_stereo_pcm_bytes(path)
+    else:
+        return None
+    if not pcm:
+        return None
+    if not start_persistent_audio_pipe() or _PERSISTENT_PIPE is None:
+        return None
+    return _PERSISTENT_PIPE.enqueue(pcm)
+
+
 def _silence_keepalive_cmd() -> Optional[List[str]]:
     aplay = shutil.which("aplay")
     if not aplay:
@@ -427,6 +700,8 @@ def _silence_keepalive_worker() -> None:
 def start_silence_keepalive() -> bool:
     """Start the optional idle silence loop that keeps MAX98357A/I2S warm."""
     global _SILENCE_KEEPALIVE_THREAD
+    if _persistent_pipe_enabled():
+        return start_persistent_audio_pipe()
     if not _silence_keepalive_enabled():
         return False
     # Silence keepalive replaces SD_MODE toggling: keep the amp enabled and
@@ -878,7 +1153,7 @@ class AudioPlayer:
 
     def play(
         self, audio_path: Path, *, skip_preroll: bool = False
-    ) -> Optional[subprocess.Popen]:
+    ) -> Optional[object]:
         """Start playback in the background. Returns the spawned process or None."""
         if audio_path is None:
             return None
@@ -886,6 +1161,12 @@ class AudioPlayer:
         if not path.exists():
             print(f"[audio] file not found: {path}")
             return None
+        persistent_handle = _persistent_audio_pipe_play(path)
+        if persistent_handle is not None:
+            with self._lock:
+                self._procs = [p for p in self._procs if p.poll() is None]
+                self._procs.append(persistent_handle)  # Popen-like handle
+            return persistent_handle
         cmd = self._command_for(path)
         if cmd is None:
             print(
