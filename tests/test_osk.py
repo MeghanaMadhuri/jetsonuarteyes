@@ -32,10 +32,12 @@ import pytest
 pytest.importorskip("PyQt5.QtWidgets")
 
 
-from PyQt5.QtCore import QEvent, Qt
+from PyQt5.QtCore import QEvent, QPoint, Qt
+from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
+    QDoubleSpinBox,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
@@ -187,6 +189,20 @@ def _send_focus_in(widget: QWidget) -> None:
     QApplication.sendEvent(widget, QEvent(QEvent.FocusIn))
 
 
+def _send_mouse_press(widget: QWidget) -> None:
+    """Simulate a touchscreen tap (left button press at 1,1)."""
+    QApplication.sendEvent(
+        widget,
+        QMouseEvent(
+            QEvent.MouseButtonPress,
+            QPoint(1, 1),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------
 # Disabled paths
 # ---------------------------------------------------------------------
@@ -228,6 +244,18 @@ def test_missing_binary_disables_manager(
 # ---------------------------------------------------------------------
 
 
+def test_mouse_press_on_lineedit_spawns_osk(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """Touchscreens often emit MouseButtonPress without FocusIn."""
+    osk = make_osk(mode="auto")
+    edit = QLineEdit()
+    _send_mouse_press(edit)
+    assert osk.is_running is True
+    assert len(fake_subprocess.instances) == 1
+    edit.deleteLater()
+
+
 def test_focus_in_lineedit_spawns_osk(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
@@ -250,8 +278,15 @@ def test_focus_in_lineedit_spawns_osk(
         QTextEdit,
         QPlainTextEdit,
         QSpinBox,
+        QDoubleSpinBox,
     ],
-    ids=["QLineEdit", "QTextEdit", "QPlainTextEdit", "QSpinBox"],
+    ids=[
+        "QLineEdit",
+        "QTextEdit",
+        "QPlainTextEdit",
+        "QSpinBox",
+        "QDoubleSpinBox",
+    ],
 )
 def test_focus_in_on_text_widget_spawns_osk(
     isolate_env, with_osk_binary, fake_subprocess, factory, make_osk
@@ -653,6 +688,28 @@ def test_gsettings_failure_does_not_block_spawn(
     assert len(fake_subprocess.instances) == 1
 
 
+def test_show_uses_dbus_when_onboard_already_running(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hidden-but-alive onboard must be raised, not left invisible."""
+    from sirena_ui.workers import osk as osk_module
+
+    monkeypatch.setattr(osk_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    osk = make_osk(mode="always")
+    assert len(fake_subprocess.instances) == 1
+    fake_subprocess.run_calls.clear()  # type: ignore[attr-defined]
+
+    osk.show()
+    dbus_calls = [
+        c for c in fake_subprocess.run_calls
+        if c and c[0] == "dbus-send"
+    ]
+    assert dbus_calls, f"expected dbus-send, got {fake_subprocess.run_calls}"
+    assert len(fake_subprocess.instances) == 1  # no respawn
+
+
 def test_first_focus_logs_diagnostic_line(
     isolate_env, with_osk_binary, fake_subprocess, make_osk,
     caplog: pytest.LogCaptureFixture,
@@ -674,7 +731,7 @@ def test_first_focus_logs_diagnostic_line(
         _send_focus_in(edit2)
 
     diagnostic_lines = [r for r in caplog.records
-                        if "first text-widget focus" in r.message]
+                        if "first text-widget activation" in r.message]
     assert len(diagnostic_lines) == 1, (
         f"expected exactly one first-focus log line, got {len(diagnostic_lines)}: "
         f"{[r.message for r in diagnostic_lines]}"

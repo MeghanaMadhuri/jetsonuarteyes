@@ -42,14 +42,16 @@ import shutil
 import subprocess
 from typing import Iterable, Optional, Tuple
 
-from PyQt5.QtCore import QEvent, QObject, QTimer
+from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
+    QAbstractSpinBox,
     QComboBox,
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
     QTextEdit,
+    QWidget,
 )
 
 # Optional widgets - QDoubleSpinBox lives in QtWidgets but if a future
@@ -77,6 +79,15 @@ _TEXT_INPUT_TYPES: Tuple[type, ...] = tuple(
         QDoubleSpinBox,
     )
     if cls is not None
+)
+
+# Touchscreens often deliver MouseButtonPress / TouchBegin without a
+# reliable FocusIn on the inner QLineEdit (especially QSpinBox and
+# editable QComboBox). Treat those the same as focus for OSK purposes.
+_OSK_TRIGGER_EVENTS: Tuple[int, ...] = (
+    QEvent.FocusIn,
+    QEvent.MouseButtonPress,
+    QEvent.TouchBegin,
 )
 
 
@@ -220,11 +231,14 @@ class OnScreenKeyboardManager(QObject):
         return self._process is not None and self._process.poll() is None
 
     def show(self) -> None:
-        """Ensure the OSK is running. Idempotent."""
+        """Ensure the OSK is visible. Spawns onboard or raises it via D-Bus."""
         if not self._enabled:
             return
         if self.is_running:
-            return
+            if self._raise_onboard():
+                return
+            # Process alive but not visible (operator dismissed/hid it).
+            self._kill_process()
         self._spawn()
 
     def shutdown(self) -> None:
@@ -241,6 +255,10 @@ class OnScreenKeyboardManager(QObject):
                 self._app.removeEventFilter(self)
             except Exception:
                 pass
+        self._kill_process()
+
+    def _kill_process(self) -> None:
+        """Terminate the OSK subprocess without uninstalling the event filter."""
         if self._process is None:
             return
         if self._process.poll() is None:
@@ -248,8 +266,6 @@ class OnScreenKeyboardManager(QObject):
                 self._process.terminate()
                 self._process.wait(timeout=2.0)
             except Exception:
-                # SIGTERM didn't take or the wait timed out - hit it
-                # harder. The kiosk shutdown path can't afford to hang.
                 try:
                     self._process.kill()
                 except Exception:
@@ -261,7 +277,7 @@ class OnScreenKeyboardManager(QObject):
     # ------------------------------------------------------------------
 
     def eventFilter(self, obj: QObject, event) -> bool:  # type: ignore[override]
-        """Spawn the OSK when a text-input widget gains focus.
+        """Spawn or raise the OSK when the operator taps a text field.
 
         We deliberately do NOT consume the event (return False) so
         normal Qt focus handling proceeds untouched. Errors inside
@@ -269,22 +285,31 @@ class OnScreenKeyboardManager(QObject):
         broken OSK must never break the app.
         """
         try:
-            if event.type() == QEvent.FocusIn and self._is_text_widget(obj):
-                if not self._first_focus_logged:
-                    # Single INFO line per session; proves the event
-                    # filter is reaching text widgets on this device.
-                    # If you see "OSK launched" but never see this line,
-                    # touch isn't producing FocusIn events on text
-                    # widgets at all (different bug class entirely).
-                    log.info(
-                        "OSK: first text-widget focus seen (%s) - calling show()",
-                        type(obj).__name__,
-                    )
-                    self._first_focus_logged = True
-                self.show()
+            if event.type() not in _OSK_TRIGGER_EVENTS:
+                return False
+            if event.type() == QEvent.MouseButtonPress:
+                btn = getattr(event, "button", lambda: Qt.LeftButton)()
+                if btn != Qt.LeftButton:
+                    return False
+            target = self._resolve_text_target(obj)
+            if target is None:
+                return False
+            self._on_text_widget_activated(target, event.type())
         except Exception as exc:  # noqa: BLE001 - never propagate from filter
             log.warning("OSK event filter raised: %s", exc)
         return False
+
+    def _on_text_widget_activated(self, target: QWidget, event_type: int) -> None:
+        if event_type != QEvent.FocusIn:
+            self._focus_for_keyboard(target)
+        if not self._first_focus_logged:
+            log.info(
+                "OSK: first text-widget activation (%s, event=%s) - calling show()",
+                type(target).__name__,
+                int(event_type),
+            )
+            self._first_focus_logged = True
+        self.show()
 
     # ------------------------------------------------------------------
     # Internals
@@ -306,19 +331,71 @@ class OnScreenKeyboardManager(QObject):
         return True
 
     @staticmethod
-    def _is_text_widget(obj: QObject) -> bool:
-        """True for the widget classes we want to summon the OSK for.
-
-        QComboBox is special-cased: only editable combos (where the
-        user can actually type) trigger the OSK; pick-list combos
-        don't. This avoids popping the keyboard up when the operator
-        opens a dropdown - which would obscure the dropdown items.
-        """
+    def _matches_text_input(obj: QObject) -> bool:
+        """True when ``obj`` itself is a text-entry target."""
         if isinstance(obj, _TEXT_INPUT_TYPES):
+            return True
+        if isinstance(obj, QAbstractSpinBox):
             return True
         if isinstance(obj, QComboBox) and obj.isEditable():
             return True
+        if isinstance(obj, QWidget) and obj.testAttribute(Qt.WA_InputMethodEnabled):
+            policy = obj.focusPolicy()
+            if policy not in (Qt.NoFocus,):
+                return True
         return False
+
+    @classmethod
+    def _resolve_text_target(cls, obj: QObject) -> Optional[QWidget]:
+        """Walk ancestors so taps on spinbox internals still count."""
+        widget = obj if isinstance(obj, QWidget) else None
+        while widget is not None:
+            if cls._matches_text_input(widget):
+                return widget
+            widget = widget.parent()
+        return None
+
+    @staticmethod
+    def _focus_for_keyboard(widget: QWidget) -> None:
+        """Ensure the actual line editor has focus before onboard shows."""
+        try:
+            if isinstance(widget, QAbstractSpinBox):
+                editor = widget.lineEdit()
+                if editor is not None:
+                    editor.setFocus(Qt.MouseFocusReason)
+                    return
+            if isinstance(widget, QComboBox) and widget.isEditable():
+                editor = widget.lineEdit()
+                if editor is not None:
+                    editor.setFocus(Qt.MouseFocusReason)
+                    return
+            widget.setFocus(Qt.MouseFocusReason)
+        except Exception:
+            pass
+
+    def _raise_onboard(self) -> bool:
+        """Show an already-running onboard via D-Bus (best effort)."""
+        if os.path.basename(self._binary) != "onboard":
+            return False
+        if shutil.which("dbus-send") is None:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    "dbus-send",
+                    "--type=method_call",
+                    "--dest=org.onboard.Onboard",
+                    "/org/onboard/Onboard/Keyboard",
+                    "org.onboard.Onboard.Keyboard.Show",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            return result.returncode == 0
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OSK: dbus Show failed: %s", exc)
+            return False
 
     def _configure_onboard_window_mode(self) -> None:
         """One-shot gsettings tweak so onboard renders above the kiosk.
