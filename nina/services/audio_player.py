@@ -137,7 +137,7 @@ def _digital_gain_pct() -> int:
         pct = int(raw)
     except ValueError:
         return 100
-    return max(0, min(300, pct))
+    return max(0, min(150, pct))
 
 
 def _restore_volume_default_pct() -> int:
@@ -359,6 +359,7 @@ if [ "$mode" != "none" ]; then
     "$python_bin" - "$tmp" "$play" "$mode" "$raw_rate" "$gain_pct" <<'PY'
 import sys
 import wave
+import math
 
 src, dst, mode, rate_s, gain_s = sys.argv[1:6]
 with wave.open(src, "rb") as r:
@@ -376,8 +377,13 @@ def scale_sample(sample):
     if sampwidth != 2 or gain == 1.0:
         return sample
     v = int.from_bytes(sample, "little", signed=True)
-    v = max(-32768, min(32767, int(round(v * gain))))
-    return v.to_bytes(2, "little", signed=True)
+    scaled = (v / 32768.0) * gain
+    if gain > 1.0:
+        # Avoid harsh hard-clipping when the UI applies modest digital boost.
+        scaled = math.tanh(scaled * 1.2) / math.tanh(1.2)
+    scaled = max(-1.0, min(0.999969482421875, scaled))
+    out = int(round(scaled * 32768.0))
+    return out.to_bytes(2, "little", signed=True)
 
 out = bytearray()
 if channels == 1:
@@ -675,7 +681,7 @@ def get_app_audio_volume_pct() -> int:
 
 def set_app_audio_volume_pct(pct: int) -> int:
     """Set Nina app-level digital gain for future decoded clips."""
-    value = max(0, min(300, int(pct)))
+    value = max(0, min(150, int(pct)))
     os.environ["NINA_AUDIO_GAIN_PCT"] = str(value)
     return value
 

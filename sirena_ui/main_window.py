@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
             return
         raw = QSettings("Sirena", "Nina").value("audio/gain_pct", "")
         try:
-            gain = max(0, min(300, int(raw)))
+            gain = max(0, min(150, int(raw)))
         except (TypeError, ValueError):
             return
         os.environ["NINA_AUDIO_GAIN_PCT"] = str(gain)
