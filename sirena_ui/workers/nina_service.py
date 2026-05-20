@@ -35,6 +35,7 @@ from nina.sensors.battery_ads1115_monitor import BatteryAds1115Monitor
 from nina.sensors.touch_at42qt2120_monitor import TouchAt42qt2120Monitor
 from nina.sensors.mpu9250 import Mpu9250DriftMonitor, is_imu_monitor_enabled
 from nina.sensors.ir_obstacle_stop_monitor import IrObstacleStopMonitor
+from nina.sensors.esp32_trigger_monitor import Esp32TriggerMonitor
 from nina.services.audio_player import AudioPlayer
 from nina.services.sensor_alert_audio import (
     maybe_speak_low_battery,
@@ -83,6 +84,7 @@ class NinaService:
         self._ir_obstacle_start_detail: Optional[str] = None
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
+        self._esp32_trigger_monitor: Optional[Esp32TriggerMonitor] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
 
     @property
@@ -243,6 +245,87 @@ class NinaService:
                 )
             except Exception:
                 log.exception("Obstacle stop: neutral / brake pose failed")
+
+    def start_esp32_trigger_monitor(self) -> bool:
+        """Start GPIO poll for ESP32 trigger (default BCM 17 / pin 11 → namaste)."""
+        if not self.settings.esp32_trigger.enabled:
+            log.debug(
+                "ESP32 trigger monitor disabled "
+                "(set NINA_ESP32_TRIGGER_ENABLE=1 to enable)"
+            )
+            return False
+        mon = self._esp32_trigger_monitor
+        if mon is not None and mon.is_running():
+            return True
+        try:
+            mon = Esp32TriggerMonitor(self)
+            mon.start()
+            self._esp32_trigger_monitor = mon
+            return True
+        except Exception as exc:
+            self._esp32_trigger_monitor = None
+            log.warning("ESP32 trigger monitor did not start: %s", exc)
+            return False
+
+    def run_esp32_trigger_reaction(self, action_name: str) -> None:
+        """Stop drive and play a named gesture (with manifest audio if configured)."""
+        try:
+            if self._face_follow is not None:
+                try:
+                    self._face_follow.stop()
+                except Exception:
+                    pass
+            self.drive.stop(drain=True)
+        except Exception:
+            log.exception("ESP32 trigger: drive / face-follow stop failed")
+
+        if is_battery_motion_blocked():
+            try:
+                maybe_speak_low_battery()
+            except Exception:
+                pass
+            log.warning("ESP32 trigger: motion blocked (low battery)")
+            return
+
+        if not self._bus_ready:
+            try:
+                self.ensure_bus()
+            except Exception:
+                log.exception("ESP32 trigger: bus init failed")
+                return
+
+        audio_path = self.action_audio_path(action_name)
+        audio_offset = self.action_audio_offset(action_name) if audio_path else 0.0
+        audio_player = AudioPlayer()
+        audio_timer: Optional[threading.Timer] = None
+
+        try:
+            with self.bus_lock:
+                self.dxl._require_initialized()
+                if audio_path is not None:
+                    if audio_offset <= 0.0:
+                        audio_player.play(audio_path)
+                    else:
+                        audio_timer = threading.Timer(
+                            audio_offset,
+                            audio_player.play,
+                            args=(audio_path,),
+                        )
+                        audio_timer.daemon = True
+                        audio_timer.start()
+                self.action_runner.run_named_action(
+                    action_name,
+                    smooth=True,
+                    sub_hz=50.0,
+                    max_speed=1023,
+                    speed=1.0,
+                )
+        except Exception:
+            log.exception("ESP32 trigger: action '%s' failed", action_name)
+        finally:
+            if audio_timer is not None:
+                audio_timer.cancel()
+            audio_player.stop_all()
 
     def start_battery_ads1115_monitor(self) -> None:
         """Start ADS1115 pack-voltage monitor when enabled in settings."""
@@ -575,6 +658,12 @@ class NinaService:
             except Exception:
                 pass
             self._touch_monitor = None
+        if self._esp32_trigger_monitor is not None:
+            try:
+                self._esp32_trigger_monitor.stop()
+            except Exception:
+                pass
+            self._esp32_trigger_monitor = None
         if self._ir_obstacle_monitor is not None:
             try:
                 self._ir_obstacle_monitor.stop()

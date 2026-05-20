@@ -291,6 +291,25 @@ class TouchAt42qt2120Settings:
 
 
 @dataclass(frozen=True)
+class Esp32TriggerSettings:
+    """ESP32 digital trigger on Jetson 40-pin **physical pin 11** (BCM **17**), active-high.
+
+    When the line is pulled high, Nina plays a named arm action (default
+    ``namaste``). Uses the legacy E-stop 1 header pad (input only; navigation
+    does not drive it). Enable with ``NINA_ESP32_TRIGGER_ENABLE=1``.
+    """
+
+    enabled: bool
+    gpio_bcm: int
+    action_name: str
+    active_high: bool
+    debounce_reads: int
+    release_reads: int
+    cooldown_sec: float
+    poll_interval_sec: float
+
+
+@dataclass(frozen=True)
 class IrObstacleStopSettings:
     """GP2Y0E02B forward IR on header I²C (pins 3/5 → ``/dev/i2c-7``, addr **0x40**).
 
@@ -433,6 +452,7 @@ class NinaSettings:
     ir_obstacle_stop: IrObstacleStopSettings
     battery_ads1115: BatteryAds1115Settings
     touch_at42qt2120: TouchAt42qt2120Settings
+    esp32_trigger: Esp32TriggerSettings
 
 
 def serial_collision_warnings(settings: NinaSettings) -> list[str]:
@@ -849,6 +869,19 @@ def load_settings(repo_root: Path) -> NinaSettings:
         lean_goal=max(0, min(4095, _env_int("NINA_BATTERY_LEAN_GOAL", 2048))),
     )
 
+    esp32_trigger = Esp32TriggerSettings(
+        enabled=_env_bool("NINA_ESP32_TRIGGER_ENABLE", True),
+        gpio_bcm=max(0, min(27, _env_int("NINA_ESP32_TRIGGER_GPIO", 17))),
+        action_name=(
+            (os.environ.get("NINA_ESP32_TRIGGER_ACTION") or "").strip() or "namaste"
+        ),
+        active_high=not _env_bool("NINA_ESP32_TRIGGER_ACTIVE_LOW", False),
+        debounce_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_DEBOUNCE", 3))),
+        release_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_RELEASE_READS", 2))),
+        cooldown_sec=max(0.0, _env_float("NINA_ESP32_TRIGGER_COOLDOWN_SEC", 20.0)),
+        poll_interval_sec=max(0.02, _env_float("NINA_ESP32_TRIGGER_POLL_SEC", 0.05)),
+    )
+
     touch_at42qt2120 = TouchAt42qt2120Settings(
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
@@ -897,4 +930,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ir_obstacle_stop=ir_obstacle_stop,
         battery_ads1115=battery_ads1115,
         touch_at42qt2120=touch_at42qt2120,
+        esp32_trigger=esp32_trigger,
     )

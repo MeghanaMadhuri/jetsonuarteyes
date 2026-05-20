@@ -355,14 +355,8 @@ class NavigationManager:
         self._backend.setup()
         pins = self.config.pins
 
-        # E-stop pins are inputs in the RPi reference; configure as
-        # output is best-effort and silently skipped if the platform
-        # rejects it (some Orin Nano builds reserve these pads).
-        for pin in (pins.estop_1, pins.estop_2):
-            try:
-                self._backend.configure_output(pin)
-            except Exception:
-                log.debug("E-stop pin %s left as input", pin)
+        # E-stop header pads are digital inputs only (ESP32 trigger default:
+        # physical pin 11 / BCM 17). Do not configure them as outputs.
 
         for pin in (
             pins.led_red, pins.led_green, pins.led_blue,

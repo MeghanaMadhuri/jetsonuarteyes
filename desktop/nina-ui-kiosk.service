@@ -114,6 +114,11 @@ Environment=NINA_TOUCH_I2C_BUS=7
 # GP2Y0E02B IR cliff @ 0x40 (optional). If the sensor is not installed, set to 0
 # to avoid I2C open retries (and use NINA_IR_DISABLE=1 as an alternative).
 # Environment=NINA_IR_OBSTACLE_STOP_ENABLE=0
+
+# ESP32 digital trigger on 40-pin physical pin 11 (BCM 17) → namaste.
+Environment=NINA_ESP32_TRIGGER_ENABLE=1
+Environment=NINA_ESP32_TRIGGER_GPIO=17
+Environment=NINA_ESP32_TRIGGER_ACTION=namaste
 # Environment=NINA_BATTERY_R1_OHM=218000
 # Environment=NINA_BATTERY_R2_OHM=33000
 # Environment=NINA_BATTERY_CAL_SCALE=1.082
