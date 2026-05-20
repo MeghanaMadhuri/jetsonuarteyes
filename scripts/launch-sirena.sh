@@ -193,7 +193,7 @@ _apply_audio_ape_route_for_sirena() {
     local bits="${NINA_AUDIO_APE_BITS:-16}"
     local frame="${NINA_AUDIO_APE_FRAME_MODE:-i2s}"
     local master="${NINA_AUDIO_APE_MASTER_MODE:-cbs-cfs}"
-    local bclk="${NINA_AUDIO_APE_BCLK_RATIO:-64}"
+    local bclk="${NINA_AUDIO_APE_BCLK_RATIO:-16}"
     local fsync="${NINA_AUDIO_APE_FSYNC_WIDTH:-1}"
 
     echo "[audio] applying ${card} route: ${i2s}<=${mux} rate=${rate} ch=${channels} bits=${bits} frame=${frame} master=${master} bclk=${bclk} fsync=${fsync}"

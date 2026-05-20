@@ -50,7 +50,7 @@ This writes:
   NINA_AUDIO_APE_I2S=I2S5
   NINA_AUDIO_APE_MUX=ADMAIF1
   NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
-  NINA_AUDIO_APE_BCLK_RATIO=64
+  NINA_AUDIO_APE_BCLK_RATIO=16
   NINA_AUDIO_APE_FSYNC_WIDTH=1
 
 into:
@@ -203,7 +203,7 @@ NINA_AUDIO_APE_CHANNELS=2
 NINA_AUDIO_APE_BITS=16
 NINA_AUDIO_APE_FRAME_MODE=i2s
 NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
-NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_BCLK_RATIO=16
 NINA_AUDIO_APE_FSYNC_WIDTH=1
 EOF
 
@@ -224,7 +224,7 @@ amixer -c APE cset name='I2S5 Client Channels' 2 >/dev/null
 amixer -c APE cset name='I2S5 Client Bit Format' 16 >/dev/null
 amixer -c APE cset name='I2S5 codec frame mode' i2s >/dev/null
 amixer -c APE cset name='I2S5 codec master mode' cbs-cfs >/dev/null
-amixer -c APE cset name='I2S5 BCLK Ratio' 64 >/dev/null
+amixer -c APE cset name='I2S5 BCLK Ratio' 16 >/dev/null
 amixer -c APE cset name='I2S5 FSYNC Width' 1 >/dev/null
 
 if [[ "${RUN_TEST}" -eq 1 ]]; then

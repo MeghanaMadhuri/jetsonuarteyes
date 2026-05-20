@@ -29,7 +29,7 @@ NINA_AUDIO_APE_ROUTE=1
 NINA_AUDIO_APE_I2S=I2S5
 NINA_AUDIO_APE_MUX=ADMAIF1
 NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
-NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_BCLK_RATIO=16
 NINA_AUDIO_APE_FSYNC_WIDTH=1
 ```
 
@@ -179,7 +179,7 @@ NINA_AUDIO_APE_CHANNELS=2
 NINA_AUDIO_APE_BITS=16
 NINA_AUDIO_APE_FRAME_MODE=i2s
 NINA_AUDIO_APE_MASTER_MODE=cbs-cfs
-NINA_AUDIO_APE_BCLK_RATIO=64
+NINA_AUDIO_APE_BCLK_RATIO=16
 NINA_AUDIO_APE_FSYNC_WIDTH=1
 ```
 
@@ -208,7 +208,7 @@ amixer -c APE cset name='I2S5 Client Channels' 2
 amixer -c APE cset name='I2S5 Client Bit Format' 16
 amixer -c APE cset name='I2S5 codec frame mode' i2s
 amixer -c APE cset name='I2S5 codec master mode' cbs-cfs
-amixer -c APE cset name='I2S5 BCLK Ratio' 64
+amixer -c APE cset name='I2S5 BCLK Ratio' 16
 amixer -c APE cset name='I2S5 FSYNC Width' 1
 ```
 
