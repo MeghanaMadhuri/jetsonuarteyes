@@ -557,7 +557,12 @@ fun SirenaDriveScreen(
                                 motionBusy = true
                                 straightRunning = true
                                 try {
-                                    val ready = vm.awaitDriveHardwareReady()
+                                    val ready =
+                                        if (driveConnected) {
+                                            vm.fetchRobotDriveStatus()
+                                        } else {
+                                            vm.awaitDriveHardwareReady()
+                                        }
                                     if (ready?.optBoolean("connected") != true) {
                                         actionErr =
                                             ready?.optString("message").orEmpty().ifBlank {
@@ -594,7 +599,12 @@ fun SirenaDriveScreen(
                                 motionBusy = true
                                 straightRunning = true
                                 try {
-                                    val ready = vm.awaitDriveHardwareReady()
+                                    val ready =
+                                        if (driveConnected) {
+                                            vm.fetchRobotDriveStatus()
+                                        } else {
+                                            vm.awaitDriveHardwareReady()
+                                        }
                                     if (ready?.optBoolean("connected") != true) {
                                         actionErr =
                                             ready?.optString("message").orEmpty().ifBlank {
