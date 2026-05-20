@@ -8,7 +8,7 @@ from typing import List
 from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS
+from nina.config.motor_ids import ACTION_MOTOR_IDS, EXPECTED_DYNAMIXEL_IDS
 from nina.controllers.hoverboard_axis_drive import HoverboardAxisDrive
 from nina.controllers.navigation_manager import DEFAULT_PINS, jetson_orin_nano_board_pin
 from nina.services.audio_player import AudioPlayer
@@ -361,8 +361,8 @@ def main() -> None:
         try:
             ensure_motors_ready(dxl)
 
-            print("Releasing torque on all motors so you can move the arm by hand...")
-            dxl.set_torque_all(False)
+            print("Releasing torque on arm motors so you can move the arm by hand...")
+            dxl.set_torque_for_ids(ACTION_MOTOR_IDS, False)
 
             countdown = max(0.0, float(args.countdown))
             if countdown > 0:
@@ -385,7 +385,7 @@ def main() -> None:
 
             if args.hold_after:
                 print("Re-enabling torque so the arm holds its current pose.")
-                dxl.set_torque_all(True)
+                dxl.set_torque_for_ids(ACTION_MOTOR_IDS, True)
             else:
                 print("Leaving torque released; the arm is free to move. Run `startup` or `run-action <name>` to re-engage torque.")
 

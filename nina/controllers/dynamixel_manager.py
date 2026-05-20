@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from nina.config.motor_ids import ACTION_MOTOR_IDS
 from nina.models.types import HealthReport
 
 
@@ -114,6 +115,18 @@ class DynamixelManager:
             detail=detail,
         )
 
+    def set_torque_for_ids(self, motor_ids: List[int], enable: bool) -> None:
+        """Broadcast SyncWrite to flip torque on the given motor IDs."""
+        self._require_initialized()
+        value = 1 if enable else 0
+        payload = {
+            sid: [value]
+            for sid in motor_ids
+            if sid in self.expected_motor_ids
+        }
+        if payload:
+            self.sync_write(*REG_TORQUE_ENABLE, payload)
+
     def set_torque_all(self, enable: bool) -> None:
         """Broadcast a single SyncWrite to flip torque on every motor.
 
@@ -126,10 +139,43 @@ class DynamixelManager:
         the update or none do. Use `set_torque_all_verified()` if you
         need the stronger "every motor confirms" guarantee.
         """
+        self.set_torque_for_ids(self.expected_motor_ids, enable)
+
+    def set_torque_for_ids_verified(
+        self,
+        motor_ids: List[int],
+        enable: bool,
+        *,
+        max_attempts: int = 4,
+    ) -> List[int]:
+        """Like `set_torque_for_ids`, but read back and retry stragglers.
+
+        Returns motor IDs that could not be confirmed after `max_attempts`.
+        """
         self._require_initialized()
-        value = 1 if enable else 0
-        payload = {sid: [value] for sid in self.expected_motor_ids}
-        self.sync_write(*REG_TORQUE_ENABLE, payload)
+        ids = [sid for sid in motor_ids if sid in self.expected_motor_ids]
+        if not ids:
+            return []
+        target = 1 if enable else 0
+        for attempt in range(max(1, max_attempts)):
+            self.set_torque_for_ids(ids, enable)
+            time.sleep(0.01)
+            stragglers: List[int] = []
+            for sid in ids:
+                actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+                if actual is None or actual != target:
+                    stragglers.append(sid)
+            if not stragglers:
+                return []
+            for sid in stragglers:
+                self.write_reg(sid, *REG_TORQUE_ENABLE, target)
+            time.sleep(0.01 * (attempt + 1))
+        unresolved: List[int] = []
+        for sid in ids:
+            actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+            if actual is None or actual != target:
+                unresolved.append(sid)
+        return unresolved
 
     def set_torque_all_verified(
         self,
@@ -144,29 +190,9 @@ class DynamixelManager:
         usable either way; the caller can decide whether to abort or
         continue with a warning.
         """
-        self._require_initialized()
-        target = 1 if enable else 0
-        for attempt in range(max(1, max_attempts)):
-            self.set_torque_all(enable)
-            time.sleep(0.01)
-            stragglers: List[int] = []
-            for sid in self.expected_motor_ids:
-                actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
-                if actual is None or actual != target:
-                    stragglers.append(sid)
-            if not stragglers:
-                return []
-            # Targeted retry on just the holdouts before re-broadcasting.
-            for sid in stragglers:
-                self.write_reg(sid, *REG_TORQUE_ENABLE, target)
-            time.sleep(0.01 * (attempt + 1))
-        # Final readback after the last targeted retry round.
-        unresolved: List[int] = []
-        for sid in self.expected_motor_ids:
-            actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
-            if actual is None or actual != target:
-                unresolved.append(sid)
-        return unresolved
+        return self.set_torque_for_ids_verified(
+            self.expected_motor_ids, enable, max_attempts=max_attempts
+        )
 
     def execute_action_file(self, action_path: Path) -> None:
         self._require_initialized()
@@ -210,10 +236,10 @@ class DynamixelManager:
         sub_dt = 1.0 / sub_hz
         speed = max(0.05, float(speed))
 
-        self.set_moving_speed_all(max_speed)
+        self.set_moving_speed_for_ids(ACTION_MOTOR_IDS, max_speed)
 
         present: Dict[int, int] = {}
-        for sid in self.expected_motor_ids:
+        for sid in ACTION_MOTOR_IDS:
             v = self.read_reg(sid, *REG_PRESENT_POS)
             if v is not None:
                 present[sid] = self._clamp_pos(v)
@@ -273,17 +299,26 @@ class DynamixelManager:
             payload[sid] = [sp & 0xFF, (sp >> 8) & 0xFF]
         self.sync_write(*REG_MOVING_SPEED, payload)
 
-    def set_moving_speed_all(self, speed: int) -> None:
+    def set_moving_speed_for_ids(self, motor_ids: List[int], speed: int) -> None:
         speed = max(0, min(1023, int(speed)))
         lo = speed & 0xFF
         hi = (speed >> 8) & 0xFF
-        payload = {sid: [lo, hi] for sid in self.expected_motor_ids}
-        self.sync_write(*REG_MOVING_SPEED, payload)
+        payload = {
+            sid: [lo, hi]
+            for sid in motor_ids
+            if sid in self.expected_motor_ids
+        }
+        if payload:
+            self.sync_write(*REG_MOVING_SPEED, payload)
+
+    def set_moving_speed_all(self, speed: int) -> None:
+        self.set_moving_speed_for_ids(self.expected_motor_ids, speed)
 
     def capture_frame(self, duration: float, speed: int = 200, delay: float = 0.0) -> Dict[str, Any]:
+        """Sample present positions for action recording (arm/neck only, not lean axes)."""
         self._require_initialized()
         servos = {}
-        for sid in self.expected_motor_ids:
+        for sid in ACTION_MOTOR_IDS:
             present = self.read_reg(sid, *REG_PRESENT_POS)
             if present is not None:
                 servos[str(sid)] = {"type": "absolute", "value": self._clamp_pos(present)}
@@ -380,7 +415,7 @@ class DynamixelManager:
                 sid = int(raw_sid)
             except (TypeError, ValueError):
                 continue
-            if sid not in self.expected_motor_ids:
+            if sid not in ACTION_MOTOR_IDS:
                 continue
             if spec.get("type", "absolute") != "absolute":
                 continue
@@ -399,12 +434,12 @@ class DynamixelManager:
         if delay > 0:
             time.sleep(delay)
 
-        for sid in self.expected_motor_ids:
+        for sid in ACTION_MOTOR_IDS:
             self.write_reg(sid, *REG_MOVING_SPEED, speed)
 
         for raw_sid, spec in servos.items():
             sid = int(raw_sid)
-            if sid not in self.expected_motor_ids:
+            if sid not in ACTION_MOTOR_IDS:
                 continue
             if spec.get("type", "absolute") != "absolute":
                 raise ValueError(f"Unsupported servo command type for S{sid}: {spec.get('type')}")

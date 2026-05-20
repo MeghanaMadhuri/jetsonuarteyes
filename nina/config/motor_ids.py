@@ -6,4 +6,7 @@ from typing import List
 ARM_MOTOR_IDS: List[int] = list(range(1, 12))
 HOVERBOARD_LEAN_IDS: List[int] = [12, 13]
 
+# Recorded actions and playback: arm/neck only (not BLDC lean axes).
+ACTION_MOTOR_IDS: List[int] = ARM_MOTOR_IDS
+
 EXPECTED_DYNAMIXEL_IDS: List[int] = ARM_MOTOR_IDS + HOVERBOARD_LEAN_IDS

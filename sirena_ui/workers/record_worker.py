@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from nina.config.motor_ids import ACTION_MOTOR_IDS
 from nina.sensors.ads1115 import is_battery_motion_blocked
 from nina.services.sensor_alert_audio import maybe_speak_low_battery
 from sirena_ui.workers.error_hints import explain_error
@@ -69,7 +70,7 @@ class RecordWorker(QThread):
                 # this once with no readback was leaving 1-2 motors
                 # rigid mid-recording, which made manual posing
                 # impossible.
-                stragglers = dxl.set_torque_all_verified(False)
+                stragglers = dxl.set_torque_for_ids_verified(ACTION_MOTOR_IDS, False)
                 if stragglers:
                     self.failed.emit(
                         "Could not release torque on motor(s) "
@@ -102,7 +103,7 @@ class RecordWorker(QThread):
                         break
                     if i > 0 and i % refresh_every == 0:
                         try:
-                            dxl.set_torque_all(False)
+                            dxl.set_torque_for_ids(ACTION_MOTOR_IDS, False)
                         except Exception:
                             # Don't let a transient bus blip kill the
                             # recording - the next iteration will retry.
@@ -113,7 +114,7 @@ class RecordWorker(QThread):
                     time.sleep(interval)
 
                 if self._hold_after:
-                    dxl.set_torque_all(True)
+                    dxl.set_torque_for_ids(ACTION_MOTOR_IDS, True)
 
                 out_path: Path = self._service.settings.recordings_dir / f"{self._name}.json"
                 payload = {
@@ -136,6 +137,6 @@ class RecordWorker(QThread):
     def _abort(self, reason: str) -> None:
         try:
             if self._hold_after:
-                self._service.dxl.set_torque_all(True)
+                self._service.dxl.set_torque_for_ids(ACTION_MOTOR_IDS, True)
         finally:
             self.failed.emit(reason)
