@@ -363,7 +363,7 @@ with wave.open(dst, "wb") as w:
     w.setframerate(rate)
     w.writeframes(bytes(out))
 PY
-else:
+else
     if [ -n "$rate" ]; then
         "$mpg" -q -r "$rate" -w "$tmp" "$src"
     else
