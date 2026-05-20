@@ -1494,6 +1494,17 @@ def _hover_turn_slow_wheel_pct() -> int:
         return 8
 
 
+def _drive_turn_micro_step_deg() -> float:
+    """Yaw budget (deg) for one held D-pad L/R step or one Turn left/right click."""
+    deg_raw = (os.environ.get("NINA_DRIVE_TURN_PIVOT_DEG") or "15").strip()
+    if deg_raw:
+        try:
+            return max(1.0, min(45.0, float(deg_raw)))
+        except ValueError:
+            pass
+    return 15.0
+
+
 def _timed_turn_pivot_blend_pct() -> int:
     """How far timed Turn left/right lean toward full pivot (1–100).
 
@@ -1797,6 +1808,9 @@ class HoverboardAxisDrive:
         self._pulse_series_thread: Optional[threading.Thread] = None
         self._pulse_halt = threading.Event()
         self._last_straight_key: Optional[str] = None
+        # Held D-pad L/R and single-click Turn buttons share one IMU session.
+        self._hold_turn_session_dir: Optional[str] = None
+        self._hold_turn_yaw_current: float = 0.0
 
         # IMU yaw-correction hooks (wired from NinaService when the MPU-9250
         # monitor is enabled). All three may be None on dev hosts without IMU.
@@ -2680,9 +2694,6 @@ class HoverboardAxisDrive:
         """
         if not self._is_initialized:
             return
-        if not self.is_forward_pulse_enabled():
-            self.forward(speed_percent)
-            return
         _ = speed_percent  # reserved; speed is encoded in the calibrated lean
         self._halt_pulse_series(wait=True)
         log.info(
@@ -2745,13 +2756,8 @@ class HoverboardAxisDrive:
         not used — the lean magnitude comes entirely from the
         operator-validated ``backward_pos_*`` tune.
 
-        If ``pulse_forward_enabled`` is False, falls back to the
-        continuous ``backward()`` set-and-hold (no drift correction).
         """
         if not self._is_initialized:
-            return
-        if not self.is_forward_pulse_enabled():
-            self.backward(speed_percent)
             return
         _ = speed_percent  # reserved; speed is encoded in the calibrated lean
         self._halt_pulse_series(wait=True)
@@ -3995,6 +4001,202 @@ class HoverboardAxisDrive:
         if dur > 0.0:
             time.sleep(dur)
         self.stop(settle=False)
+
+    def _hold_turn_brake_goals(self) -> Dict[int, int]:
+        return {
+            self._left_id: self._brake_left,
+            self._right_id: self._brake_right,
+        }
+
+    def _begin_hold_turn_session(self, direction: str) -> bool:
+        """Anchor IMU for held D-pad L/R or a single Turn-button micro-step."""
+        if not self._is_initialized:
+            return False
+        direction = (direction or "").strip().lower()
+        if direction not in ("left", "right"):
+            return False
+        if self._hold_turn_session_dir == direction:
+            return True
+
+        self.end_hold_turn_session()
+        self._halt_pulse_series(wait=True)
+        brake_goals = self._hold_turn_brake_goals()
+        try:
+            self._apply_goals(brake_goals)
+        except Exception:
+            log.debug("hold turn: pre-brake apply failed", exc_info=True)
+
+        turn_halt = threading.Event()
+        pre_status, pre_elapsed, pre_rate = self._active_settle_until_still(
+            turn_halt, context=f"hold turn ({direction}) pre"
+        )
+        if pre_status == "no_rate":
+            pre_settle = _imu_turn_pre_settle_sec()
+            if pre_settle > 0.0:
+                time.sleep(pre_settle)
+        elif pre_status == "settled":
+            log.debug(
+                "hover hold turn (%s): pre-settle done in %.3fs (last rate %+.2f deg/s)",
+                direction,
+                pre_elapsed,
+                pre_rate,
+            )
+
+        yaw_fn = self._imu_yaw_drift_fn
+        if yaw_fn is None:
+            return False
+
+        self._imu_begin_straight()
+        initial = self._poll_yaw_until_ready(yaw_fn, timeout_sec=0.5)
+        if initial is None:
+            self._imu_end_straight()
+            return False
+
+        invert = _imu_corr_invert_sign()
+        self._hold_turn_session_dir = direction
+        self._hold_turn_yaw_current = (
+            -float(initial) if invert else float(initial)
+        )
+        log.info(
+            "hover hold turn (%s): session begin yaw=%+.2f deg",
+            direction,
+            self._hold_turn_yaw_current,
+        )
+        return True
+
+    def end_hold_turn_session(self) -> None:
+        """End IMU session after D-pad L/R release or one-shot Turn click."""
+        if self._hold_turn_session_dir is None:
+            return
+        direction = self._hold_turn_session_dir
+        try:
+            try:
+                self._apply_goals(self._hold_turn_brake_goals())
+            except Exception:
+                log.debug("hold turn: post-brake apply failed", exc_info=True)
+            post_halt = threading.Event()
+            post_status, _, _ = self._active_settle_until_still(
+                post_halt, context=f"hold turn ({direction}) post"
+            )
+            if post_status == "no_rate":
+                post_settle = _imu_turn_post_settle_sec()
+                if post_settle > 0.0:
+                    time.sleep(post_settle)
+            self._imu_end_straight()
+        finally:
+            self._hold_turn_session_dir = None
+            self._hold_turn_yaw_current = 0.0
+
+    def _imu_turn_run_one_step(
+        self,
+        direction: str,
+        remaining_deg: float,
+        *,
+        step_index: int,
+    ) -> Optional[float]:
+        """One closed-loop pivot step; returns updated yaw in intent frame."""
+        step_blend = _imu_turn_step_blend_pct()
+        step_rate = _imu_turn_step_rate_deg_per_sec()
+        step_dur_cap = _imu_corr_pivot_max_sec()
+        step_min = _imu_corr_step_min_sec()
+        step_settle = _imu_corr_step_settle_sec()
+        swap_pivot = _imu_turn_swap_pivot_dir()
+        brake_goals = self._hold_turn_brake_goals()
+        turn_halt = threading.Event()
+
+        pivot_right_decision = remaining_deg > 0.0
+        apply_right_goals = (
+            not pivot_right_decision if swap_pivot else pivot_right_decision
+        )
+        if apply_right_goals:
+            step_goals = self._goals_for_wheels(
+                left_dir=self.DIR_BACKWARD,
+                left_speed=step_blend,
+                right_dir=self.DIR_FORWARD,
+                right_speed=step_blend,
+            )
+        else:
+            step_goals = self._goals_for_wheels(
+                left_dir=self.DIR_FORWARD,
+                left_speed=step_blend,
+                right_dir=self.DIR_BACKWARD,
+                right_speed=step_blend,
+            )
+
+        rotation_target = max(0.5, abs(remaining_deg))
+        this_step_dur = max(
+            step_min,
+            min(step_dur_cap, rotation_target / step_rate),
+        )
+        try:
+            self._apply_goals(step_goals)
+        except Exception:
+            log.debug(
+                "hover hold turn (%s): step apply failed",
+                direction,
+                exc_info=True,
+            )
+        time.sleep(this_step_dur)
+        try:
+            self._apply_goals(brake_goals)
+        except Exception:
+            pass
+        settle_status, settle_elapsed, _ = self._active_settle_until_still(
+            turn_halt,
+            context=f"hold turn ({direction}) step {step_index}",
+        )
+        if settle_status == "no_rate" and step_settle > 0.0:
+            time.sleep(step_settle)
+        elif settle_status == "settled":
+            log.debug(
+                "hover hold turn (%s): step %d settled in %.3fs",
+                direction,
+                step_index,
+                settle_elapsed,
+            )
+
+        yaw_fn = self._imu_yaw_drift_fn
+        if yaw_fn is None:
+            return None
+        invert = _imu_corr_invert_sign()
+        raw = yaw_fn()
+        if raw is None:
+            return None
+        return -float(raw) if invert else float(raw)
+
+    def pulse_turn_micro_step(self, direction: str) -> bool:
+        """One ~``NINA_DRIVE_TURN_PIVOT_DEG`` closed-loop pivot (held L/R or Turn click)."""
+        if not self._is_initialized:
+            return False
+        direction = (direction or "").strip().lower()
+        if direction not in ("left", "right"):
+            log.warning(
+                "pulse_turn_micro_step: unknown direction %r (expected 'left' / 'right')",
+                direction,
+            )
+            return False
+        if not self._begin_hold_turn_session(direction):
+            log.warning(
+                "pulse_turn_micro_step(%s): no IMU session — caller should use timed fallback",
+                direction,
+            )
+            return False
+
+        budget = _drive_turn_micro_step_deg()
+        remaining = budget if direction == "right" else -budget
+        step_idx = 1
+        sample = self._imu_turn_run_one_step(
+            direction, remaining, step_index=step_idx,
+        )
+        if sample is not None:
+            self._hold_turn_yaw_current = sample
+            log.debug(
+                "hover hold turn (%s): micro-step %d yaw=%+.2f deg",
+                direction,
+                step_idx,
+                sample,
+            )
+        return True
 
     def pulse_turn_90(self, direction: str) -> bool:
         """Closed-loop ~90° in-place turn driven by the IMU yaw integrator.

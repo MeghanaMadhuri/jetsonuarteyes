@@ -1377,7 +1377,7 @@ def test_forward_loop_zero_abort_disables_safety_stop() -> None:
             time.sleep(0.15)
             still_running = hb.is_forward_pulse_active()
             hb.stop()
-    _wait_until_idle(hb)
+            _wait_until_idle(hb)
     assert still_running, "abort=0 should keep loop alive at 120° drift"
     assert spoken["n"] == 0, "no alert should fire when abort is disabled"
 
@@ -1398,7 +1398,7 @@ def test_forward_loop_stops_after_stop() -> None:
         n_before = len(dxl.goal_writes)
         hb.stop()
         time.sleep(0.20)
-    n_after = len(dxl.goal_writes)
+        n_after = len(dxl.goal_writes)
     assert n_after <= n_before + 40, "loop kept writing long after stop()"
     assert not hb.is_forward_pulse_active()
 
@@ -1421,15 +1421,13 @@ def test_set_wheels_halts_loop() -> None:
     assert not hb.is_forward_pulse_active()
 
 
-def test_start_pulse_disabled_falls_back_to_forward_goals() -> None:
+def test_start_pulse_always_runs_imu_forward_series() -> None:
+    """Manual straight always uses drift-corrected pulse (flag no longer disables)."""
     axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
     hb, dxl = _make_hb(axis)
     dxl.goal_writes.clear()
     hb.start_pulse_straight_forward(40)
-    assert not hb.is_forward_pulse_active()
-    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    assert dxl.goal_writes[-1] == {12: fl, 13: fr}
+    assert hb.is_forward_pulse_active()
 
 
 def test_forward_loop_ends_at_full_brake_on_stop() -> None:
@@ -1506,7 +1504,7 @@ def test_backward_loop_cycles_drive_then_brake() -> None:
         hb.start_pulse_straight_backward(50)
         time.sleep(0.30)
         hb.stop()
-    _wait_until_idle(hb)
+        _wait_until_idle(hb)
 
     # Per-side defaults are 0 / 0 → no nudge → both wheels drive the
     # bare calibrated ``backward_pos_*`` (2000 / 2000 on the fast
@@ -1877,10 +1875,8 @@ def test_backward_loop_honors_per_side_env_overrides_end_to_end() -> None:
     )
 
 
-def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
-    """When ``pulse_forward_enabled`` is False, ``start_pulse_straight_backward``
-    falls back to the continuous ``backward()`` set-and-hold (no drift
-    correction, no priming loop)."""
+def test_start_pulse_backward_always_runs_imu_series() -> None:
+    """Manual straight back always uses drift-corrected pulse."""
     dxl = FakeDxl()
     axis = replace(_axis_pulse_fast(), pulse_forward_enabled=False)
     cfg = SimpleNamespace(
@@ -1893,13 +1889,7 @@ def test_start_pulse_backward_disabled_falls_back_to_backward_goals() -> None:
     hb.initialize()
     dxl.goal_writes.clear()
     hb.start_pulse_straight_backward(40)
-    assert not hb.is_forward_pulse_active()
-    # Per-side defaults are 0 / 0 → no nudge → bare calibrated
-    # backward lean on both sides (2000 / 2000 on the fast fixture).
-    # Both the disabled-pulse ``backward()`` fallback AND the live
-    # drift-corrected loop go through the same ``_goals_for_wheels``
-    # backward branch, so both behave the same.
-    assert dxl.goal_writes[-1] == {12: 2000, 13: 2000}
+    assert hb.is_forward_pulse_active()
 
 
 # ---------------------------------------------------------------------------

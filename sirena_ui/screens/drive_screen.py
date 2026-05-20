@@ -9,19 +9,11 @@ shows the error—buttons still update internal state but servos will not move.
 
 Two input modes are supported:
 
-* On-screen D-pad — press and hold a direction (lean axes tilt from the
-  configured brake pose).
-* **Turn left / Turn right** — timed in-place pivots using opposite
-  ``NINA_HOVER_FWD_*`` / ``NINA_HOVER_REV_*`` lean goals (same corners as straight
-  FWD/REV, but no straight-line prime first). Turn buttons: **0.3 s** hold by default
-  (``NINA_NAV_TURN_SEC``).
-  Override: ``NINA_DRIVE_TURN_90_SEC`` /
-  ``NINA_NAV_TURN_SEC``; pivot angle ``NINA_DRIVE_TURN_PIVOT_DEG`` (default **15**° of 90°).
-  Extra lean vs brake:
-  ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``NINA_HOVER_SWAP_TURN_LR`` defaults on for this bot; set ``0`` if
-  left/right pivots feel reversed.
-* D-pad **left/right** repeat the same timed ~15° steps as Turn left/right while held
-  (``NINA_DRIVE_TURN_PIVOT_DEG`` / ``NINA_NAV_TURN_SEC`` per step).
+* On-screen D-pad — press and hold one direction at a time (other arrows grey out).
+  **Forward/back** always use IMU straight pulse on hoverboard; **left/right** fire
+  closed-loop micro-steps (~``NINA_DRIVE_TURN_PIVOT_DEG``) on an interval while held
+  (``NINA_DRIVE_HOLD_TURN_INTERVAL_SEC``).
+* **Turn left / Turn right** — one micro-step per click (same geometry as held L/R).
 * Keyboard — W/A/S/D forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
@@ -442,9 +434,9 @@ class DriveScreen(QWidget):
         dpad_row.setContentsMargins(0, 0, 0, 0)
         dpad_row.addStretch(1)
         self._dpad = DPad()
-        self._dpad.direction_pressed.connect(self._drive.drive)
-        self._dpad.direction_released.connect(lambda _d: self._drive.stop())
-        self._dpad.stop_clicked.connect(self._drive.stop)
+        self._dpad.direction_pressed.connect(self._on_dpad_pressed)
+        self._dpad.direction_released.connect(self._on_dpad_released)
+        self._dpad.stop_clicked.connect(self._on_dpad_stop)
         dpad_row.addWidget(self._dpad)
         dpad_row.addStretch(1)
         card.add_layout(dpad_row)
@@ -803,6 +795,18 @@ class DriveScreen(QWidget):
         self._restore_after_straight_test()
         self.setFocus()
 
+    def _on_dpad_pressed(self, direction: str) -> None:
+        self._dpad.set_exclusive_direction(direction)
+        self._drive.drive(direction)
+
+    def _on_dpad_released(self, _direction: str) -> None:
+        self._dpad.set_exclusive_direction(None)
+        self._drive.stop()
+
+    def _on_dpad_stop(self) -> None:
+        self._dpad.set_exclusive_direction(None)
+        self._drive.stop()
+
     def _on_turn_90_clicked(self, which: str) -> None:
         if self._autonomy_ctrl().is_enabled():
             QMessageBox.warning(
@@ -1056,10 +1060,13 @@ class DriveScreen(QWidget):
                 event.accept()
                 return
             self._kb_active_key = key
-            self._drive.drive(_KEY_TO_DIRECTION[key])
+            direction = _KEY_TO_DIRECTION[key]
+            self._dpad.set_exclusive_direction(direction)
+            self._drive.drive(direction)
             event.accept()
             return
         if key == Qt.Key_Space:
+            self._dpad.set_exclusive_direction(None)
             self._drive.stop()
             event.accept()
             return
@@ -1075,6 +1082,7 @@ class DriveScreen(QWidget):
         key = event.key()
         if key in _KEY_TO_DIRECTION and key == self._kb_active_key:
             self._kb_active_key = None
+            self._dpad.set_exclusive_direction(None)
             self._drive.stop()
             event.accept()
             return

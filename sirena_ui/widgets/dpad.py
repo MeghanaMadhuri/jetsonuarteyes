@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QGridLayout,
@@ -43,6 +45,9 @@ class DPad(QWidget):
         grid.addWidget(self._right, 1, 2)
         grid.addWidget(self._back,  2, 1)
 
+        self._pad_enabled = True
+        self._exclusive_direction: Optional[str] = None
+
     def _make_btn(self, label: str, direction: str) -> QPushButton:
         btn = QPushButton(label)
         btn.setObjectName("dpadButton")
@@ -55,6 +60,28 @@ class DPad(QWidget):
         btn.released.connect(lambda d=direction: self.direction_released.emit(d))
         return btn
 
+    def _refresh_buttons(self) -> None:
+        exclusive = self._exclusive_direction
+        for dir_name, btn in (
+            ("forward", self._fwd),
+            ("back", self._back),
+            ("left", self._left),
+            ("right", self._right),
+        ):
+            btn.setEnabled(
+                self._pad_enabled
+                and (exclusive is None or exclusive == dir_name)
+            )
+        self._stop.setEnabled(self._pad_enabled)
+
     def set_enabled(self, enabled: bool) -> None:
-        for btn in (self._fwd, self._back, self._left, self._right, self._stop):
-            btn.setEnabled(enabled)
+        """Enable or disable the whole pad (e.g. brake / autonomy)."""
+        self._pad_enabled = enabled
+        if not enabled:
+            self._exclusive_direction = None
+        self._refresh_buttons()
+
+    def set_exclusive_direction(self, direction: Optional[str]) -> None:
+        """Grey out all direction keys except *direction* and STOP (one pad at a time)."""
+        self._exclusive_direction = direction
+        self._refresh_buttons()

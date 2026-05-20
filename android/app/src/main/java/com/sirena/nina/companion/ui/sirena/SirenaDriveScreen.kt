@@ -202,6 +202,7 @@ fun SirenaDriveScreen(
     val visionOn = caps?.optBoolean("vision_bridge_enabled") ?: false
     var straightRunning by remember { mutableStateOf(false) }
     var keyboardDriveDir by remember { mutableStateOf<String?>(null) }
+    var activePadDir by remember { mutableStateOf<String?>(null) }
     var cameraPreviewOn by remember { mutableStateOf(false) }
     var bldcConnected by remember { mutableStateOf<Boolean?>(null) }
     var bldcInitializing by remember { mutableStateOf(false) }
@@ -268,7 +269,9 @@ fun SirenaDriveScreen(
         var statusFailStreak = 0
         while (isActive) {
             val operatorDriving =
-                driveHoldJob?.isActive == true || keyboardDriveDir != null
+                driveHoldJob?.isActive == true
+                    || keyboardDriveDir != null
+                    || activePadDir != null
             val pollMs =
                 when {
                     straightRunning -> 50L
@@ -414,6 +417,7 @@ fun SirenaDriveScreen(
                                     vm,
                                     emergency = true,
                                     onUiStopped = {
+                                        activePadDir = null
                                         brakeOn = true
                                         straightRunning = false
                                     },
@@ -423,11 +427,13 @@ fun SirenaDriveScreen(
                             }
                             KeyEvent.KEYCODE_SPACE -> {
                                 keyboardDriveDir = null
+                                activePadDir = null
                                 launchDriveHalt(
                                     scope,
                                     vm,
                                     emergency = false,
                                     onUiStopped = {
+                                        activePadDir = null
                                         brakeOn = true
                                         straightRunning = false
                                     },
@@ -437,8 +443,10 @@ fun SirenaDriveScreen(
                             }
                         }
                         if (dir == null || brakeOn) return@onPreviewKeyEvent false
+                        if (activePadDir != null && activePadDir != dir) return@onPreviewKeyEvent true
                         if (keyboardDriveDir == dir) return@onPreviewKeyEvent true
                         keyboardDriveDir = dir
+                        activePadDir = dir
                         scope.launch {
                             try {
                                 val j = vm.robotDriveHold(dir)
@@ -452,6 +460,7 @@ fun SirenaDriveScreen(
                     KeyEventType.KeyUp -> {
                         if (dir == null || keyboardDriveDir != dir) return@onPreviewKeyEvent false
                         keyboardDriveDir = null
+                        activePadDir = null
                         scope.launch {
                             try {
                                 vm.robotDriveHoldStop()
@@ -649,14 +658,17 @@ fun SirenaDriveScreen(
                             }
                         },
                         onOpenMotionCalibration = onOpenMotionCalibration,
+                        activePadDir = activePadDir,
                         onDriveHoldStart = { dir ->
                             when {
                                 straightRunning ->
                                     actionErr = "Wait for straight test to finish."
                                 brakeOn ->
                                     actionErr = "Release brake to drive."
+                                activePadDir != null && activePadDir != dir -> Unit
                                 else -> {
                                     actionErr = null
+                                    activePadDir = dir
                                     driveHoldJob?.cancel()
                                     driveHoldJob =
                                         scope.launch {
@@ -674,6 +686,7 @@ fun SirenaDriveScreen(
                             }
                         },
                         onDriveHoldStop = {
+                            activePadDir = null
                             driveHoldJob?.cancel()
                             driveHoldJob = null
                             scope.launch {
@@ -687,11 +700,13 @@ fun SirenaDriveScreen(
                             }
                         },
                         onDriveStopWithBrake = {
+                            activePadDir = null
                             launchDriveHalt(
                                 scope,
                                 vm,
                                 emergency = false,
                                 onUiStopped = {
+                                    activePadDir = null
                                     brakeOn = true
                                     straightRunning = false
                                 },
@@ -825,11 +840,13 @@ fun SirenaDriveScreen(
                             }
                         },
                         onEstop = {
+                            activePadDir = null
                             launchDriveHalt(
                                 scope,
                                 vm,
                                 emergency = true,
                                 onUiStopped = {
+                                    activePadDir = null
                                     brakeOn = true
                                     straightRunning = false
                                 },
@@ -1017,6 +1034,7 @@ private fun ControlCard(
     straightRunning: Boolean,
     brakeOn: Boolean,
     reverseOn: Boolean,
+    activePadDir: String?,
     onBrakeChange: (Boolean) -> Unit,
     onReverseChange: (Boolean) -> Unit,
     onDriveHoldStart: (String) -> Unit,
@@ -1030,8 +1048,10 @@ private fun ControlCard(
     onOpenMotionCalibration: (() -> Unit)?,
 ) {
     var autoComingSoonOpen by remember { mutableStateOf(false) }
-    val padMovesEnabled = bridgeOn && !brakeOn && !straightRunning
-    val timedMovesEnabled = bridgeOn && !brakeOn && !straightRunning
+    val padBaseEnabled = bridgeOn && !brakeOn && !straightRunning
+    fun padDirEnabled(dir: String) =
+        padBaseEnabled && (activePadDir == null || activePadDir == dir)
+    val timedMovesEnabled = padBaseEnabled && activePadDir == null
     SirenaCard(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1076,28 +1096,28 @@ private fun ControlCard(
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             SirenaDpadHoldButton(
                 "\u2191",
-                padMovesEnabled,
+                padDirEnabled("forward"),
                 onPress = { onDriveHoldStart("forward") },
                 onRelease = onDriveHoldStop,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 SirenaDpadHoldButton(
                     "\u2190",
-                    padMovesEnabled,
+                    padDirEnabled("left"),
                     onPress = { onDriveHoldStart("left") },
                     onRelease = onDriveHoldStop,
                 )
                 SirenaDpadStop("STOP", onDriveStopWithBrake, enabled = bridgeOn)
                 SirenaDpadHoldButton(
                     "\u2192",
-                    padMovesEnabled,
+                    padDirEnabled("right"),
                     onPress = { onDriveHoldStart("right") },
                     onRelease = onDriveHoldStop,
                 )
             }
             SirenaDpadHoldButton(
                 "\u2193",
-                padMovesEnabled,
+                padDirEnabled("back"),
                 onPress = { onDriveHoldStart("back") },
                 onRelease = onDriveHoldStop,
             )

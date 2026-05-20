@@ -149,6 +149,13 @@ class FakeNav:
             ("turn_right", {"speed_percent": speed_percent, "duration": duration})
         )
 
+    def pulse_turn_micro_step(self, direction: str) -> bool:
+        self.calls.append(("pulse_turn_micro_step", direction))
+        return True
+
+    def end_hold_turn_session(self) -> None:
+        self.calls.append(("end_hold_turn_session",))
+
 
 def _make_controller(nav: FakeNav, default_speed: int = 15):
     """Spawn a DriveController with the FakeNav injected. Importing
@@ -496,11 +503,12 @@ def test_drive_from_stop_kicks_then_cruises_low(
         ctrl.shutdown()
 
 
-def test_forward_drive_from_stop_uses_kick_cruise_not_pulse(
+def test_forward_drive_from_stop_uses_imu_straight_pulse(
     isolate_polarity_dir: Path,
 ) -> None:
-    """D-pad forward from stop uses drive_continuous + set_wheels (pulse removed)."""
+    """D-pad forward always starts IMU straight pulse when nav supports it."""
     nav = FakeNav()
+    nav.pulse_enabled = True
     ctrl = _make_controller(nav, default_speed=12)
     try:
         ctrl.ensure_hardware()
@@ -509,26 +517,18 @@ def test_forward_drive_from_stop_uses_kick_cruise_not_pulse(
         assert _wait_for(lambda: not nav.brake_engaged)
         ctrl.drive("forward")
         assert _wait_for(
-            lambda: any(c[0] == "drive_continuous" for c in nav.calls)
+            lambda: any(c[0] == "start_pulse_straight_forward" for c in nav.calls)
         )
-        assert not any(
-            c[0] == "start_pulse_straight_forward" for c in nav.calls
-        )
-        assert getattr(ctrl, "_active_drive") is not None
-        dc_calls = [c for c in nav.calls if c[0] == "drive_continuous"]
-        assert len(dc_calls) >= 1
+        assert not any(c[0] == "drive_continuous" for c in nav.calls)
+        assert getattr(ctrl, "_active_drive") is None
     finally:
         ctrl.shutdown()
 
 
-def test_drive_left_fwd_extra_pp_env(
+def test_drive_left_hold_uses_micro_steps(
     isolate_polarity_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Optional NINA_DRIVE_LEFT_FWD_EXTRA_PP bumps left forward duty (symmetric to right trim)."""
-    from sirena_ui.workers import drive_controller as dc
-
-    monkeypatch.setenv("NINA_DRIVE_LEFT_FWD_EXTRA_PP", "3")
+    """Held D-pad left runs pulse_turn_micro_step (not continuous pivot)."""
     nav = FakeNav()
     ctrl = _make_controller(nav, default_speed=12)
     try:
@@ -536,23 +536,12 @@ def test_drive_left_fwd_extra_pp_env(
         assert _wait_for(lambda: nav.brake_engaged)
         ctrl.set_brake(False)
         assert _wait_for(lambda: not nav.brake_engaged)
-        ctrl.drive("forward")
+        ctrl.drive("left")
         assert _wait_for(
-            lambda: len([c for c in nav.calls if c[0] == "set_wheels"]) >= 2
+            lambda: any(c[0] == "pulse_turn_micro_step" for c in nav.calls)
         )
-        sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
-        kick_sw = sw_calls[0][1]
-        assert kick_sw["left_speed"] == dc.FROM_STOP_KICK_PCT + 3
-        assert (
-            kick_sw["right_speed"]
-            == dc.FROM_STOP_KICK_PCT + dc.RIGHT_WHEEL_EXTRA_START_PP
-        )
-        last_sw = sw_calls[-1][1]
-        assert last_sw["left_speed"] == dc.FROM_STOP_CRUISE_PCT + 3
-        assert (
-            last_sw["right_speed"]
-            == dc.FROM_STOP_CRUISE_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
-        )
+        assert not any(c[0] == "drive_continuous" for c in nav.calls)
+        assert getattr(ctrl, "_active_drive") is None
     finally:
         ctrl.shutdown()
 
@@ -570,7 +559,11 @@ def test_back_after_pivot_uses_backward_pulse(
         ctrl.set_brake(False)
         assert _wait_for(lambda: not nav.brake_engaged)
         ctrl.drive("left")
-        assert _wait_for(lambda: getattr(ctrl, "_active_drive") is not None)
+        assert _wait_for(
+            lambda: any(c[0] == "pulse_turn_micro_step" for c in nav.calls)
+        )
+        ctrl.stop()
+        assert _wait_for(lambda: any(c[0] == "end_hold_turn_session" for c in nav.calls))
         nav.calls.clear()
         ctrl.drive("back")
         assert _wait_for(
@@ -581,10 +574,10 @@ def test_back_after_pivot_uses_backward_pulse(
         ctrl.shutdown()
 
 
-def test_back_after_turn_90_uses_backward_pulse(
+def test_back_after_turn_micro_uses_backward_pulse(
     isolate_polarity_dir: Path,
 ) -> None:
-    """Timed Turn left then D-pad back must run backward pulse."""
+    """Turn left (one micro-step) then D-pad back must run backward pulse."""
     nav = FakeNav()
     nav.pulse_enabled = True
     ctrl = _make_controller(nav, default_speed=12)
@@ -594,7 +587,9 @@ def test_back_after_turn_90_uses_backward_pulse(
         ctrl.set_brake(False)
         assert _wait_for(lambda: not nav.brake_engaged)
         ctrl.turn_90("left")
-        assert _wait_for(lambda: any(c[0] == "turn_left" for c in nav.calls))
+        assert _wait_for(
+            lambda: any(c[0] == "pulse_turn_micro_step" for c in nav.calls)
+        )
         nav.calls.clear()
         ctrl.drive("back")
         assert _wait_for(

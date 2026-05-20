@@ -249,7 +249,7 @@ def drive_hold_stop(service: NinaService) -> Dict[str, Any]:
 
 
 def drive_turn(service: NinaService, *, which: str) -> Dict[str, Any]:
-    """Match kiosk **Turn left/right** (``DriveController.turn_90``)."""
+    """Match kiosk **Turn left/right** (one ``DriveController.turn_90`` micro-step)."""
     which = which.strip().lower()
     if which not in _turn_dirs:
         return {"ok": False, "error": f"which must be 'left' or 'right', got {which!r}"}

@@ -12,7 +12,7 @@ replacement:
   set_brake(on)
   set_reverse(on)
   drive(direction)     direction in {forward, back, left, right}
-  turn_90(which)       \"left\" or \"right\" — timed partial in-place pivot (~15° default)
+  turn_90(which)       \"left\" or \"right\" — one IMU micro-step (~15° default)
   stop()
 
 Hardware-touching operations (init, brake, drive, stop, shutdown) are
@@ -21,9 +21,8 @@ serialised onto a dedicated worker thread via a command queue so:
   * **All** Nina UI motion (manual D-pad, bench straight tests, autonomy,
     goto, ArUco follow, face follow, Android HTTP momentary FWD/BACK when
     wired through ``DriveController``) runs the same hoverboard primitives:
-    straight pulse series + kick/cruise fallbacks, timed ``turn_left`` /
-    ``turn_right`` for Turn left/right buttons (~15° lean default), and asymmetric pivot duties
-    (``NINA_HOVER_TURN_SLOW_WHEEL_PCT``) for held L/R and in-loop pivots.
+    IMU straight pulse for D-pad forward/back, closed-loop micro-steps for
+    held L/R and Turn left/right (~``NINA_DRIVE_TURN_PIVOT_DEG`` per step).
   * `forward`/`backward` calls (which include a 0.1s settle sleep)
     don't stall the GUI.
   * `turn_left`/`turn_right` (which block for ~2s by design) run
@@ -178,6 +177,17 @@ def _left_fwd_extra_pp() -> int:
         except ValueError:
             pass
     return 0
+
+
+def _hold_turn_interval_sec() -> float:
+    """Pause between held D-pad L/R micro-steps (``NINA_DRIVE_HOLD_TURN_INTERVAL_SEC``)."""
+    raw = (os.environ.get("NINA_DRIVE_HOLD_TURN_INTERVAL_SEC") or "").strip()
+    if raw:
+        try:
+            return max(0.08, min(2.0, float(raw)))
+        except ValueError:
+            pass
+    return 0.35
 
 
 def _drive_turn_90_speed_pct() -> int:
@@ -436,6 +446,10 @@ class DriveController(QObject):
         # is cleared while the pulse thread runs.
         self._hover_straight_pulse_next: bool = True
 
+        # Only one manual direction at a time (D-pad / WASD / Android hold).
+        self._manual_exclusive_dir: Optional[str] = None
+        self._hold_turn_timer: Optional[threading.Timer] = None
+
         # All hardware-touching work runs on a single worker thread, in
         # the order commands were issued, so GUI clicks never collide
         # with a still-blocking turn.
@@ -518,21 +532,15 @@ class DriveController(QObject):
             return bool(self._hover_straight_pulse_next)
 
     def supports_forward_pulse(self) -> bool:
-        """True when nav offers straight pulse series and ``pulse_forward_enabled`` is on.
-
-        When true, symmetric D-pad forward uses ``start_pulse_straight_forward`` and symmetric
-        backward uses ``start_pulse_straight_backward`` from rest (bench Straight / Straight back too).
-        """
+        """True when nav offers IMU straight pulse (mandatory for manual FWD/BACK on hoverboard)."""
         with self._lock:
             nav = self._nav
         if nav is None:
             return False
-        if not callable(getattr(nav, "start_pulse_straight_forward", None)):
-            return False
-        if not callable(getattr(nav, "start_pulse_straight_backward", None)):
-            return False
-        en = getattr(nav, "is_forward_pulse_enabled", None)
-        return callable(en) and bool(en())
+        return (
+            callable(getattr(nav, "start_pulse_straight_forward", None))
+            and callable(getattr(nav, "start_pulse_straight_backward", None))
+        )
 
     def start_forward_pulse_bench(self, speed_pct: int) -> None:
         """Start hoverboard forward pulse (Straight bench forward); no-op if unavailable."""
@@ -703,27 +711,27 @@ class DriveController(QObject):
         with self._lock:
             if self._state["brake"]:
                 return
+            exclusive = self._manual_exclusive_dir
+            if exclusive is not None and exclusive != direction:
+                return
             reverse = self._state["reverse"]
 
         if reverse and direction in (_DIR_FORWARD, _DIR_BACK):
             direction = _DIR_BACK if direction == _DIR_FORWARD else _DIR_FORWARD
 
         with self._lock:
+            self._manual_exclusive_dir = direction
             self._state["direction"] = direction
         self._emit_state()
         if direction in (_DIR_LEFT, _DIR_RIGHT):
-            speed = _drive_pivot_speed_pct()
-        else:
-            speed = FIXED_MANUAL_DRIVE_SPEED_PCT
+            self._cancel_hold_turn_timer()
+            self._enqueue(lambda d=direction: self._do_hold_turn_step(d))
+            return
+        speed = FIXED_MANUAL_DRIVE_SPEED_PCT
         self._enqueue(lambda d=direction, s=speed: self._do_drive(d, s))
 
     def turn_90(self, which: str) -> None:
-        """One in-place pivot (~90°): *which* is ``\"left\"`` or ``\"right\"``.
-
-        Uses the nav layer ``turn_left`` / ``turn_right`` (blocks the worker
-        for ~``NINA_NAV_TURN_SEC`` or ``NINA_DRIVE_TURN_90_SEC``). No-op if
-        brake is on or *which* is invalid.
-        """
+        """One closed-loop micro-step (~``NINA_DRIVE_TURN_PIVOT_DEG``)."""
         if which not in (_DIR_LEFT, _DIR_RIGHT):
             log.warning("turn_90: expected '%s' or '%s', got %r", _DIR_LEFT, _DIR_RIGHT, which)
             return
@@ -731,18 +739,21 @@ class DriveController(QObject):
             if self._state["brake"]:
                 log.info("turn_90(%s) ignored: brake engaged", which)
                 return
-        self._enqueue(lambda w=which: self._do_turn_90(w))
+        self._enqueue(lambda w=which: self._do_turn_micro_step_once(w))
 
     def stop(self, *, drain: bool = False) -> None:
         """Request soft stop. With ``drain=True``, drop pending worker
         commands first so a queued heartbeat SET cannot run after this
         stop (critical for face-follow / autonomy hand-off)."""
+        self._cancel_hold_turn_timer()
         with self._lock:
             self._state["direction"] = "idle"
+            self._manual_exclusive_dir = None
         self._emit_state()
         if drain:
             self._drain_queue()
         self._enqueue(self._do_stop)
+        self._enqueue(self._do_end_hold_turn_session)
 
     def emergency_stop(self) -> None:
         """Hard stop: set duty=0, engage brake, light the red+green+blue
@@ -903,7 +914,7 @@ class DriveController(QObject):
 
         Gates all user-issued motion entry points:
         :meth:`_do_drive`, :meth:`_do_drive_wheels` (non-zero speed),
-        :meth:`_do_turn_90`, :meth:`_do_start_forward_pulse_bench`, and
+        :meth:`_do_turn_micro_step_once`, :meth:`_do_start_forward_pulse_bench`, and
         :meth:`_do_start_backward_pulse_bench`. ``emergency_stop``,
         brake on/off, and shutdown are intentionally NOT gated — those
         either stop motion or change non-moving state, and must keep
@@ -1046,9 +1057,6 @@ class DriveController(QObject):
             with self._lock:
                 start_from_stop = self._active_drive is None
             use_straight_pulse = self._should_start_straight_pulse(direction)
-            # Use drive_continuous for all four directions so L/R is
-            # held-while-pressed (matches forward/back) instead of the
-            # old timed turn that auto-stopped after a few seconds.
             if use_straight_pulse:
                 if direction == _DIR_FORWARD:
                     self._nav.start_pulse_straight_forward(int(speed_pct))
@@ -1062,67 +1070,23 @@ class DriveController(QObject):
                     "forward" if direction == _DIR_FORWARD else "backward",
                     speed_pct,
                 )
-            elif start_from_stop:
-                if direction in (_DIR_LEFT, _DIR_RIGHT):
-                    pivot = _drive_pivot_speed_pct()
-                    kick = max(MIN_SPEED_PCT, min(100, pivot))
-                    cruise = max(MIN_SPEED_PCT, min(100, pivot))
-                    if (
-                        getattr(self._nav, "DRIVER_LABEL", None)
-                        == HoverboardAxisDrive.DRIVER_LABEL
-                    ):
-                        ko, ksl = _hoverboard_pivot_outer_slow(kick)
-                        co, csl = _hoverboard_pivot_outer_slow(cruise)
-                        if direction == _DIR_LEFT:
-                            self._nav.drive_continuous(
-                                ldir, rdir, ko, right_speed_percent=ksl,
-                            )
-                            self._commit_wheels(
-                                ldir, ko, rdir, ksl, start_phase=True,
-                            )
-                            self._commit_wheels(
-                                ldir, co, rdir, csl, start_phase=False,
-                            )
-                        else:
-                            self._nav.drive_continuous(
-                                ldir, rdir, ksl, right_speed_percent=ko,
-                            )
-                            self._commit_wheels(
-                                ldir, ksl, rdir, ko, start_phase=True,
-                            )
-                            self._commit_wheels(
-                                ldir, csl, rdir, co, start_phase=False,
-                            )
-                    else:
-                        self._nav.drive_continuous(ldir, rdir, kick)
-                        self._commit_wheels(
-                            ldir, kick, rdir, kick, start_phase=True,
-                        )
-                        self._commit_wheels(
-                            ldir, cruise, rdir, cruise, start_phase=False,
-                        )
-                    log.info(
-                        "drive from stop (pivot): kick %s%% then cruise %s%%",
-                        kick,
-                        cruise,
-                    )
-                else:
-                    kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
-                    cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
-                    self._nav.drive_continuous(ldir, rdir, kick)
-                    self._commit_wheels(
-                        ldir, kick, rdir, kick, start_phase=True,
-                    )
-                    self._commit_wheels(
-                        ldir, cruise, rdir, cruise, start_phase=False,
-                    )
-                    with self._lock:
-                        self._hover_straight_pulse_next = False
-                    log.info(
-                        "drive from stop (straight): kick %s%% then cruise %s%%",
-                        kick,
-                        cruise,
-                    )
+            elif start_from_stop and direction in (_DIR_FORWARD, _DIR_BACK):
+                kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
+                cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
+                self._nav.drive_continuous(ldir, rdir, kick)
+                self._commit_wheels(
+                    ldir, kick, rdir, kick, start_phase=True,
+                )
+                self._commit_wheels(
+                    ldir, cruise, rdir, cruise, start_phase=False,
+                )
+                with self._lock:
+                    self._hover_straight_pulse_next = False
+                log.info(
+                    "drive from stop (straight fallback): kick %s%% then cruise %s%%",
+                    kick,
+                    cruise,
+                )
             else:
                 self._commit_wheels(
                     ldir, speed_pct, rdir, speed_pct, start_phase=False,
@@ -1130,68 +1094,93 @@ class DriveController(QObject):
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
 
-    def _do_turn_90(self, which: str) -> None:
-        if self._refuse_if_battery_low(f"turn_90({which})"):
+    def _cancel_hold_turn_timer(self) -> None:
+        with self._lock:
+            timer = self._hold_turn_timer
+            self._hold_turn_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_hold_turn_step(self, which: str) -> None:
+        interval = _hold_turn_interval_sec()
+        timer = threading.Timer(
+            interval,
+            lambda w=which: self._enqueue(lambda: self._do_hold_turn_step(w)),
+        )
+        timer.daemon = True
+        with self._lock:
+            self._hold_turn_timer = timer
+        timer.start()
+
+    def _run_one_turn_micro_step(self, which: str) -> None:
+        """One IMU micro-step, or timed pivot when IMU / hoverboard API missing."""
+        if self._nav is None:
+            return
+        micro = getattr(self._nav, "pulse_turn_micro_step", None)
+        if callable(micro) and micro(which):
+            return
+        speed = _drive_turn_90_speed_pct()
+        duration = _drive_turn_90_duration_sec(self._nav)
+        log.info(
+            "turn micro-step(%s): timed fallback %.3fs",
+            which,
+            duration,
+        )
+        if which == _DIR_LEFT:
+            self._nav.turn_left(speed_percent=speed, duration=duration)
+        else:
+            self._nav.turn_right(speed_percent=speed, duration=duration)
+        try:
+            self._nav.stop()
+        except Exception:
+            pass
+
+    def _do_hold_turn_step(self, which: str) -> None:
+        if self._refuse_if_battery_low(f"hold_turn({which})"):
+            return
+        with self._lock:
+            if self._state["direction"] != which:
+                return
+        try:
+            self._run_one_turn_micro_step(which)
+        except Exception as exc:
+            log.exception("hold_turn_step(%s) failed: %s", which, exc)
+        with self._lock:
+            still = (
+                self._state["direction"] == which
+                and not self._state["brake"]
+            )
+        if still:
+            self._schedule_hold_turn_step(which)
+
+    def _do_end_hold_turn_session(self) -> None:
+        if self._nav is None:
+            return
+        end = getattr(self._nav, "end_hold_turn_session", None)
+        if callable(end):
+            try:
+                end()
+            except Exception as exc:
+                log.exception("end_hold_turn_session failed: %s", exc)
+
+    def _do_turn_micro_step_once(self, which: str) -> None:
+        if self._refuse_if_battery_low(f"turn_micro({which})"):
             return
         if self._nav is None:
             log.warning(
-                "turn_90(%s) dropped: BLDC backend not ready yet", which
+                "turn_micro(%s) dropped: BLDC backend not ready yet", which
             )
-            # Silent on purpose — see _do_init for rationale.
             return
         try:
             with self._lock:
                 self._active_drive = None
-                self._state["direction"] = (
-                    "left" if which == _DIR_LEFT else "right"
-                )
-            self._emit_state()
-            # Prefer the closed-loop IMU-driven 90° turn (reuses the
-            # same iterative micro-step machinery as the forward
-            # straight-leg drift correction, anchored to a yaw budget
-            # instead of a drift sample). ``pulse_turn_90`` already
-            # halts any in-flight pulse series and brackets the turn
-            # with brake / settle dwells on both ends, and falls back
-            # to the legacy timed pivot internally when the IMU yaw
-            # sampler is not wired. Older nav backends (GPIO
-            # ``NavigationManager``, test fakes) don't implement
-            # ``pulse_turn_90`` — for those, fall back here so the
-            # Drive button still works.
-            label = "left" if which == _DIR_LEFT else "right"
-            pulse_turn_90 = getattr(self._nav, "pulse_turn_90", None)
-            if callable(pulse_turn_90):
-                log.info("turn_90(%s): closed-loop IMU pulse turn", label)
-                pulse_turn_90(label)
-            else:
-                speed = _drive_turn_90_speed_pct()
-                duration = _drive_turn_90_duration_sec(self._nav)
-                log.info(
-                    "turn_90(%s): backend lacks pulse_turn_90 — timed "
-                    "fallback %.3fs (NINA_DRIVE_TURN_90_SEC / "
-                    "NINA_NAV_TURN_SEC)",
-                    label,
-                    duration,
-                )
-                if which == _DIR_LEFT:
-                    self._nav.turn_left(speed_percent=speed, duration=duration)
-                else:
-                    self._nav.turn_right(speed_percent=speed, duration=duration)
+            self._run_one_turn_micro_step(which)
         except Exception as exc:
-            log.exception("turn_90(%s) failed: %s", which, exc)
+            log.exception("turn_micro(%s) failed: %s", which, exc)
         finally:
-            # Closed-loop turn already brakes + settles before returning;
-            # on error (or the timed-fallback path) ensure PWM is parked
-            # so the next Straight / drive_wheels sequence does not
-            # inherit stale nav bookkeeping.
-            try:
-                self._nav.stop()
-            except Exception:
-                pass
+            self._do_end_hold_turn_session()
             with self._lock:
-                self._state["direction"] = "idle"
-                self._active_drive = None
                 self._hover_straight_pulse_next = True
-            self._emit_state()
 
     def _do_apply_live_speed(self, direction: str, speed_pct: int) -> None:
         """Update PWM duty on the running motors without re-issuing the
