@@ -156,6 +156,17 @@ if [[ -x "${VISION_SCRIPT}" ]]; then
     fi
 fi
 
+# Embedded tablet gateway (FastAPI / uvicorn) — required at sirena_ui startup.
+GATEWAY_SCRIPT="${REPO_ROOT}/scripts/install-tablet-gateway-jetson.sh"
+if [[ -x "${GATEWAY_SCRIPT}" && -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    echo "[INSTALL] installing tablet gateway deps (fastapi) into .venv-link"
+    if ! bash "${GATEWAY_SCRIPT}"; then
+        echo "[WARN] install-tablet-gateway-jetson.sh failed (UI will exit: No module named fastapi)" >&2
+    fi
+elif [[ ! -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    echo "[WARN] skip tablet gateway install: no ${REPO_ROOT}/.venv-link" >&2
+fi
+
 # Fleet default: gTTS + ffmpeg for Actions → Audio (Generate & Save).
 AUDIO_SCRIPT="${REPO_ROOT}/scripts/install-action-audio-jetson.sh"
 if [[ -x "${AUDIO_SCRIPT}" && -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then

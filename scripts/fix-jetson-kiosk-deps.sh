@@ -37,7 +37,7 @@ export PIP_BREAK_SYSTEM_PACKAGES="${PIP_BREAK_SYSTEM_PACKAGES:-1}"
 
 cd "${REPO_ROOT}"
 
-say "1/4 — Reinstall vision deps into .venv-link (not ~/.local)"
+say "1/5 — Reinstall vision deps into .venv-link (not ~/.local)"
 "${PIP}" install -U pip setuptools wheel
 "${PIP}" uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
 "${PIP}" install --force-reinstall 'opencv-python-headless>=4.5.4' 'numpy>=1.20'
@@ -47,7 +47,17 @@ say "1/4 — Reinstall vision deps into .venv-link (not ~/.local)"
     warn "  see REQUIREMENTS.md, then: ${PIP} install --no-deps ultralytics"
 }
 
-say "2/4 — Reinstall action audio (gTTS) into .venv-link"
+say "2/5 — Tablet gateway (fastapi / uvicorn) into .venv-link"
+if [[ -x "${SCRIPT_DIR}/install-tablet-gateway-jetson.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-tablet-gateway-jetson.sh" || {
+        bad "tablet gateway install failed — UI cannot start without fastapi"
+        exit 1
+    }
+else
+    "${PIP}" install -r "${REPO_ROOT}/requirements-link.txt"
+fi
+
+say "3/5 — Reinstall action audio (gTTS) into .venv-link"
 if [[ -x "${SCRIPT_DIR}/install-action-audio-jetson.sh" ]]; then
     bash "${SCRIPT_DIR}/install-action-audio-jetson.sh" || warn "action audio install had warnings"
 else
@@ -83,7 +93,7 @@ else
     exit 1
 fi
 
-say "4/4 — Refresh kiosk unit + optional vision verify"
+say "5/5 — Refresh kiosk unit + optional vision verify"
 if [[ -x "${SCRIPT_DIR}/install-nina-ui-kiosk.sh" ]]; then
     warn "Re-run kiosk installer if unit file changed: ./scripts/install-nina-ui-kiosk.sh"
 fi
