@@ -36,16 +36,26 @@ export PIP_USER=0
 export PIP_BREAK_SYSTEM_PACKAGES="${PIP_BREAK_SYSTEM_PACKAGES:-1}"
 
 cd "${REPO_ROOT}"
-say "pip install -r requirements-link.txt (fastapi, uvicorn, pyserial, smbus2)"
-"${PIP}" install -U pip setuptools wheel
-"${PIP}" install -r "${REQ}"
+say "pip install -r requirements-link.txt into .venv-link (force — ignore ~/.local)"
+# Pip treats ~/.local as \"already satisfied\" unless we force into the venv.
+# Kiosk uses PYTHONNOUSERSITE=1, so packages must live under .venv-link.
+"${PIP}" install -U pip wheel
+"${PIP}" install 'setuptools>=70,<82'
+"${PIP}" install --force-reinstall --no-cache-dir -r "${REQ}"
 
-say "import check"
+say "import check (PYTHONNOUSERSITE=1 — same as kiosk)"
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="${REPO_ROOT}"
+_venv_site="$("${PY}" -c "import site; print(site.getsitepackages()[0])")"
+export PYTHONPATH="${REPO_ROOT}:${_venv_site}"
+_sys_d="/usr/lib/python3/dist-packages"
+if [[ -d "${_sys_d}/PyQt5" ]]; then
+    export PYTHONPATH="${PYTHONPATH}:${_sys_d}"
+fi
 "${PY}" -c "
 import fastapi, uvicorn, pydantic, serial, smbus2
-print('fastapi', fastapi.__version__)
+assert 'site-packages' in fastapi.__file__, fastapi.__file__
+print('fastapi', fastapi.__version__, fastapi.__file__)
 print('uvicorn', uvicorn.__version__)
 print('tablet gateway deps OK')
 "

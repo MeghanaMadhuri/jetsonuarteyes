@@ -64,11 +64,13 @@ if [[ "${FULL}" -eq 1 ]]; then
     say "pip install -r sirena_ui/requirements-headless.txt (SLAM + vision + sensors)"
     warn "On Jetson: if torch/ultralytics fails, install JetPack-matching PyTorch first,"
     warn "then: ${PIP} install --no-deps ultralytics"
-    "${PIP}" install -U pip setuptools wheel
+    "${PIP}" install -U pip wheel
+    "${PIP}" install 'setuptools>=70,<82'
     "${PIP}" install -r "${HEADLESS}"
 else
     say "pip install OpenCV + ultralytics (YOLO object detection only)"
-    "${PIP}" install -U pip setuptools wheel
+    "${PIP}" install -U pip wheel
+    "${PIP}" install 'setuptools>=70,<82'
     say "remove opencv-python wheels that bundle Qt (breaks PyQt5 kiosk)"
     "${PIP}" uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
     "${PIP}" install --force-reinstall 'opencv-python-headless>=4.5.4' 'numpy>=1.20'

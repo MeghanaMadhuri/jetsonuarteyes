@@ -38,7 +38,8 @@ export PIP_BREAK_SYSTEM_PACKAGES="${PIP_BREAK_SYSTEM_PACKAGES:-1}"
 cd "${REPO_ROOT}"
 
 say "1/5 — Reinstall vision deps into .venv-link (not ~/.local)"
-"${PIP}" install -U pip setuptools wheel
+"${PIP}" install -U pip wheel
+"${PIP}" install 'setuptools>=70,<82'
 "${PIP}" uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
 "${PIP}" install --force-reinstall 'opencv-python-headless>=4.5.4' 'numpy>=1.20'
 "${PIP}" install -U 'sympy>=1.13'

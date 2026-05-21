@@ -43,7 +43,8 @@ fi
 ok "ffmpeg: $(command -v ffmpeg)"
 
 say "pip install gTTS into .venv-link (kiosk Python)"
-"${PIP}" install -U pip setuptools wheel
+"${PIP}" install -U pip wheel
+"${PIP}" install 'setuptools>=70,<82'
 "${PIP}" install --force-reinstall 'gTTS>=2.3'
 
 say "import check (kiosk-like PYTHONPATH)"
