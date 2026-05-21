@@ -154,6 +154,15 @@ class SplashScreen(QWidget):
             pass
 
     def _try_external_player(self) -> bool:
+        # ffplay/mpv fullscreen fights the kiosk WM and can leave orphan processes.
+        # Opt in with NINA_UI_SPLASH_EXTERNAL=1 only on dev machines.
+        if os.environ.get("NINA_UI_SPLASH_EXTERNAL", "").strip().lower() not in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return False
         path = str(self._video_path)
         for cmd in (
             ["ffplay", "-autoexit", "-nostats", "-loglevel", "quiet", "-fs", path],
@@ -198,10 +207,11 @@ class SplashScreen(QWidget):
             except Exception:
                 pass
         self.finished.emit()
-        self.close()
+        self.hide()
 
     def closeEvent(self, event) -> None:
-        self._finish()
+        if not self._done:
+            self._finish()
         super().closeEvent(event)
 
 
@@ -209,6 +219,7 @@ def show_splash_then(
     *,
     on_finished: Callable[[], None],
     parent=None,
+    app=None,
 ) -> bool:
     """Show splash if enabled and file exists; return True if splash was shown."""
     if os.environ.get("NINA_UI_SPLASH", "1").strip().lower() in (
@@ -224,5 +235,8 @@ def show_splash_then(
         return False
     splash = SplashScreen(path, parent=parent)
     splash.finished.connect(on_finished)
+    splash.finished.connect(splash.deleteLater)
+    if app is not None:
+        app._splash_screen = splash  # type: ignore[attr-defined]
     splash.showFullScreen()
     return True

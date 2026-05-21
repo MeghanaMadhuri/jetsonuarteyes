@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import sys
+from typing import Optional
 
 from sirena_ui.resource_limits import log_startup_limits, raise_nofile_limit
 
@@ -121,15 +122,22 @@ def main() -> int:
 
     service = NinaService()
     start_tablet_gateway(service)
-    window = MainWindow(service)
-    window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
+
+    # Build MainWindow only after splash (if any). Creating it during the
+    # splash used to start QThreads (bus init, health scan) while the splash
+    # widget was still up and triggered "QThread: Destroyed while still running".
+    window: Optional[MainWindow] = None
 
     def _show_main() -> None:
+        nonlocal window
+        if window is None:
+            window = MainWindow(service)
+            window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
         window.show()
         if _env_truthy("NINA_UI_FULLSCREEN"):
             window.showFullScreen()
 
-    if not show_splash_then(on_finished=_show_main):
+    if not show_splash_then(on_finished=_show_main, app=app):
         _show_main()
 
     return app.exec_()

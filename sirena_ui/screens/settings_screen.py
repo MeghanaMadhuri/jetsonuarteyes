@@ -463,10 +463,16 @@ class SettingsScreen(QWidget):
         self._net_scan_btn.setEnabled(False)
         worker = _WifiScanWorker(self, rescan=True)
         self._net_scan_worker = worker
+        worker.setParent(self)
         worker.finished_ok.connect(self._on_wifi_scan_done)
         worker.failed.connect(self._on_wifi_scan_failed)
         worker.finished.connect(lambda: self._net_scan_btn.setEnabled(True))
-        worker.finished.connect(worker.deleteLater)
+
+        def _clear_scan_worker() -> None:
+            if self._net_scan_worker is worker:
+                self._net_scan_worker = None
+
+        worker.finished.connect(_clear_scan_worker)
         worker.start()
 
     def _on_wifi_scan_done(self, payload: object) -> None:

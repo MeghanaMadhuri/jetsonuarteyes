@@ -470,10 +470,16 @@ class MainWindow(QMainWindow):
         if self._bus_init_thread is not None and self._bus_init_thread.isRunning():
             return
         thread = _BusInitThread(self._service)
+        thread.setParent(self)
         self._bus_init_thread = thread
         thread.finished_ok.connect(self._on_bus_init_ok)
         thread.failed.connect(self._on_bus_init_failed)
-        thread.finished.connect(thread.deleteLater)
+
+        def _clear_bus_thread() -> None:
+            if self._bus_init_thread is thread:
+                self._bus_init_thread = None
+
+        thread.finished.connect(_clear_bus_thread)
         thread.start()
 
     def _on_bus_init_ok(self, health: object) -> None:

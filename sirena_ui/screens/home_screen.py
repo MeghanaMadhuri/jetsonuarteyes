@@ -322,7 +322,8 @@ class HomeScreen(QWidget):
         return card
 
     def on_enter(self) -> None:
-        self._refresh_hero_pills_async()
+        # Defer health scan so it does not race MainWindow bus init on first paint.
+        QTimer.singleShot(800, self._refresh_hero_pills_async)
         self.refresh_battery_pill()
         if not self._hero_pill_timer.isActive():
             self._hero_pill_timer.start()
@@ -332,6 +333,10 @@ class HomeScreen(QWidget):
     def on_leave(self) -> None:
         self._hero_pill_timer.stop()
         self._battery_ov_timer.stop()
+        ht = self._health_collect_thread
+        if ht is not None and ht.isRunning():
+            ht.wait(5000)
+        self._health_collect_thread = None
 
     def refresh_battery_pill(self) -> None:
         """Lightweight pack-voltage refresh for System overview (no full health scan)."""
@@ -352,9 +357,15 @@ class HomeScreen(QWidget):
         if self._health_collect_thread is not None and self._health_collect_thread.isRunning():
             return
         thread = _HealthCollectThread(self._service)
+        thread.setParent(self)
         self._health_collect_thread = thread
         thread.finished_ok.connect(self._apply_hero_pills_from_rows)
-        thread.finished.connect(thread.deleteLater)
+
+        def _clear_health_thread() -> None:
+            if self._health_collect_thread is thread:
+                self._health_collect_thread = None
+
+        thread.finished.connect(_clear_health_thread)
         thread.start()
 
     def _apply_hero_pills_from_rows(self, rows: object) -> None:
