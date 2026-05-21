@@ -306,7 +306,7 @@ fun SirenaActionsJetsonGateCallouts(
                 if (!staticOk) {
                     Spacer(Modifier.height(4.dp))
                     SirenaMutedText(
-                        "• Audio file / offset / generate APIs: set NINA_LINK_ENABLE_ACTIONS_STATIC=1 and restart nina-link.",
+                        "• Audio file / offset / generate APIs: set NINA_LINK_ENABLE_ACTIONS_STATIC=1 and restart nina-ui-kiosk (or nina-link).",
                         maxLines = 3,
                     )
                 }

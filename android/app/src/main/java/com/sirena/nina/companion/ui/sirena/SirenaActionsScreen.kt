@@ -184,7 +184,9 @@ fun SirenaActionsScreen(
     var audioActionMenuExpanded by remember { mutableStateOf(false) }
     var voiceMenuExpanded by remember { mutableStateOf(false) }
     var audioErr by remember { mutableStateOf<String?>(null) }
+    var audioBusy by remember { mutableStateOf(false) }
     var audioLast by remember { mutableStateOf("—") }
+    val actionsStaticOk = caps?.optBoolean("actions_static_enabled") != false
     var pendingDelete by remember { mutableStateOf<String?>(null) }
     var pendingRemoveAudio by remember { mutableStateOf<String?>(null) }
 
@@ -574,6 +576,28 @@ fun SirenaActionsScreen(
                         "Generate spoken clips with gTTS and attach them to manifest actions.",
                         maxLines = 3,
                     )
+                    if (link.isOnline && caps != null && !actionsStaticOk) {
+                        SirenaCard(kind = SirenaCardKind.Callout) {
+                            Text(
+                                "Audio generate is disabled on the Jetson",
+                                fontWeight = FontWeight.SemiBold,
+                                color = SirenaColors.text,
+                            )
+                            SirenaMutedText(
+                                "Set NINA_LINK_ENABLE_ACTIONS_STATIC=1 in the kiosk service environment and restart nina-ui-kiosk.",
+                                maxLines = 4,
+                            )
+                        }
+                    }
+                    if (audioBusy) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            SirenaMutedText(
+                                "Generating on the robot (gTTS + ffmpeg) — can take up to 2 minutes…",
+                                maxLines = 2,
+                            )
+                        }
+                    }
                     Box {
                         SirenaSecondaryButton(
                             text =
@@ -658,13 +682,27 @@ fun SirenaActionsScreen(
                                         audioErr = "Select an action."
                                         return@launch
                                     }
-                                    audioErr = vm.postActionAudioPreview(act)
-                                    if (audioErr == null) {
-                                        audioLast = "Playing preview on the robot…"
+                                    if (!actionsStaticOk) {
+                                        audioErr = "Enable NINA_LINK_ENABLE_ACTIONS_STATIC on the Jetson."
+                                        return@launch
+                                    }
+                                    audioBusy = true
+                                    try {
+                                        audioErr = vm.postActionAudioPreview(act)
+                                        if (audioErr == null) {
+                                            audioLast = "Playing preview on the robot…"
+                                        }
+                                    } finally {
+                                        audioBusy = false
                                     }
                                 }
                             },
-                            enabled = selectedActionName.isNotBlank() && hasAudio && link.isOnline,
+                            enabled =
+                                selectedActionName.isNotBlank() &&
+                                    hasAudio &&
+                                    link.isOnline &&
+                                    actionsStaticOk &&
+                                    !audioBusy,
                             modifier = buttonTall,
                         )
                         SirenaPrimaryButton(
@@ -677,25 +715,38 @@ fun SirenaActionsScreen(
                                         audioErr = "Select an action."
                                         return@launch
                                     }
+                                    if (!actionsStaticOk) {
+                                        audioErr = "Enable NINA_LINK_ENABLE_ACTIONS_STATIC on the Jetson."
+                                        return@launch
+                                    }
                                     val preset =
                                         SirenaVoicePresets[voicePresetIndex.coerceIn(0, SirenaVoicePresets.lastIndex)]
                                     val off = parseDoubleOr(audioOffsetStr, 0.0)
-                                    audioErr =
-                                        vm.postActionAudioGenerate(
-                                            action = act,
-                                            text = audioSpeechText,
-                                            lang = preset.lang,
-                                            tld = preset.tld,
-                                            audioOffsetSec = off,
-                                            slow = preset.slow,
-                                        )
-                                    if (audioErr == null) {
-                                        audioLast = "Audio saved for this action."
-                                        vm.refreshManifestActions()
+                                    audioBusy = true
+                                    try {
+                                        audioErr =
+                                            vm.postActionAudioGenerate(
+                                                action = act,
+                                                text = audioSpeechText,
+                                                lang = preset.lang,
+                                                tld = preset.tld,
+                                                audioOffsetSec = off,
+                                                slow = preset.slow,
+                                            )
+                                        if (audioErr == null) {
+                                            audioLast = "Audio saved for this action."
+                                            vm.refreshManifestActions()
+                                        }
+                                    } finally {
+                                        audioBusy = false
                                     }
                                 }
                             },
-                            enabled = selectedActionName.isNotBlank(),
+                            enabled =
+                                selectedActionName.isNotBlank() &&
+                                    link.isOnline &&
+                                    actionsStaticOk &&
+                                    !audioBusy,
                             modifier = buttonTall,
                         )
                         SirenaSecondaryButton(
@@ -716,7 +767,11 @@ fun SirenaActionsScreen(
                                     }
                                 }
                             },
-                            enabled = selectedActionName.isNotBlank(),
+                            enabled =
+                                selectedActionName.isNotBlank() &&
+                                    link.isOnline &&
+                                    actionsStaticOk &&
+                                    !audioBusy,
                             modifier = buttonTall,
                         )
                         SirenaSecondaryButton(

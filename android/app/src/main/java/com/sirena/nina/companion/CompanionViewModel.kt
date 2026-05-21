@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import kotlin.jvm.Volatile
 import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
+import com.sirena.nina.companion.data.linkApiErrorMessage
 import com.sirena.nina.companion.data.LinkClient
 import com.sirena.nina.companion.data.SlamOccupancyGrid
 import com.sirena.nina.companion.data.jsonCleanString
@@ -1037,37 +1038,48 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    private suspend fun actionAudioMutateError(): String? {
+        val url = prefs.baseUrl.first()
+        if (url.isBlank()) return "No robot URL — connect in Network."
+        val bearer = prefs.bearerToken.first()
+        if (bearer.isNullOrBlank()) return "Pair with the robot first (Network tab)."
+        return null
+    }
+
     suspend fun postActionAudioOffset(action: String, audioOffsetSec: Double): String? =
         try {
+            actionAudioMutateError()?.let { return it }
             vmD("postActionAudioOffset action=$action off=$audioOffsetSec")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioOffset(url, bearer, action, audioOffsetSec)
             null
         } catch (e: Exception) {
-            e.message
+            linkApiErrorMessage(e)
         }
 
     suspend fun postActionAudioClear(action: String): String? =
         try {
+            actionAudioMutateError()?.let { return it }
             vmD("postActionAudioClear action=$action")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioClear(url, bearer, action)
             null
         } catch (e: Exception) {
-            e.message
+            linkApiErrorMessage(e)
         }
 
     suspend fun postActionAudioPreview(action: String): String? =
         try {
+            actionAudioMutateError()?.let { return it }
             vmD("postActionAudioPreview action=$action")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioPreview(url, bearer, action)
             null
         } catch (e: Exception) {
-            e.message
+            linkApiErrorMessage(e)
         }
 
     suspend fun postActionAudioGenerate(
@@ -1079,13 +1091,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         slow: Boolean = false,
     ): String? =
         try {
+            actionAudioMutateError()?.let { return it }
+            if (text.isBlank()) return "Enter text to speak before generating."
             vmD("postActionAudioGenerate action=$action lang=$lang textLen=${text.length}")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioGenerate(url, bearer, action, text, lang, tld, audioOffsetSec, slow)
             null
         } catch (e: Exception) {
-            e.message
+            linkApiErrorMessage(e)
         }
 
     suspend fun fetchVisionStatus(): JSONObject? =

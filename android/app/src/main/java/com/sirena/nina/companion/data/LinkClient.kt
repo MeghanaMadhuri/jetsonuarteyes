@@ -57,6 +57,17 @@ class LinkClient {
             .retryOnConnectionFailure(true)
             .build()
 
+    /** gTTS + ffmpeg on the Jetson can take 1–2 minutes the first time. */
+    private val actionAudioClient =
+        OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
     suspend fun health(baseUrl: String): JSONObject = withContext(Dispatchers.IO) {
@@ -459,7 +470,12 @@ class LinkClient {
                     .put("tld", tld)
                     .put("audio_offset", audioOffsetSec)
                     .put("slow", slow)
-            post("$baseUrl/v1/actions/audio/generate", bearer, body.toString())
+            post(
+                "$baseUrl/v1/actions/audio/generate",
+                bearer,
+                body.toString(),
+                actionAudioClient,
+            )
         }
 
     /** Remove manifest entry and optionally delete files (`POST /v1/actions/delete`). */
@@ -872,6 +888,13 @@ fun JSONObject.jsonCleanString(key: String): String? {
 }
 
 class LinkApiException(val code: Int, message: String) : Exception(message)
+
+/** User-visible message from HTTP or network failures (FastAPI ``detail`` preserved). */
+fun linkApiErrorMessage(e: Exception): String =
+    when (e) {
+        is LinkApiException -> e.message?.trim().orEmpty().ifBlank { "HTTP ${e.code}" }
+        else -> e.message?.trim().orEmpty().ifBlank { e.javaClass.simpleName }
+    }
 
 /** Raw SLAM occupancy grid bytes (``width * height`` uint8 cells). */
 data class SlamOccupancyGrid(val bytes: ByteArray, val width: Int, val height: Int) {
