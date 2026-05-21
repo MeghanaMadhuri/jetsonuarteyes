@@ -165,6 +165,17 @@ if [[ -x "${AUDIO_SCRIPT}" && -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
     fi
 fi
 
+HOST_POWER_SCRIPT="${REPO_ROOT}/scripts/install-nina-host-power.sh"
+if [[ -x "${HOST_POWER_SCRIPT}" ]]; then
+    if [[ "${EUID}" -eq 0 ]]; then
+        echo "[INSTALL] passwordless shutdown/reboot for kiosk user"
+        bash "${HOST_POWER_SCRIPT}" "${SUDO_USER:-${USER}}"
+    else
+        echo "[INSTALL] tip: re-run with sudo to install Shutdown/Reboot sudo rule:"
+        echo "[INSTALL]   sudo bash ${HOST_POWER_SCRIPT}"
+    fi
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable nina-ui-kiosk.service
 # `restart` rather than `start` so re-running the installer after an
@@ -207,6 +218,11 @@ Useful commands:
 
   # After git pull, re-run this script to refresh the unit from
   # desktop/nina-ui-kiosk.service (e.g. ExecStartPre Pulse stop, tablet API).
+
+  # In-app Shutdown / Reboot (Settings → Power) needs passwordless sudo:
+  #   sudo bash scripts/install-nina-host-power.sh
+  # Re-run the kiosk installer with sudo to apply that rule automatically:
+  #   sudo bash scripts/install-nina-ui-kiosk.sh
 
   # Android companion: same process as the kiosk; use http://<jetson-ip>:8787
   # (re-run this installer if the unit file in the repo was updated).

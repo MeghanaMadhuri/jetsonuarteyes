@@ -56,11 +56,11 @@ class HeaderBar(QFrame):
         )
         h.addWidget(self._battery)
 
-        self._volume_btn = QPushButton("\U0001f50a")
+        self._volume_btn = QPushButton("\u266A")
         self._volume_btn.setObjectName("headerTray")
         self._volume_btn.setCursor(Qt.PointingHandCursor)
         self._volume_btn.setFixedSize(36, 36)
-        self._volume_btn.setToolTip("System speaker volume")
+        self._volume_btn.setToolTip("Speaker volume")
         self._volume_btn.clicked.connect(self._open_volume_menu)
         h.addWidget(self._volume_btn)
 
@@ -79,41 +79,73 @@ class HeaderBar(QFrame):
 
         self._volume_menu = QMenu(self)
         self._volume_menu.setStyleSheet(
-            "QMenu { background: white; border: 1px solid #e3e3e6; }"
+            """
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #e3e3e6;
+                border-radius: 10px;
+                padding: 4px;
+            }
+            """
         )
-        vol_host = QWidget()
+        vol_host = QFrame()
+        vol_host.setMinimumWidth(260)
+        vol_host.setStyleSheet(
+            "QFrame { background-color: #ffffff; border-radius: 8px; }"
+        )
         vol_layout = QVBoxLayout(vol_host)
-        vol_layout.setContentsMargins(12, 10, 12, 10)
-        vol_layout.setSpacing(6)
-        vol_title = QLabel("Jetson speaker")
+        vol_layout.setContentsMargins(14, 12, 14, 12)
+        vol_layout.setSpacing(8)
+        vol_title = QLabel("Speaker volume")
         vol_title.setStyleSheet(
-            "color: #1c1c1e; font-size: 13px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 14px; font-weight: 700;"
             " background: transparent;"
         )
         vol_layout.addWidget(vol_title)
-        self._volume_hint = QLabel("")
+        self._volume_hint = QLabel("System output")
         self._volume_hint.setWordWrap(True)
         self._volume_hint.setStyleSheet(
             "color: #6e6e73; font-size: 11px; background: transparent;"
         )
         vol_layout.addWidget(self._volume_hint)
-        slider_row = QHBoxLayout()
-        slider_row.setSpacing(8)
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setSingleStep(5)
         self._volume_slider.setPageStep(10)
+        self._volume_slider.setFixedHeight(22)
+        self._volume_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #e6e6e9;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                background: #c8102e;
+                border: 2px solid #ffffff;
+                border-radius: 8px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #c8102e;
+                border-radius: 3px;
+            }
+            """
+        )
         self._volume_slider.valueChanged.connect(self._emit_volume_changed)
-        slider_row.addWidget(self._volume_slider, stretch=1)
+        vol_layout.addWidget(self._volume_slider)
+        pct_row = QHBoxLayout()
+        pct_row.addStretch(1)
         self._volume_pct_label = QLabel("0%")
-        self._volume_pct_label.setFixedWidth(40)
         self._volume_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._volume_pct_label.setStyleSheet(
-            "color: #1c1c1e; font-size: 12px; font-weight: 600;"
+            "color: #1c1c1e; font-size: 13px; font-weight: 700;"
             " background: transparent;"
         )
-        slider_row.addWidget(self._volume_pct_label)
-        vol_layout.addLayout(slider_row)
+        pct_row.addWidget(self._volume_pct_label)
+        vol_layout.addLayout(pct_row)
         action = QWidgetAction(self._volume_menu)
         action.setDefaultWidget(vol_host)
         self._volume_menu.addAction(action)
@@ -153,7 +185,7 @@ class HeaderBar(QFrame):
             )
             return
         value = max(0, min(100, int(pct)))
-        self._volume_btn.setToolTip(f"System speaker: {value}%")
+        self._volume_btn.setToolTip(f"Speaker volume: {value}%")
         if self._volume_busy:
             return
         self._volume_slider.blockSignals(True)

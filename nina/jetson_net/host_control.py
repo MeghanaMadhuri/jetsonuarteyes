@@ -2,48 +2,35 @@
 
 Two operator actions are exposed: ``queue_poweroff()`` and
 ``queue_reboot()``. Both schedule the OS-level command in a daemon
-thread so the HTTP / Qt caller can return immediately - by the time
-the request handler unwinds, ``systemd`` is already in the middle of
-bringing services down and the UI gets a final ``ok`` response before
-the panel goes dark.
+thread so the HTTP / Qt caller can return immediately.
 
-Both helpers try a small, ordered list of binaries (`systemctl`,
-`/sbin/poweroff` / `/sbin/reboot`, `shutdown -h now` / `shutdown -r
-now`) so the same code path works on Jetson images that ship with
-either path layout (JetPack 5 uses `/sbin/poweroff`, JetPack 6 prefers
-`systemctl poweroff` via systemd-shim).
+Passwordless execution for the kiosk user is installed by::
 
-For passwordless execution from the kiosk user, add this to
-``/etc/sudoers.d/nina-link`` (replace ``nina`` with the actual user
-running the GUI / nina-link)::
+    sudo bash scripts/install-nina-host-power.sh [username]
 
-    nina ALL=(ALL) NOPASSWD: /usr/bin/systemctl poweroff, \\
-        /usr/bin/systemctl reboot, \\
-        /sbin/poweroff, /usr/sbin/poweroff, \\
-        /sbin/reboot, /usr/sbin/reboot, \\
-        /sbin/shutdown
-
-Without the sudoers entry the GUI button will surface a clear
-``operation not permitted`` log line; the polkit-friendly
-``loginctl`` paths are not used because the kiosk user is typically
-not on the active seat under a systemd-less LXDE autostart.
+That writes ``/etc/sudoers.d/nina-host-power`` with the exact command
+paths tried below. The older ``/etc/sudoers.d/nina-link`` name in
+early docs is obsolete — use ``install-nina-host-power.sh``.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import threading
 from typing import Any, Dict, Iterable, Sequence, Tuple
 
 log = logging.getLogger("nina.jetson_net.host_control")
 
+_INSTALL_HINT = (
+    "Passwordless sudo is not configured. On the Jetson run once:\n"
+    "  sudo bash scripts/install-nina-host-power.sh\n"
+    "(or pass your kiosk username, e.g. `sudo bash .../install-nina-host-power.sh nina`)"
+)
 
-# Each entry is a candidate argv. We try them in order until one
-# returns 0 (or the process is gone before we can check). ``shutdown``
-# variants are last because they print a wall message that takes a
-# second to settle - the direct binaries cut the dark-screen latency.
-_POWEROFF_CANDIDATES: Tuple[Tuple[str, ...], ...] = (
+# Sudo paths — keep in sync with scripts/install-nina-host-power.sh
+_POWEROFF_SUDO: Tuple[Tuple[str, ...], ...] = (
     ("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "poweroff"),
     ("/usr/bin/sudo", "-n", "/bin/systemctl", "poweroff"),
     ("/usr/bin/sudo", "-n", "/sbin/poweroff"),
@@ -51,7 +38,7 @@ _POWEROFF_CANDIDATES: Tuple[Tuple[str, ...], ...] = (
     ("/usr/bin/sudo", "-n", "/sbin/shutdown", "-h", "now"),
 )
 
-_REBOOT_CANDIDATES: Tuple[Tuple[str, ...], ...] = (
+_REBOOT_SUDO: Tuple[Tuple[str, ...], ...] = (
     ("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "reboot"),
     ("/usr/bin/sudo", "-n", "/bin/systemctl", "reboot"),
     ("/usr/bin/sudo", "-n", "/sbin/reboot"),
@@ -59,22 +46,61 @@ _REBOOT_CANDIDATES: Tuple[Tuple[str, ...], ...] = (
     ("/usr/bin/sudo", "-n", "/sbin/shutdown", "-r", "now"),
 )
 
+# When already root (rare), skip sudo.
+_POWEROFF_DIRECT: Tuple[Tuple[str, ...], ...] = (
+    ("/usr/bin/systemctl", "poweroff"),
+    ("/bin/systemctl", "poweroff"),
+    ("/sbin/poweroff"),
+    ("/usr/sbin/poweroff"),
+    ("/sbin/shutdown", "-h", "now"),
+)
+
+_REBOOT_DIRECT: Tuple[Tuple[str, ...], ...] = (
+    ("/usr/bin/systemctl", "reboot"),
+    ("/bin/systemctl", "reboot"),
+    ("/sbin/reboot"),
+    ("/usr/sbin/reboot"),
+    ("/sbin/shutdown", "-r", "now"),
+)
+
+# Non-destructive probes (first match wins).
+_POWEROFF_PROBE: Tuple[Tuple[str, ...], ...] = (
+    ("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "poweroff", "--dry-run"),
+    ("/usr/bin/sudo", "-n", "/bin/systemctl", "poweroff", "--dry-run"),
+    ("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "--version"),
+    ("/usr/bin/sudo", "-n", "/bin/systemctl", "--version"),
+    ("/usr/bin/sudo", "-n", "/sbin/poweroff", "--help"),
+)
+
+
+def _candidates_for(action: str) -> Tuple[Tuple[str, ...], ...]:
+    if action == "poweroff":
+        direct = _POWEROFF_DIRECT if os.geteuid() == 0 else ()
+        return direct + _POWEROFF_SUDO
+    if action == "reboot":
+        direct = _REBOOT_DIRECT if os.geteuid() == 0 else ()
+        return direct + _REBOOT_SUDO
+    raise ValueError(f"unknown action: {action}")
+
 
 def _run_first_success(
     candidates: Iterable[Sequence[str]],
     action: str,
-) -> None:
-    """Try each candidate argv in order; log+return on first 0 exit."""
+) -> Tuple[bool, str]:
+    """Try each candidate argv in order; return (ok, last_error)."""
     last_err = ""
     for cmd in candidates:
         try:
             r = subprocess.run(
-                list(cmd), timeout=5, capture_output=True, text=True
+                list(cmd), timeout=8, capture_output=True, text=True
             )
             if r.returncode == 0:
                 log.info("%s: %s", action, " ".join(cmd))
-                return
+                return True, ""
             last_err = (r.stderr or r.stdout or "").strip()
+            low = last_err.lower()
+            if "password" in low or "not allowed" in low or "a password is required" in low:
+                last_err = "sudo requires a password (NOPASSWD rule missing)"
             log.warning(
                 "%s try %s exited rc=%s: %s",
                 action,
@@ -87,39 +113,100 @@ def _run_first_success(
         except Exception as exc:  # pragma: no cover - logged + tried next
             last_err = f"{type(exc).__name__}: {exc}"
             log.warning("%s try %s: %s", action, " ".join(cmd), exc)
+    if not last_err:
+        last_err = "no candidate command succeeded"
     log.error(
-        "%s: every candidate failed. Configure passwordless sudo "
-        "for systemctl/poweroff/reboot. Last error: %s",
+        "%s: every candidate failed. %s Last error: %s",
         action,
-        last_err or "(no output)",
+        _INSTALL_HINT.split("\n")[0],
+        last_err,
     )
+    return False, last_err
 
 
-def queue_poweroff() -> Dict[str, Any]:
-    """Request OS poweroff in a background thread (caller returns immediately)."""
-
-    def run() -> None:
-        _run_first_success(_POWEROFF_CANDIDATES, "poweroff")
-
-    threading.Thread(target=run, daemon=True, name="nina-poweroff").start()
+def probe_power_privilege() -> Dict[str, Any]:
+    """Check whether shutdown/reboot is likely to work for the current user."""
+    if os.name != "posix":
+        return {
+            "ok": False,
+            "detail": "Host power control is only supported on Linux.",
+            "install_hint": "",
+        }
+    if os.geteuid() == 0:
+        return {
+            "ok": True,
+            "detail": "Running as root — poweroff/reboot should work.",
+            "install_hint": "",
+        }
+    for cmd in _POWEROFF_PROBE:
+        try:
+            r = subprocess.run(
+                list(cmd), timeout=5, capture_output=True, text=True
+            )
+            if r.returncode == 0:
+                return {
+                    "ok": True,
+                    "detail": "Passwordless sudo for systemctl poweroff is configured.",
+                    "install_hint": "",
+                }
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            log.debug("power probe %s: %s", " ".join(cmd), exc)
+    # Fall back: any sudo poweroff path that fails only on dry-run unsupported
+    ok, err = _run_first_success(
+        (
+            ("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "--version"),
+            ("/usr/bin/sudo", "-n", "/bin/systemctl", "--version"),
+        ),
+        "probe",
+    )
+    if ok:
+        return {
+            "ok": True,
+            "detail": "Passwordless sudo for systemctl is available.",
+            "install_hint": "",
+        }
     return {
-        "ok": True,
-        "queued": True,
-        "action": "poweroff",
-        "message": "Poweroff requested. Host may go down in a few seconds.",
+        "ok": False,
+        "detail": err or "sudo -n systemctl is not permitted for this user.",
+        "install_hint": _INSTALL_HINT,
     }
 
 
+def queue_poweroff() -> Dict[str, Any]:
+    """Request OS poweroff in a background thread."""
+    return _queue_action("poweroff")
+
+
 def queue_reboot() -> Dict[str, Any]:
-    """Request OS reboot in a background thread (caller returns immediately)."""
+    """Request OS reboot in a background thread."""
+    return _queue_action("reboot")
+
+
+def _queue_action(action: str) -> Dict[str, Any]:
+    priv = probe_power_privilege()
+    if not priv.get("ok"):
+        return {
+            "ok": False,
+            "queued": False,
+            "action": action,
+            "message": str(priv.get("detail") or f"{action} not permitted"),
+            "install_hint": str(priv.get("install_hint") or _INSTALL_HINT),
+        }
+
+    candidates = _candidates_for(action)
 
     def run() -> None:
-        _run_first_success(_REBOOT_CANDIDATES, "reboot")
+        _run_first_success(candidates, action)
 
-    threading.Thread(target=run, daemon=True, name="nina-reboot").start()
+    threading.Thread(
+        target=run, daemon=True, name=f"nina-{action}"
+    ).start()
+    verb = "Poweroff" if action == "poweroff" else "Reboot"
     return {
         "ok": True,
         "queued": True,
-        "action": "reboot",
-        "message": "Reboot requested. Host may restart in a few seconds.",
+        "action": action,
+        "message": f"{verb} requested. Host may go down in a few seconds.",
     }

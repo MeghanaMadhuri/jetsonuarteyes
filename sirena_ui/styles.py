@@ -46,6 +46,12 @@ def asset_path(name: str) -> str:
     return str(ASSETS_DIR / name)
 
 
+def repo_asset_path(name: str) -> str:
+    """Path under repository ``assets/`` (e.g. ``nina_splash.mp4``)."""
+    root = Path(__file__).resolve().parents[1].parent
+    return str(root / "assets" / name)
+
+
 STYLESHEET = f"""
 QWidget {{
     background-color: {BRAND_CLOUD};

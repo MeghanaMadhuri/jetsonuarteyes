@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import QApplication
 from sirena_ui.main_window import MainWindow
 from sirena_ui.styles import STYLESHEET, asset_path
 from sirena_ui.android_gateway.server import start_tablet_gateway
+from sirena_ui.widgets.splash_video import show_splash_then
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.osk import OnScreenKeyboardManager
 
@@ -122,7 +123,14 @@ def main() -> int:
     start_tablet_gateway(service)
     window = MainWindow(service)
     window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
-    window.show()
+
+    def _show_main() -> None:
+        window.show()
+        if _env_truthy("NINA_UI_FULLSCREEN"):
+            window.showFullScreen()
+
+    if not show_splash_then(on_finished=_show_main):
+        _show_main()
 
     return app.exec_()
 

@@ -173,6 +173,8 @@ class SettingsScreen(QWidget):
         btn = self._buttons.get(key)
         if btn is not None:
             btn.setChecked(True)
+        if key == "power":
+            self._refresh_power_privilege()
 
     def _build_pane(self, key: str, label: str) -> QWidget:
         if key == "general":
@@ -281,6 +283,7 @@ class SettingsScreen(QWidget):
         nearby_card.add(SectionLabel("Nearby networks"))
         self._net_nearby_list = QListWidget()
         self._net_nearby_list.setMinimumHeight(120)
+        self._style_wifi_list(self._net_nearby_list)
         self._net_nearby_list.itemDoubleClicked.connect(
             lambda _item: self._net_connect_selected_scan()
         )
@@ -291,6 +294,7 @@ class SettingsScreen(QWidget):
         saved_card.add(SectionLabel("Saved networks"))
         self._net_saved_list = QListWidget()
         self._net_saved_list.setMinimumHeight(120)
+        self._style_wifi_list(self._net_saved_list)
         self._net_saved_list.itemDoubleClicked.connect(
             lambda _item: self._net_connect_saved_selected()
         )
@@ -376,6 +380,33 @@ class SettingsScreen(QWidget):
         self._net_timer.start(6000)
 
         return wrapper
+
+    @staticmethod
+    def _style_wifi_list(widget: QListWidget) -> None:
+        """Readable selection — global QSS sets selected items transparent."""
+        widget.setStyleSheet(
+            """
+            QListWidget {
+                background-color: #f5f5f7;
+                border: 1px solid #e3e3e6;
+                border-radius: 8px;
+                outline: none;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                color: #1c1c1e;
+                padding: 8px 10px;
+                border-bottom: 1px solid #ececee;
+            }
+            QListWidget::item:selected {
+                background-color: #fbe7eb;
+                color: #1c1c1e;
+            }
+            QListWidget::item:hover {
+                background-color: #ffffff;
+            }
+            """
+        )
 
     def _refresh_network_status(self) -> None:
         try:
@@ -994,8 +1025,29 @@ class SettingsScreen(QWidget):
             "color: #6e6e73; font-size: 11px; background-color: transparent;"
         )
         card.add(self._power_status)
+        self._refresh_power_privilege()
 
         return container
+
+    def _refresh_power_privilege(self) -> None:
+        if self._power_status is None:
+            return
+        try:
+            from nina.jetson_net import host_control
+
+            st = host_control.probe_power_privilege()
+        except Exception as exc:
+            self._power_status.setText(f"Power check failed: {exc}")
+            return
+        lines = [str(st.get("detail") or "").strip()]
+        hint = str(st.get("install_hint") or "").strip()
+        if hint:
+            lines.append(hint)
+        if st.get("ok"):
+            lines.insert(0, "Shutdown / Reboot: ready.")
+        else:
+            lines.insert(0, "Shutdown / Reboot: sudo not configured.")
+        self._power_status.setText("\n\n".join(x for x in lines if x))
 
     def _on_power_shutdown(self) -> None:
         if not self._confirm_power_action(
@@ -1054,40 +1106,43 @@ class SettingsScreen(QWidget):
             self._service.shutdown()
         except Exception:
             pass
+        from nina.jetson_net import host_control
+
+        result: Dict[str, Any] = {}
         path = (
             "/v1/system/poweroff"
             if action == "poweroff"
             else "/v1/system/reboot"
         )
-        msg = ""
         try:
             result = self._link_request(path, method="POST", body={}, timeout=6.0)
-            if isinstance(result, dict):
-                msg = str(result.get("message") or "")
         except RuntimeError:
-            try:
-                from nina.jetson_net import host_control
+            if action == "poweroff":
+                result = host_control.queue_poweroff()
+            else:
+                result = host_control.queue_reboot()
 
-                if action == "poweroff":
-                    result = host_control.queue_poweroff()
-                else:
-                    result = host_control.queue_reboot()
-                if isinstance(result, dict):
-                    msg = str(result.get("message") or "")
-            except Exception as exc:
-                QMessageBox.critical(
-                    self,
-                    "Power",
-                    f"{action} failed: {exc}",
-                )
-                return
+        ok = bool(result.get("ok", False))
+        msg = str(result.get("message") or "").strip()
+        hint = str(result.get("install_hint") or "").strip()
         if not msg:
-            msg = f"{action} requested."
-        footer = (
-            f"{action} dispatched: {msg}\n"
-            "If nothing happens within ~10 s, add passwordless sudo for "
-            "systemctl/poweroff/reboot (see nina/jetson_net/host_control.py)."
-        )
+            msg = f"{action} requested." if ok else f"{action} failed."
+
+        if not ok:
+            body = msg
+            if hint:
+                body = f"{body}\n\n{hint}"
+            warn = QMessageBox(self)
+            warn.setIcon(QMessageBox.Warning)
+            warn.setWindowTitle("Power")
+            warn.setText(body)
+            warn.setStandardButtons(QMessageBox.Ok)
+            warn.setWindowFlags(warn.windowFlags() | Qt.WindowStaysOnTopHint)
+            warn.exec_()
+            self._refresh_power_privilege()
+            return
+
+        footer = msg
         if self._power_status is not None:
             self._power_status.setText(footer)
         info = QMessageBox(self)

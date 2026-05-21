@@ -858,7 +858,7 @@ class DriveScreen(QWidget):
         self._straight_test_btn.setEnabled(True)
         self._straight_back_test_btn.setEnabled(True)
         self._turn_90_left_btn.setEnabled(True)
-            self._turn_90_right_btn.setEnabled(True)
+        self._turn_90_right_btn.setEnabled(True)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
         # update here. The title-row pill conveys the same state.
 

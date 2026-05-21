@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -38,6 +39,7 @@ from sirena_ui.widgets.common import (
     Breadcrumb,
     Card,
     CardTitle,
+    HRule,
     MutedLabel,
     Pill,
     SectionLabel,
@@ -182,8 +184,14 @@ class VisionScreen(QWidget):
         body.setSpacing(10)
         outer.addLayout(body, stretch=1)
 
-        body.addWidget(self._build_camera_card(), stretch=62)
-        body.addWidget(self._build_recognition_card(), stretch=38)
+        body.addWidget(self._build_camera_card(), stretch=58)
+        rail_scroll = QScrollArea()
+        rail_scroll.setWidgetResizable(True)
+        rail_scroll.setFrameShape(QFrame.NoFrame)
+        rail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        rail_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        rail_scroll.setWidget(self._build_recognition_card())
+        body.addWidget(rail_scroll, stretch=42)
 
         self._aruco_follow.status_message.connect(self._on_aruco_status)
         self._wire_signals()
@@ -308,8 +316,7 @@ class VisionScreen(QWidget):
     # ---------- recognition rail ----------
 
     def _build_recognition_card(self) -> Card:
-        # Was padding=20. Trim to 12 to fit the 13-row rail in 530 px.
-        card = Card(padding=12, spacing=6)
+        card = Card(padding=10, spacing=8)
 
         card.add(SectionLabel("Recognition"))
         face = _ToggleRow("Face recognition", on=_auto_start_face_detection())
@@ -319,55 +326,50 @@ class VisionScreen(QWidget):
         self._face_toggle = face
         self._object_toggle = obj
 
-        card.add(SectionLabel("ArUco marker approach"))
-        follow_hint = MutedLabel(
-            "Uses the live camera (same resolution as the preview) to find the "
-            "chosen ArUco ID, drives forward at Straight-bench speed "
-            "(NINA_STRAIGHT_TEST_SPEED_PCT), and recentres with gentle turns. "
-            "Stops when the marker fills enough of the frame "
-            "(NINA_ARUCO_STOP_AREA_FRAC). Dictionary: NINA_ARUCO_DICT (default "
-            "DICT_4X4_50)."
-        )
-        follow_hint.setWordWrap(True)
-        card.add(follow_hint)
+        card.add(HRule())
+
+        card.add(SectionLabel("ArUco approach"))
         id_row = QHBoxLayout()
-        id_row.setSpacing(8)
-        id_row.addWidget(MutedLabel("Marker ID"))
+        id_row.setSpacing(6)
+        id_lbl = MutedLabel("Marker ID")
+        id_lbl.setToolTip(
+            "Approach the printed ArUco tag at straight-bench speed; "
+            "stops when the marker fills enough of the frame."
+        )
+        id_row.addWidget(id_lbl)
         self._aruco_marker_spin = QSpinBox()
         self._aruco_marker_spin.setRange(0, 999)
         self._aruco_marker_spin.setValue(0)
         self._aruco_marker_spin.setMinimumHeight(32)
-        self._aruco_marker_spin.setToolTip("ArUco marker ID to approach (printed on tag).")
+        self._aruco_marker_spin.setToolTip(id_lbl.toolTip())
         id_row.addWidget(self._aruco_marker_spin, stretch=1)
         card.add_layout(id_row)
-        follow_row = QHBoxLayout()
-        follow_row.setSpacing(6)
-        card.add_layout(follow_row)
+
+        aruco_btns = QVBoxLayout()
+        aruco_btns.setSpacing(6)
+        card.add_layout(aruco_btns)
         self._aruco_start_btn = QPushButton("Start approach")
         self._aruco_start_btn.setObjectName("primaryButton")
         self._aruco_start_btn.setCursor(Qt.PointingHandCursor)
         self._aruco_start_btn.setMinimumHeight(34)
         self._aruco_start_btn.clicked.connect(self._on_aruco_start)
-        follow_row.addWidget(self._aruco_start_btn, stretch=1)
+        aruco_btns.addWidget(self._aruco_start_btn)
         self._aruco_stop_btn = QPushButton("Stop approach")
         self._aruco_stop_btn.setObjectName("secondaryButton")
         self._aruco_stop_btn.setCursor(Qt.PointingHandCursor)
         self._aruco_stop_btn.setMinimumHeight(34)
         self._aruco_stop_btn.setEnabled(False)
         self._aruco_stop_btn.clicked.connect(self._on_aruco_stop)
-        follow_row.addWidget(self._aruco_stop_btn, stretch=1)
+        aruco_btns.addWidget(self._aruco_stop_btn)
         self._aruco_pill = Pill("ArUco: off", Pill.KIND_NEUTRAL)
         card.add(self._aruco_pill)
 
-        # Object confidence floor (0..100%). Anything YOLO scores
-        # below this threshold is dropped before it ever reaches the
-        # detector list / bbox overlay. Default 80% per the operator
-        # preference -- "tight" detections only.
+        card.add(HRule())
+
         conf_row = QHBoxLayout()
-        conf_row.setSpacing(8)
-        conf_row.setContentsMargins(0, 4, 0, 4)
+        conf_row.setSpacing(6)
         card.add_layout(conf_row)
-        conf_row.addWidget(MutedLabel("Object confidence"))
+        conf_row.addWidget(MutedLabel("Obj. confidence"))
         initial_pct = int(round(self._service.vision.get_object_confidence() * 100))
         self._obj_conf_slider = QSlider(Qt.Horizontal)
         self._obj_conf_slider.setRange(50, 99)
@@ -378,35 +380,32 @@ class VisionScreen(QWidget):
         conf_row.addWidget(self._obj_conf_pill)
 
         card.add(SectionLabel("Detected"))
-        # The list lives in its own Card so we can swap children freely
-        # without disturbing the surrounding layout.
-        det_card = Card(padding=8, spacing=6, subtle=True)
+        det_card = Card(padding=8, spacing=4, subtle=True)
         det_layout = QVBoxLayout()
         det_layout.setContentsMargins(0, 0, 0, 0)
-        det_layout.setSpacing(6)
+        det_layout.setSpacing(4)
         det_card.add_layout(det_layout)
+        det_card.setMaximumHeight(140)
         self._detections_panel = det_card
         self._detections_layout = det_layout
         card.add(det_card)
         self._render_detections([])
 
-        card.add(SectionLabel("Camera"))
-        form = QVBoxLayout()
-        form.setSpacing(8)
-        card.add_layout(form)
+        card.add(HRule())
+        card.add(SectionLabel("Camera tuning"))
 
         res_row = QHBoxLayout()
-        res_row.setSpacing(8)
+        res_row.setSpacing(6)
         res_row.addWidget(MutedLabel("Resolution"))
         res = QComboBox()
         res.addItems(["1280x720", "640x480", "320x240"])
         res.setCurrentText("640x480")
         res.currentTextChanged.connect(self._on_resolution)
         res_row.addWidget(res, stretch=1)
-        form.addLayout(res_row)
+        card.add_layout(res_row)
 
         bright_row = QHBoxLayout()
-        bright_row.setSpacing(8)
+        bright_row.setSpacing(6)
         bright_row.addWidget(MutedLabel("Brightness"))
         bright = QSlider(Qt.Horizontal)
         bright.setRange(0, 100)
@@ -415,22 +414,18 @@ class VisionScreen(QWidget):
         self._bright_pill = Pill("55%", Pill.KIND_NEUTRAL)
         bright.valueChanged.connect(lambda v: self._bright_pill.setText(f"{v}%"))
         bright_row.addWidget(self._bright_pill)
-        form.addLayout(bright_row)
+        card.add_layout(bright_row)
 
         exp_row = QHBoxLayout()
-        exp_row.setSpacing(8)
+        exp_row.setSpacing(6)
         exp_row.addWidget(MutedLabel("Exposure"))
         exp = QComboBox()
         exp.addItems(["Auto", "Manual: 1/30", "Manual: 1/60", "Manual: 1/120"])
         exp_row.addWidget(exp, stretch=1)
-        form.addLayout(exp_row)
+        card.add_layout(exp_row)
 
-        card.add_stretch()
+        card.add(HRule())
 
-        # All three action buttons on a single row to save vertical
-        # space on the 1024 x 600 panel. Each gets equal stretch so
-        # they share the rail width without one ballooning past the
-        # others. Shorter labels keep the row from wrapping.
         button_row = QHBoxLayout()
         button_row.setSpacing(6)
         card.add_layout(button_row)
