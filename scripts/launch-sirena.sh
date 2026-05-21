@@ -347,6 +347,9 @@ EXIT=0
     echo "QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
     echo "QT_QPA_PLATFORM_PLUGIN_PATH=${QT_QPA_PLATFORM_PLUGIN_PATH:-<unset>}"
     echo "NINA_UI_FULLSCREEN=${NINA_UI_FULLSCREEN:-<unset>}"
+    echo "NINA_REPO_ROOT=${NINA_REPO_ROOT:-<unset>}"
+    echo "NINA_UI_SPLASH_VIDEO=${NINA_UI_SPLASH_VIDEO:-<unset>}"
+    echo "NINA_UI_DEV_QUIT_PASSWORD=${NINA_UI_DEV_QUIT_PASSWORD:+<set>}"
     echo "PATH=${PATH}"
     echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
     echo "PYTHONPATH=${PYTHONPATH}"
@@ -357,6 +360,16 @@ EXIT=0
         exit 127
     fi
     cd "${REPO_ROOT}"
+    export NINA_REPO_ROOT="${REPO_ROOT}"
+    if [[ -f "${REPO_ROOT}/assets/nina_splash.mp4" ]]; then
+        export NINA_UI_SPLASH_VIDEO="${REPO_ROOT}/assets/nina_splash.mp4"
+    fi
+    # Kiosk/systemd does not inherit shell exports — read dev-quit password from file.
+    if [[ -z "${NINA_UI_DEV_QUIT_PASSWORD:-}" ]] \
+        && [[ -f "${HOME}/.config/nina/dev_quit_password" ]]; then
+        NINA_UI_DEV_QUIT_PASSWORD="$(tr -d '\r\n' < "${HOME}/.config/nina/dev_quit_password")"
+        export NINA_UI_DEV_QUIT_PASSWORD
+    fi
     # Tablet gateway MJPEG + camera/GPIO handles need more FDs than the default 1024.
     # Python also calls setrlimit() at import — log the shell ulimit for diagnostics.
     if command -v ulimit >/dev/null 2>&1; then

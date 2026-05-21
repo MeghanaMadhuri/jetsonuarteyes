@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -15,8 +14,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from sirena_ui.styles import asset_path
-from sirena_ui.widgets.dev_quit import DevQuitLogoLabel
+from sirena_ui.widgets.dev_quit import DevQuitBrandBar
 
 
 # (key, label, icon-glyph) — the glyphs are simple Unicode symbols so we
@@ -81,26 +79,9 @@ class Sidebar(QFrame):
         v.addWidget(footer)
 
     def _build_brand(self) -> QFrame:
-        bar = QFrame()
+        bar = DevQuitBrandBar()
         bar.setStyleSheet("background-color: transparent;")
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(12, 0, 12, 2)
-        h.setSpacing(8)
-
-        logo = DevQuitLogoLabel()
-        pix = QPixmap(asset_path("sirena_logo.png"))
-        if not pix.isNull():
-            logo.setPixmap(pix.scaledToHeight(22, Qt.SmoothTransformation))
-        logo.dev_quit_requested.connect(self.dev_quit_requested.emit)
-        h.addWidget(logo)
-
-        word = QLabel("Sirena")
-        word.setStyleSheet(
-            "color: white; font-size: 15px; font-weight: 700;"
-            " background-color: transparent;"
-        )
-        h.addWidget(word)
-        h.addStretch(1)
+        bar.dev_quit_requested.connect(self.dev_quit_requested.emit)
         return bar
 
     def _on_clicked(self, key: str) -> None:

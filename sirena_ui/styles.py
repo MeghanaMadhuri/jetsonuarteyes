@@ -7,6 +7,7 @@ so the look stays consistent across Home, Drive, Vision, Map,
 Actions, Settings, and Health.
 """
 
+import os
 from pathlib import Path
 
 # ---- Sirena palette --------------------------------------------------
@@ -48,6 +49,9 @@ def asset_path(name: str) -> str:
 
 def repo_asset_path(name: str) -> str:
     """Path under repository ``assets/`` (e.g. ``nina_splash.mp4``)."""
+    env_root = (os.environ.get("NINA_REPO_ROOT") or "").strip()
+    if env_root:
+        return str(Path(env_root) / "assets" / name)
     root = Path(__file__).resolve().parents[1]
     return str(root / "assets" / name)
 
