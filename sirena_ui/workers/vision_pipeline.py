@@ -359,6 +359,35 @@ def _patch_torch_load_for_ultralytics() -> None:
             pass
 
 
+def _import_ultralytics_yolo():  # type: ignore[no-untyped-def]
+    """Import YOLO with errors the GUI can act on (kiosk == .venv-link)."""
+    try:
+        import torch  # type: ignore  # noqa: F401
+    except ImportError as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise RuntimeError(
+            "PyTorch is not importable in the Nina Python environment "
+            f"({detail}). On Jetson install cuDSS + cuSPARSELt system debs, "
+            "then a JetPack-matching torch wheel into .venv-link "
+            "(see REQUIREMENTS.md), restart nina-ui-kiosk, and re-run "
+            "./scripts/install-vision-jetson.sh"
+        ) from exc
+
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except ImportError as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise RuntimeError(
+            "Ultralytics import failed "
+            f"({detail}). Install into .venv-link (same Python as the kiosk):\n"
+            "  ./scripts/install-vision-jetson.sh\n"
+            "or: ./.venv-link/bin/pip install ultralytics\n"
+            "(Install JetPack-matching PyTorch first if the error mentions "
+            "torch or libcudss.)"
+        ) from exc
+    return YOLO
+
+
 class _YoloObjectDetector:
     """Ultralytics YOLOv8n with optional TensorRT acceleration.
 
@@ -379,19 +408,11 @@ class _YoloObjectDetector:
         confidence: float = 0.8,
         prefer_tensorrt: bool = True,
     ) -> None:
+        # Import YOLO before patching torch.load / probing ultralytics.nn —
+        # a failed early ``ultralytics.nn`` import (e.g. shadowed by apt packages
+        # on PYTHONPATH) can poison the package and break ``import YOLO``.
+        YOLO = _import_ultralytics_yolo()
         _patch_torch_load_for_ultralytics()
-
-        try:
-            from ultralytics import YOLO  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError(
-                "Ultralytics is required for object detection. "
-                "Use the same Python as nina-link, e.g.\n"
-                "  python3 -m pip install ultralytics\n"
-                "or install the full headless vision stack:\n"
-                "  pip install -r sirena_ui/requirements-headless.txt\n"
-                "(On Jetson install a JetPack-matching PyTorch wheel before ultralytics if needed.)"
-            ) from exc
 
         self._YOLO = YOLO
         self._weights_path = weights_path

@@ -74,16 +74,54 @@ else
         echo "  2) Retry: ${PIP} install --no-deps ultralytics"
         exit 1
     fi
+    # Ubuntu apt sympy on dist-packages is too old for torch/ultralytics (equal_valued).
+    "${PIP}" install -U 'sympy>=1.13' || true
 fi
 
-say "import check (same interpreter as nina-ui-kiosk)"
+say "import check (same interpreter + lib paths as nina-ui-kiosk)"
 export PYTHONPATH="${REPO_ROOT}"
-if ! "${PY}" -c "from ultralytics import YOLO; print('ultralytics', YOLO)"; then
-    bad "import ultralytics failed — run the kiosk from a terminal for the traceback:"
-    bad "  cd ${REPO_ROOT} && ./scripts/launch-sirena.sh"
+_venv_site="$("${PY}" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)"
+if [[ -n "${_venv_site}" && -d "${_venv_site}" ]]; then
+    export PYTHONPATH="${REPO_ROOT}:${_venv_site}:${PYTHONPATH#${REPO_ROOT}:}"
+fi
+_sys_py_d="/usr/lib/python3/dist-packages"
+if [[ -d "${_sys_py_d}/PyQt5" ]]; then
+    export PYTHONPATH="${PYTHONPATH}:${_sys_py_d}"
+fi
+# Match scripts/launch-sirena.sh so a passing check here means the kiosk can import ML libs.
+for _dir in \
+    "/usr/local/cuda/lib64" \
+    "/usr/local/cuda/targets/aarch64-linux/lib" \
+    "/usr/lib/aarch64-linux-gnu/tegra" \
+    "/usr/lib/aarch64-linux-gnu/nvidia" \
+    "/usr/lib/aarch64-linux-gnu" \
+    "${HOME}/.local/lib"
+do
+    if [[ -d "${_dir}" ]]; then
+        case ":${LD_LIBRARY_PATH:-}:" in
+            *":${_dir}:"*) : ;;
+            *) export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${_dir}" ;;
+        esac
+    fi
+done
+if ! "${PY}" -c "
+import torch
+print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+"; then
+    bad "import torch failed — install JetPack PyTorch + cuDSS/cuSPARSELt (REQUIREMENTS.md)"
     exit 1
 fi
-ok "ultralytics imports in ${PY}"
+ok "torch imports in ${PY}"
+if ! "${PY}" -c "
+from ultralytics import YOLO
+import sympy
+print('ultralytics YOLO OK, sympy', sympy.__version__, sympy.__file__)
+"; then
+    bad "from ultralytics import YOLO failed (often apt sympy on PYTHONPATH — see launch-sirena.sh)"
+    bad "  cd ${REPO_ROOT} && ./scripts/diagnose-vision-kiosk-import.sh"
+    exit 1
+fi
+ok "ultralytics YOLO imports in ${PY} (kiosk PYTHONPATH)"
 
 _cv2_qt="$("${PY}" -c "import os, cv2; print(os.path.join(os.path.dirname(cv2.__file__), 'qt'))" 2>/dev/null || true)"
 if [[ -n "${_cv2_qt}" && -d "${_cv2_qt}" ]]; then

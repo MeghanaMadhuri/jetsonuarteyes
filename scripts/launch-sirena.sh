@@ -70,12 +70,21 @@ set +u
 [[ -r "${HOME}/.bashrc" ]]       && . "${HOME}/.bashrc"
 set -u
 
+# ``.bashrc`` sometimes exports PYTHONHOME / PYTHONUSERBASE for system Python;
+# that breaks .venv-link (imports look fine in a bare ``python -c`` but fail
+# under launch-sirena / the kiosk).
+if [[ "${PYTHON_BIN}" == "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    unset PYTHONHOME PYTHONUSERBASE
+fi
+
 # Belt-and-braces: explicitly add Jetson CUDA / cuDNN / TensorRT lib
 # paths so PyTorch + Ultralytics can find libcudart, libcublas,
 # libnvinfer etc. Harmless on hosts that don't have these dirs.
 for _dir in \
     "/usr/local/cuda/lib64" \
+    "/usr/local/cuda/targets/aarch64-linux/lib" \
     "/usr/lib/aarch64-linux-gnu/tegra" \
+    "/usr/lib/aarch64-linux-gnu/nvidia" \
     "/usr/lib/aarch64-linux-gnu" \
     "${HOME}/.local/lib"
 do
@@ -100,11 +109,22 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 # If ``.venv-link`` was created without ``--system-site-packages``, apt's
 # ``python3-pyqt5`` (under ``/usr/lib/python3/dist-packages``) is invisible and
-# the GUI dies with ``ModuleNotFoundError: No module named 'PyQt5'``. Appending
-# that dir (after the repo) preserves venv-first resolution for other packages
-# while still allowing distro Qt bindings — same end state as a correctly built
-# Jetson venv per docs/COMPANION_APP.md.
+# the GUI dies with ``ModuleNotFoundError: No module named 'PyQt5'``.
+#
+# PYTHONPATH entries are searched *before* the venv's site-packages, so we must
+# prepend ``.venv-link/.../site-packages`` here (right after REPO_ROOT). Only
+# then append dist-packages at the *end* for PyQt5 — otherwise Ubuntu's apt
+# torch/ultralytics/sympy stubs shadow the Jetson wheels and object detection dies
+# with "Ultralytics is required" / ``equal_valued`` ImportError even though a bare
+# ``python -c "import ultralytics"`` works.
 if [[ "${PYTHON_BIN}" == "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    _venv_site="$("${PYTHON_BIN}" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)"
+    if [[ -n "${_venv_site}" && -d "${_venv_site}" ]]; then
+        case ":${PYTHONPATH}:" in
+            *":${_venv_site}:"*) : ;;
+            *) export PYTHONPATH="${REPO_ROOT}:${_venv_site}:${PYTHONPATH#${REPO_ROOT}:}" ;;
+        esac
+    fi
     _sys_py_d="/usr/lib/python3/dist-packages"
     if [[ -d "${_sys_py_d}/PyQt5" ]]; then
         case ":${PYTHONPATH}:" in
