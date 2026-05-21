@@ -12,11 +12,13 @@
 #   1. chmod +x the launcher the unit will call.
 #   2. Substitute the launcher's absolute path into the unit template
 #      and drop the result into ~/.config/systemd/user/.
-#   3. systemctl --user daemon-reload + enable + (re)start the unit.
-#   4. loginctl enable-linger so the unit survives reboots without
+#   3. Seed fleet HDMI audio (setup-hdmi-audio.sh) and install Vision/YOLO
+#      (install-vision-jetson.sh into .venv-link) when present.
+#   4. systemctl --user daemon-reload + enable + (re)start the unit.
+#   5. loginctl enable-linger so the unit survives reboots without
 #      anyone typing a password (Jetson typically auto-logs in, but
 #      this also covers the headless case).
-#   5. Print the live log + journalctl commands so you can verify
+#   6. Print the live log + journalctl commands so you can verify
 #      the GUI came up.
 #
 # Stop / disable later with:
@@ -138,6 +140,22 @@ if [[ -x "${HDMI_AUDIO_SCRIPT}" ]]; then
     fi
 fi
 
+# Fleet Jetson default: ultralytics + opencv-headless in .venv-link (Vision tab).
+# Requires .venv-link from install-sirena-companion-jetson.sh (or bring-up step 3).
+VISION_SCRIPT="${REPO_ROOT}/scripts/install-vision-jetson.sh"
+if [[ -x "${VISION_SCRIPT}" ]]; then
+    if [[ -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+        echo "[INSTALL] installing Vision / YOLO (ultralytics) into .venv-link"
+        if ! bash "${VISION_SCRIPT}"; then
+            echo "[WARN] install-vision-jetson.sh failed (install JetPack PyTorch first — see REQUIREMENTS.md)" >&2
+        fi
+    else
+        echo "[WARN] skip vision install: no ${REPO_ROOT}/.venv-link — run:" >&2
+        echo "[WARN]   ./scripts/install-sirena-companion-jetson.sh" >&2
+        echo "[WARN]   then re-run this installer" >&2
+    fi
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable nina-ui-kiosk.service
 # `restart` rather than `start` so re-running the installer after an
@@ -175,6 +193,7 @@ Useful commands:
 
   # HDMI audio defaults: /etc/nina-link/navigation.env (setup-hdmi-audio.sh).
   # MAX98357A I2S amp bots: scripts/setup-max98357a-audio.sh instead.
+  # Vision / object detection: install-vision-jetson.sh (runs automatically here).
 
   # After git pull, re-run this script to refresh the unit from
   # desktop/nina-ui-kiosk.service (e.g. ExecStartPre Pulse stop, tablet API).

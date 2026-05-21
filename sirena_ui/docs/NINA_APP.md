@@ -640,6 +640,8 @@ export NINA_VISION_TARGET_FPS=30
 # Jetson kiosk HDMI (monitor speakers): install-nina-ui-kiosk.sh runs setup-hdmi-audio.sh
 # and the unit stops PipeWire before start (ExecStartPre). MAX98357A I2S bots use
 # scripts/setup-max98357a-audio.sh instead — see docs/MAX98357A_JETSON_I2S.md.
+# Vision object detection: install-nina-ui-kiosk.sh runs install-vision-jetson.sh
+# (.venv-link + ultralytics). Needs JetPack-matching PyTorch on first install.
 # Troubleshooting: if `espeak-ng: command not found`, install the package above — without
 # it, no WAV is produced and aplay/paplay report "No such file or directory" for /tmp/t.wav.
 # If aplay is silent but `paplay /tmp/t.wav` works, audio is on Pulse: keep pulseaudio-utils

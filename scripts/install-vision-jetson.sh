@@ -2,8 +2,8 @@
 # -----------------------------------------------------------------------------
 # Install Vision / YOLO (ultralytics) into .venv-link — same Python as the kiosk.
 #
-# bring-up-nina-jetson.sh does NOT install ultralytics by default; object
-# detection in the Vision tab needs this step once per Jetson.
+# install-nina-ui-kiosk.sh and bring-up-nina-jetson.sh run this on every Jetson
+# fleet install. Re-run manually after JetPack PyTorch upgrades.
 #
 # Usage (repo root on Jetson):
 #   chmod +x scripts/install-vision-jetson.sh
