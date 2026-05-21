@@ -3,7 +3,7 @@
 Categories: General, Network, Display, Audio, Privacy, Autodock,
 Voice Module, Power, OTA. Most of these are scaffolds for now;
 General has working fields backed by `NinaSettings`. Power exposes
-working Shutdown / Reboot / Quit-app buttons that drive the Jetson
+working Shutdown / Reboot buttons that drive the Jetson
 through `nina.jetson_net.host_control`.
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,7 +19,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -945,8 +943,7 @@ class SettingsScreen(QWidget):
         card.add(
             MutedLabel(
                 "Shutdown or reboot the Jetson host without dropping to "
-                "a terminal. Quit closes the app but leaves the OS "
-                "running - handy for SSH'ing in to debug."
+                "a terminal."
             )
         )
 
@@ -996,30 +993,6 @@ class SettingsScreen(QWidget):
         self._reboot_btn.setFixedWidth(140)
         self._reboot_btn.clicked.connect(self._on_power_reboot)
         reboot_row.addWidget(self._reboot_btn, alignment=Qt.AlignTop)
-
-        card.add(HRule())
-
-        # Quit row (no OS-level effect)
-        quit_row = QHBoxLayout()
-        quit_row.setSpacing(10)
-        card.add_layout(quit_row)
-        col = QVBoxLayout()
-        col.setSpacing(2)
-        quit_row.addLayout(col, stretch=1)
-        col.addWidget(SectionLabel("Quit Sirena UI"))
-        col.addWidget(
-            MutedLabel(
-                "Closes this app window. The Jetson stays running so "
-                "you can re-launch from the desktop / `python -m "
-                "sirena_ui`."
-            )
-        )
-        self._quit_btn = QPushButton("Quit app")
-        self._quit_btn.setObjectName("secondaryButton")
-        self._quit_btn.setCursor(Qt.PointingHandCursor)
-        self._quit_btn.setFixedWidth(140)
-        self._quit_btn.clicked.connect(self._on_power_quit_app)
-        quit_row.addWidget(self._quit_btn, alignment=Qt.AlignTop)
 
         card.add_stretch()
 
@@ -1076,24 +1049,6 @@ class SettingsScreen(QWidget):
         ):
             return
         self._do_power_action("reboot")
-
-    def _on_power_quit_app(self) -> None:
-        if not self._confirm_power_action(
-            "Quit Sirena UI",
-            "Close the Nina control center?\n\n"
-            "The Jetson keeps running - relaunch with "
-            "`python -m sirena_ui`.",
-        ):
-            return
-        try:
-            self._service.shutdown()
-        except Exception:
-            pass
-        app = QApplication.instance()
-        if app is not None:
-            app.quit()
-        else:
-            sys.exit(0)
 
     def _confirm_power_action(self, title: str, body: str) -> bool:
         box = QMessageBox(self)

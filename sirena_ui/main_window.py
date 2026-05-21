@@ -30,6 +30,7 @@ log = logging.getLogger("sirena_ui.main_window")
 from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -47,6 +48,7 @@ from nina.services.audio_player import (
 )
 from nina.sensors.ads1115 import get_battery_snapshot
 from sirena_ui.host_power import confirm_power_action, perform_host_power
+from sirena_ui.widgets.dev_quit import prompt_dev_quit_password
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from sirena_ui.widgets.status_bar import StatusBar
@@ -152,6 +154,7 @@ class MainWindow(QMainWindow):
         host = self._host_label()
         self._sidebar = Sidebar(version_label=f"v{APP_VERSION}", host_label=host)
         self._sidebar.nav_changed.connect(self.navigate)
+        self._sidebar.dev_quit_requested.connect(self._on_dev_quit_requested)
         body.addWidget(self._sidebar)
 
         self._stack = QStackedWidget()
@@ -220,6 +223,18 @@ class MainWindow(QMainWindow):
         ):
             return
         perform_host_power(self, self._service, "reboot")
+
+    def _on_dev_quit_requested(self) -> None:
+        """8 rapid Sirena-logo taps → password (no prior toast) → quit app."""
+        if not prompt_dev_quit_password(self):
+            return
+        try:
+            self._service.shutdown()
+        except Exception:
+            pass
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _refresh_header_volume(self) -> None:
         sys_pct = get_system_output_volume_pct()

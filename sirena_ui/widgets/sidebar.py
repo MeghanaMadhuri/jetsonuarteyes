@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from sirena_ui.styles import asset_path
+from sirena_ui.widgets.dev_quit import DevQuitLogoLabel
 
 
 # (key, label, icon-glyph) — the glyphs are simple Unicode symbols so we
@@ -37,6 +38,7 @@ NAV_ITEMS: List[Tuple[str, str, str]] = [
 
 class Sidebar(QFrame):
     nav_changed = pyqtSignal(str)
+    dev_quit_requested = pyqtSignal()
 
     def __init__(self, version_label: str = "v0.4", host_label: str = "", parent=None) -> None:
         super().__init__(parent)
@@ -85,10 +87,11 @@ class Sidebar(QFrame):
         h.setContentsMargins(12, 0, 12, 2)
         h.setSpacing(8)
 
-        logo = QLabel()
+        logo = DevQuitLogoLabel()
         pix = QPixmap(asset_path("sirena_logo.png"))
         if not pix.isNull():
             logo.setPixmap(pix.scaledToHeight(22, Qt.SmoothTransformation))
+        logo.dev_quit_requested.connect(self.dev_quit_requested.emit)
         h.addWidget(logo)
 
         word = QLabel("Sirena")

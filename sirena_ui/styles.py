@@ -48,7 +48,7 @@ def asset_path(name: str) -> str:
 
 def repo_asset_path(name: str) -> str:
     """Path under repository ``assets/`` (e.g. ``nina_splash.mp4``)."""
-    root = Path(__file__).resolve().parents[1].parent
+    root = Path(__file__).resolve().parents[1]
     return str(root / "assets" / name)
 
 

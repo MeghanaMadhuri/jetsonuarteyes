@@ -13,29 +13,31 @@ from PyQt5.QtCore import QEventLoop, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QPalette, QPixmap
 from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-from sirena_ui.styles import asset_path
+from sirena_ui.styles import asset_path, repo_asset_path
 
 log = logging.getLogger("sirena_ui.splash_video")
 
-
-def _repo_asset_path(name: str) -> Path:
-    """``assets/`` at repository root (sibling of ``sirena_ui/``)."""
-    return Path(__file__).resolve().parents[2] / "assets" / name
+# Startup video: repository ``assets/nina_splash.mp4`` (Android parity).
+SPLASH_VIDEO_NAME = "nina_splash.mp4"
 
 
 def splash_video_path() -> Optional[Path]:
-    """Resolve ``nina_splash.mp4`` (env override, repo ``assets/``, UI bundle)."""
+    """Resolve ``assets/nina_splash.mp4`` at repo root (optional env override)."""
     override = (os.environ.get("NINA_UI_SPLASH_VIDEO") or "").strip()
     if override:
         p = Path(override)
         if p.is_file():
+            log.info("splash: using NINA_UI_SPLASH_VIDEO=%s", p)
             return p
-    for candidate in (
-        _repo_asset_path("nina_splash.mp4"),
-        Path(__file__).resolve().parents[1] / "assets" / "nina_splash.mp4",
-    ):
-        if candidate.is_file():
-            return candidate
+    primary = Path(repo_asset_path(SPLASH_VIDEO_NAME))
+    if primary.is_file():
+        log.info("splash: using %s", primary)
+        return primary
+    log.warning(
+        "splash: %s not found at %s (place video in repo assets/)",
+        SPLASH_VIDEO_NAME,
+        primary,
+    )
     return None
 
 
