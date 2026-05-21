@@ -41,6 +41,7 @@ QUICK_ACTIONS: List[Tuple[str, str, str, str]] = [
     ("actions:record", "Record", "\u25CF", "Capture a new pose"),
     ("actions:audio", "Audio", "\u266B", "Voice clips"),
     ("drive", "Drive", "\u2B95", "Manual control"),
+    ("movements", "Movements", "\u21BB", "Saved drive sequences"),
     ("vision", "Vision", "\u25CE", "Camera & faces"),
     ("map", "Map", "\u25A6", "SLAM & dock"),
     ("health", "Health", "\u2665", "System checks"),

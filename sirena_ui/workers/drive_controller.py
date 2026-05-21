@@ -55,6 +55,9 @@ from typing import Callable, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from nina.movements.executor import execute_saved_movement
+from nina.movements.model import SavedMovement
+
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
     _hover_turn_slow_wheel_pct,
@@ -378,6 +381,8 @@ class DriveController(QObject):
     """Qt facade over `NavigationManager` for the Drive screen."""
 
     state_changed = pyqtSignal(dict)
+    saved_movement_finished = pyqtSignal(str)  # movement_id
+    saved_movement_failed = pyqtSignal(str, str)  # movement_id, error message
 
     def __init__(
         self,
@@ -740,6 +745,44 @@ class DriveController(QObject):
                 log.info("turn_90(%s) ignored: brake engaged", which)
                 return
         self._enqueue(lambda w=which: self._do_turn_micro_step_once(w))
+
+    def run_saved_movement(self, movement: SavedMovement) -> None:
+        """Execute a saved drive sequence on the worker thread (IMU turns + straight pulse)."""
+        self._enqueue(lambda m=movement: self._do_run_saved_movement(m))
+
+    def _do_run_saved_movement(self, movement: SavedMovement) -> None:
+        mid = movement.movement_id
+        if self._refuse_if_battery_low(f"saved movement {movement.name!r}"):
+            self.saved_movement_failed.emit(mid, "Battery voltage too low")
+            return
+        if self._nav is None:
+            self.saved_movement_failed.emit(mid, "Drive hardware is not ready")
+            return
+        self._cancel_hold_turn_timer()
+        with self._lock:
+            self._manual_exclusive_dir = None
+            self._state["direction"] = "idle"
+        self._emit_state()
+        try:
+            with self._lock:
+                brake_on = bool(self._state.get("brake"))
+            if brake_on:
+                self._nav.release_brake()
+                with self._lock:
+                    self._state["brake"] = False
+                self._emit_state()
+        except Exception as exc:
+            log.warning("release_brake before saved movement: %s", exc)
+        err = execute_saved_movement(self._nav, movement)
+        with self._lock:
+            self._active_drive = None
+            self._hover_straight_pulse_next = True
+            self._state["direction"] = "idle"
+        self._emit_state()
+        if err:
+            self.saved_movement_failed.emit(mid, err)
+        else:
+            self.saved_movement_finished.emit(mid)
 
     def stop(self, *, drain: bool = False) -> None:
         """Request soft stop. With ``drain=True``, drop pending worker

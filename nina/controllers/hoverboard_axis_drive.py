@@ -4198,12 +4198,12 @@ class HoverboardAxisDrive:
             )
         return True
 
-    def pulse_turn_90(self, direction: str) -> bool:
-        """Closed-loop ~90° in-place turn driven by the IMU yaw integrator.
+    def pulse_turn_degrees(self, direction: str, degrees: float) -> bool:
+        """Closed-loop in-place turn by ``degrees`` using IMU micro-steps.
 
         Reuses the iterative proportional micro-step machinery that
         :meth:`_correct_drift_at_standstill` uses for straight-leg drift
-        correction, but anchored to a yaw BUDGET (±``NINA_HOVER_TURN_TARGET_DEG``)
+        correction, but anchored to a yaw BUDGET (±``degrees``)
         instead of correcting a small drift back to zero. Each step:
 
         1. Sample remaining yaw (target − current).
@@ -4232,19 +4232,13 @@ class HoverboardAxisDrive:
         :meth:`sirena_ui.workers.drive_controller.DriveController._do_turn_90`,
         which is the only caller wired from the Drive screen buttons.
 
-        ``direction`` must be ``"left"`` or ``"right"``. Returns ``True``
-        when the turn completed cleanly inside the deadband, ``False``
-        when it bailed early (max-steps reached, no-progress, IMU
-        unavailable, etc.) — the caller can use the return value to
-        decide whether to log a warning, but the brake / settle sequence
-        runs regardless so the bot is always left stationary.
+        ``direction`` must be ``"left"`` or ``"right"``. ``degrees`` is
+        clamped to ``[5, 360]``. Returns ``True`` when the turn completed
+        cleanly inside the deadband, ``False`` when it bailed early.
 
         Falls back to the legacy timed :meth:`turn_left` /
         :meth:`turn_right` open-loop pivot when the IMU yaw sampler is
-        not wired or is returning ``None`` (integrator paused) so the
-        Drive button is never functionally dead. The timed fallback
-        honours the same ``SWAP_PIVOT_DIR`` knob so the chassis-frame
-        direction matches across both paths.
+        not wired or is returning ``None`` (integrator paused).
         """
         if not self._is_initialized:
             return False
@@ -4252,9 +4246,14 @@ class HoverboardAxisDrive:
         direction = (direction or "").strip().lower()
         if direction not in ("left", "right"):
             log.warning(
-                "pulse_turn_90: unknown direction %r (expected 'left' / 'right')",
+                "pulse_turn_degrees: unknown direction %r (expected 'left' / 'right')",
                 direction,
             )
+            return False
+        try:
+            target_deg = max(5.0, min(360.0, abs(float(degrees))))
+        except (TypeError, ValueError):
+            log.warning("pulse_turn_degrees: invalid degrees %r", degrees)
             return False
 
         # 1. Halt any in-flight straight pulse so we start from a known
@@ -4274,8 +4273,8 @@ class HoverboardAxisDrive:
         try:
             self._apply_goals(brake_goals)
         except Exception:
-            log.debug("pulse_turn_90: pre-brake apply failed", exc_info=True)
-        # ``pulse_turn_90`` is synchronous (no daemon thread, no
+            log.debug("pulse_turn_degrees: pre-brake apply failed", exc_info=True)
+        # ``pulse_turn_degrees`` is synchronous (no daemon thread, no
         # external halt mechanism) — use a never-set local Event so
         # the active settle helper's halt-aware sleeps still work
         # without sharing the pulse halt event.
@@ -4304,7 +4303,7 @@ class HoverboardAxisDrive:
             # without IMU fake) — fall back to the timed pivot so the
             # button still does *something*.
             log.warning(
-                "pulse_turn_90(%s): no IMU yaw hook wired, falling back to timed turn",
+                "pulse_turn_degrees(%s): no IMU yaw hook wired, falling back to timed turn",
                 direction,
             )
             self._pulse_turn_timed_fallback(direction)
@@ -4322,15 +4321,15 @@ class HoverboardAxisDrive:
             initial = self._poll_yaw_until_ready(yaw_fn, timeout_sec=0.5)
             if initial is None:
                 log.warning(
-                    "pulse_turn_90(%s): IMU yaw sampler returned None for 0.5 s, "
+                    "pulse_turn_degrees(%s): IMU yaw sampler returned None for 0.5 s, "
                     "falling back to timed turn",
                     direction,
                 )
                 self._pulse_turn_timed_fallback(direction)
                 return False
 
-            target_deg = _imu_turn_target_deg()
-            max_steps = _imu_turn_max_steps()
+            base_steps = _imu_turn_max_steps()
+            max_steps = max(5, min(200, int(round(base_steps * target_deg / 90.0))))
             step_blend = _imu_turn_step_blend_pct()
             step_rate = _imu_turn_step_rate_deg_per_sec()
             step_dur_cap = _imu_corr_pivot_max_sec()
@@ -4535,7 +4534,7 @@ class HoverboardAxisDrive:
                 self._apply_goals(brake_goals)
             except Exception:
                 log.debug(
-                    "pulse_turn_90: post-brake apply failed", exc_info=True
+                    "pulse_turn_degrees: post-brake apply failed", exc_info=True
                 )
             post_halt = threading.Event()
             post_status, _, _ = self._active_settle_until_still(
@@ -4546,6 +4545,10 @@ class HoverboardAxisDrive:
                 if post_settle > 0.0:
                     time.sleep(post_settle)
             self._imu_end_straight()
+
+    def pulse_turn_90(self, direction: str) -> bool:
+        """Closed-loop ~90° turn (unchanged behaviour — delegates here)."""
+        return self.pulse_turn_degrees(direction, _imu_turn_target_deg())
 
     def _poll_yaw_until_ready(
         self,

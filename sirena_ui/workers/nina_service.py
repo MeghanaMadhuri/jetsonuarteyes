@@ -44,6 +44,7 @@ from nina.services.sensor_alert_audio import (
     maybe_speak_touch_alert,
 )
 from sirena_ui.workers.autonomy_controller import AutonomyController
+from nina.movements.store import MovementStore, default_movements_path
 from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.face_follow_controller import FaceFollowController
 from sirena_ui.workers.slam_worker import SlamWorker
@@ -87,6 +88,14 @@ class NinaService:
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._esp32_trigger_monitor: Optional[Esp32TriggerMonitor] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
+        self._movement_store: Optional[MovementStore] = None
+
+    @property
+    def movement_store(self) -> MovementStore:
+        if self._movement_store is None:
+            path = self.settings.actions_dir / "saved_movements.json"
+            self._movement_store = MovementStore(path)
+        return self._movement_store
 
     @property
     def expected_motor_count(self) -> int:
