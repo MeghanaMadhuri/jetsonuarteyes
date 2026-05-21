@@ -1,8 +1,8 @@
 """In-place updates for ``/etc/nina-link/navigation.env``.
 
 The navigation env file is the single runtime source of truth for the
-hoverboard lean tick values (``NINA_HOVER_FWD_POS_*`` for backward
-bench tune / ``NINA_HOVER_REV_POS_*`` for forward / ``NINA_HOVER_BRAKE_POS_*``) — see
+hoverboard lean tick values (``NINA_HOVER_FWD_POS_*`` forward,
+``NINA_HOVER_REV_POS_*`` backward, ``NINA_HOVER_BRAKE_POS_*``) — see
 ``nina/systemd/nina-link-navigation.env.example``. The systemd unit
 (``EnvironmentFile=-/etc/nina-link/navigation.env``) loads it BEFORE
 the Python code starts, so anything in it overrides the in-tree
@@ -15,8 +15,8 @@ Two constraints shape the implementation:
 1. **Preserve everything else.** The env file holds polarity overrides,
    battery calibration, IMU enable flags, and a pile of operator
    commentary — we MUST NOT clobber lines we don't own. The update
-   replaces only the two ``NINA_HOVER_FWD_POS_LEFT`` /
-   ``NINA_HOVER_FWD_POS_RIGHT`` lines (matching by key, ignoring
+   replaces only the two ``NINA_HOVER_REV_POS_LEFT`` /
+   ``NINA_HOVER_REV_POS_RIGHT`` lines (matching by key, ignoring
    leading whitespace and ``export ``). Comments and unrelated keys
    pass through untouched.
 2. **Root-owned destination.** ``/etc/nina-link/navigation.env`` is
@@ -45,8 +45,10 @@ from typing import Iterable, List, Optional, Tuple
 
 DEFAULT_ENV_PATH = Path("/etc/nina-link/navigation.env")
 
-_KEY_LEFT = "NINA_HOVER_FWD_POS_LEFT"
-_KEY_RIGHT = "NINA_HOVER_FWD_POS_RIGHT"
+_KEY_LEFT = "NINA_HOVER_REV_POS_LEFT"
+_KEY_RIGHT = "NINA_HOVER_REV_POS_RIGHT"
+_LEGACY_KEY_LEFT = "NINA_HOVER_FWD_POS_LEFT"
+_LEGACY_KEY_RIGHT = "NINA_HOVER_FWD_POS_RIGHT"
 
 
 class NavigationEnvWriteError(RuntimeError):
@@ -76,7 +78,7 @@ def update_backward_lean(
     navigation env file at *env_path*. Returns the resolved path that
     was written (same as *env_path* in the happy path).
 
-    The two ``NINA_HOVER_FWD_POS_*`` lines are replaced in-place if
+    The two ``NINA_HOVER_REV_POS_*`` lines are replaced in-place if
     they already exist; otherwise they're appended at the end under a
     one-line comment marker so a later edit can find them again. All
     other lines pass through untouched.
@@ -141,6 +143,10 @@ def parse_existing_backward_lean(
         return (None, None)
     left = _last_value_for_key(text, _KEY_LEFT)
     right = _last_value_for_key(text, _KEY_RIGHT)
+    if left is None:
+        left = _last_value_for_key(text, _LEGACY_KEY_LEFT)
+    if right is None:
+        right = _last_value_for_key(text, _LEGACY_KEY_RIGHT)
     return (left, right)
 
 

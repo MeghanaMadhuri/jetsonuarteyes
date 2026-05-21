@@ -26,7 +26,11 @@ from nina.controllers.hoverboard_axis_drive import (
     _STRAIGHT_BACK_LEFT_TICKS_OFFSET,
     _STRAIGHT_BACK_RIGHT_TICKS_OFFSET,
     _STRAIGHT_FWD_EXTRA_TICKS,
+    _STRAIGHT_FWD_LEFT_TICKS_OFFSET,
+    _STRAIGHT_FWD_RIGHT_TICKS_OFFSET,
     _nudge_goal_from_brake,
+    _straight_fwd_left_ticks_offset,
+    _straight_fwd_right_ticks_offset,
     _straight_abort_drift_deg,
     _straight_back_left_ticks_offset,
     _straight_back_leg_sec,
@@ -1813,6 +1817,27 @@ def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
     ):
         assert _straight_back_left_ticks_offset() == _STRAIGHT_BACK_LEFT_TICKS_OFFSET
         assert _straight_back_right_ticks_offset() == _STRAIGHT_BACK_RIGHT_TICKS_OFFSET
+
+
+def test_straight_fwd_ticks_offsets_default_for_new_mechanical_structure() -> None:
+    """Motor 12 (left) −10 ticks, motor 13 (right) +10 on straight forward."""
+    assert _STRAIGHT_FWD_LEFT_TICKS_OFFSET == -10
+    assert _STRAIGHT_FWD_RIGHT_TICKS_OFFSET == 10
+    assert _straight_fwd_left_ticks_offset() == -10
+    assert _straight_fwd_right_ticks_offset() == 10
+
+
+def test_straight_fwd_ticks_offsets_env_overrides_honored() -> None:
+    with patch.dict(
+        os.environ,
+        {
+            "NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET": "0",
+            "NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET": "3",
+        },
+        clear=False,
+    ):
+        assert _straight_fwd_left_ticks_offset() == 0
+        assert _straight_fwd_right_ticks_offset() == 3
 
 
 def test_straight_back_ticks_offsets_per_side_independence() -> None:

@@ -297,8 +297,8 @@ def _nudge_goal_from_brake(goal: int, brake: int, push: int) -> int:
     *push*.
 
     Used by:
-    - the forward straight branch (always positive
-      ``_STRAIGHT_FWD_EXTRA_TICKS``, "more forward lean"),
+    - the forward straight branch (per-side raw delta on ``forward_pos_*``,
+      then ``_STRAIGHT_FWD_EXTRA_TICKS`` away from brake),
     - the turn pivot helper (positive ``turn_push_ticks`` /
       ``_TURN_PIVOT_GOAL_OFFSET_TICKS``),
     - the backward straight branch (signed per-side
@@ -331,6 +331,53 @@ _POS_SCALE = 4096.0 / _POS_SPAN_DEG
 
 # Extra raw ticks past calibrated ``forward_pos_*`` toward drive (symmetric straight FWD only).
 _STRAIGHT_FWD_EXTRA_TICKS = 14
+
+# Per-side raw tick delta added to ``forward_pos_*`` before the straight
+# FWD extra nudge. Matches operator bench language (±N ticks on the goal).
+# New mechanical structure: motor 12 (left) −10, motor 13 (right) +10.
+_STRAIGHT_FWD_LEFT_TICKS_OFFSET = -10
+_STRAIGHT_FWD_RIGHT_TICKS_OFFSET = 10
+
+
+def _straight_fwd_left_ticks_offset() -> int:
+    """Raw tick delta on ``forward_pos_left`` for straight FWD (env:
+    ``NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET``, default −10)."""
+    try:
+        return max(
+            -50,
+            min(
+                50,
+                int(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET",
+                        str(_STRAIGHT_FWD_LEFT_TICKS_OFFSET),
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return _STRAIGHT_FWD_LEFT_TICKS_OFFSET
+
+
+def _straight_fwd_right_ticks_offset() -> int:
+    """Signed trim on ``forward_pos_right`` for straight FWD (env:
+    ``NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET``, default +10)."""
+    try:
+        return max(
+            -50,
+            min(
+                50,
+                int(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET",
+                        str(_STRAIGHT_FWD_RIGHT_TICKS_OFFSET),
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return _STRAIGHT_FWD_RIGHT_TICKS_OFFSET
+
 
 # Per-side SIGNED nudge magnitudes for the straight BACK leg, applied
 # via :func:`_nudge_goal_from_brake` (same mechanism the forward branch
@@ -3737,19 +3784,13 @@ class HoverboardAxisDrive:
             and left_speed > 0
             and right_speed > 0
         ):
+            fl_cal = int(self._axis.forward_pos_left) + _straight_fwd_left_ticks_offset()
+            fr_cal = int(self._axis.forward_pos_right) + _straight_fwd_right_ticks_offset()
             fl = self._dxl._clamp_pos(
-                _nudge_goal_from_brake(
-                    int(self._axis.forward_pos_left),
-                    nl,
-                    _STRAIGHT_FWD_EXTRA_TICKS,
-                )
+                _nudge_goal_from_brake(fl_cal, nl, _STRAIGHT_FWD_EXTRA_TICKS)
             )
             fr = self._dxl._clamp_pos(
-                _nudge_goal_from_brake(
-                    int(self._axis.forward_pos_right),
-                    nr,
-                    _STRAIGHT_FWD_EXTRA_TICKS,
-                )
+                _nudge_goal_from_brake(fr_cal, nr, _STRAIGHT_FWD_EXTRA_TICKS)
             )
             return {self._left_id: fl, self._right_id: fr}
 
