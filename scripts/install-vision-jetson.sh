@@ -50,6 +50,11 @@ fi
 
 cd "${REPO_ROOT}"
 
+# Never satisfy deps from ~/.local — that leaves torch/ultralytics outside
+# .venv-link and breaks the kiosk import check (sympy equal_valued, cu130 torch).
+export PIP_USER=0
+export PIP_BREAK_SYSTEM_PACKAGES="${PIP_BREAK_SYSTEM_PACKAGES:-1}"
+
 if [[ "${FULL}" -eq 1 ]]; then
     HEADLESS="${REPO_ROOT}/sirena_ui/requirements-headless.txt"
     if [[ ! -f "${HEADLESS}" ]]; then
@@ -67,7 +72,9 @@ else
     say "remove opencv-python wheels that bundle Qt (breaks PyQt5 kiosk)"
     "${PIP}" uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
     "${PIP}" install --force-reinstall 'opencv-python-headless>=4.5.4' 'numpy>=1.20'
-    if ! "${PIP}" install 'ultralytics>=8.0.0'; then
+    # Ubuntu apt sympy is too old for torch 2.x (ImportError: equal_valued).
+    "${PIP}" install -U 'sympy>=1.13'
+    if ! "${PIP}" install --force-reinstall 'ultralytics>=8.0.0'; then
         bad "ultralytics install failed (often wrong/missing PyTorch on Jetson)."
         echo ""
         echo "  1) Install NVIDIA's PyTorch wheel for your JetPack (see REQUIREMENTS.md)."

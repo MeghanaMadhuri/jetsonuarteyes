@@ -27,6 +27,9 @@ fi
 
 cd "${REPO_ROOT}"
 
+export PIP_USER=0
+export PIP_BREAK_SYSTEM_PACKAGES="${PIP_BREAK_SYSTEM_PACKAGES:-1}"
+
 if ! command -v ffmpeg >/dev/null 2>&1; then
     say "install ffmpeg (re-encode gTTS to 44.1 kHz / 48 kbps MP3)"
     if command -v apt-get >/dev/null 2>&1; then
@@ -41,7 +44,7 @@ ok "ffmpeg: $(command -v ffmpeg)"
 
 say "pip install gTTS into .venv-link (kiosk Python)"
 "${PIP}" install -U pip setuptools wheel
-"${PIP}" install 'gTTS>=2.3'
+"${PIP}" install --force-reinstall 'gTTS>=2.3'
 
 say "import check (kiosk-like PYTHONPATH)"
 export PYTHONPATH="${REPO_ROOT}"

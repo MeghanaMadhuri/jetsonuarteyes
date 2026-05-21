@@ -75,6 +75,8 @@ set -u
 # under launch-sirena / the kiosk).
 if [[ "${PYTHON_BIN}" == "${REPO_ROOT}/.venv-link/bin/python" ]]; then
     unset PYTHONHOME PYTHONUSERBASE
+    # Ignore ~/.local torch/ultralytics/sympy — fleet packages live in .venv-link.
+    export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
 fi
 
 # Belt-and-braces: explicitly add Jetson CUDA / cuDNN / TensorRT lib
