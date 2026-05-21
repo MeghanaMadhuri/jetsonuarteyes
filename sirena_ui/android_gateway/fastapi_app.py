@@ -641,6 +641,31 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 detail={"message": str(e), "details": e.details},
             ) from e
 
+    @app.get("/v1/wifi/scan")
+    def wifi_scan(
+        rescan: bool = False,
+    ) -> Dict[str, Any]:
+        """Nearby access points from ``nmcli device wifi list`` (read-only)."""
+        try:
+            nets = coordinator.nm.scan_wifi(rescan=bool(rescan))
+        except Exception as exc:
+            log.exception("wifi scan")
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"message": str(exc)},
+            ) from exc
+        return {
+            "networks": [
+                {
+                    "ssid": n.ssid,
+                    "signal": n.signal,
+                    "security": n.security,
+                    "in_use": n.in_use,
+                }
+                for n in nets
+            ]
+        }
+
     @app.post("/v1/wifi/start-ap")
     def start_ap(
         request: Request,

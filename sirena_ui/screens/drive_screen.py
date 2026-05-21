@@ -260,10 +260,8 @@ class DriveScreen(QWidget):
         return self._autonomy
 
     def _autonomy_is_enabled(self) -> bool:
-        """Check autonomy without constructing AutonomyController on every state tick."""
-        if self._autonomy is not None:
-            return self._autonomy.is_enabled()
-        return self._autonomy_btn.isChecked()
+        """Autonomous drive is disabled on kiosk until the pilot UI ships."""
+        return False
 
     def _connect_vision_frame_preview(self) -> None:
         try:
@@ -403,14 +401,14 @@ class DriveScreen(QWidget):
         card.add_layout(title_row)
         title_row.addWidget(CardTitle("Manual"))
         title_row.addStretch(1)
-        self._autonomy_btn = QPushButton("Auto: OFF")
+        self._autonomy_btn = QPushButton("Auto")
         self._autonomy_btn.setObjectName("primaryButton")
         self._autonomy_btn.setCursor(Qt.PointingHandCursor)
-        self._autonomy_btn.setCheckable(True)
+        self._autonomy_btn.setCheckable(False)
         self._autonomy_btn.setFocusPolicy(Qt.NoFocus)
         self._autonomy_btn.setMinimumHeight(34)
         self._autonomy_btn.setMaximumHeight(34)
-        self._autonomy_btn.toggled.connect(self._on_autonomy_toggle)
+        self._autonomy_btn.clicked.connect(self._on_autonomy_coming_soon)
         title_row.addWidget(self._autonomy_btn)
 
         # Banner removed - the "Auto: OFF/ON" pill above is enough
@@ -826,17 +824,20 @@ class DriveScreen(QWidget):
         self._drive.turn_90(which)
         self.setFocus()
 
-    def _on_autonomy_toggle(self, on: bool) -> None:
-        try:
-            self._autonomy_ctrl().set_enabled(on)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Autonomous mode failed",
-                f"Could not toggle autonomy: {exc}",
-            )
+    def _on_autonomy_coming_soon(self) -> None:
+        QMessageBox.information(
+            self,
+            "Autonomous mode",
+            "Autonomous mode is coming soon. Use manual drive and the D-pad for now.",
+        )
 
     def _on_autonomy_enabled(self, on: bool) -> None:
+        if on:
+            try:
+                self._autonomy_ctrl().set_enabled(False)
+            except Exception:
+                pass
+            on = False
         if on and self._straight_test_timer.isActive():
             try:
                 self._drive.stop(drain=True)
@@ -846,37 +847,17 @@ class DriveScreen(QWidget):
                 except Exception:
                     pass
             self._restore_after_straight_test()
-        self._autonomy_btn.blockSignals(True)
-        self._autonomy_btn.setChecked(on)
-        # Short label - we removed the explanatory banner below the
-        # button when refitting for the 1024 x 600 panel, so the pill
-        # in the title row carries the "ON / OFF" affordance alone.
-        self._autonomy_btn.setText(f"Auto: {'ON' if on else 'OFF'}")
-        self._autonomy_btn.blockSignals(False)
+        self._autonomy_btn.setText("Auto")
+        self._auto_pill.setText("Autonomous: coming soon")
+        self._auto_pill.set_kind(Pill.KIND_NEUTRAL)
 
-        self._auto_pill.setText(
-            f"Autonomous: {'ON' if on else 'OFF'}"
-        )
-        self._auto_pill.set_kind(Pill.KIND_OK if on else Pill.KIND_NEUTRAL)
-
-        # Disable the manual D-pad / brake / reverse while autonomy is
-        # in charge so the operator can't fight it on the wheels.
-        if on:
-            self._dpad.set_enabled(False)
-            self._brake_btn.setEnabled(False)
-            self._reverse_btn.setEnabled(False)
-            self._straight_test_btn.setEnabled(False)
-            self._straight_back_test_btn.setEnabled(False)
-            self._turn_90_left_btn.setEnabled(False)
-            self._turn_90_right_btn.setEnabled(False)
-        else:
-            st = self._drive.state()
-            self._dpad.set_enabled(not st["brake"])
-            self._brake_btn.setEnabled(True)
-            self._reverse_btn.setEnabled(True)
-            self._straight_test_btn.setEnabled(True)
-            self._straight_back_test_btn.setEnabled(True)
-            self._turn_90_left_btn.setEnabled(True)
+        st = self._drive.state()
+        self._dpad.set_enabled(not st["brake"])
+        self._brake_btn.setEnabled(True)
+        self._reverse_btn.setEnabled(True)
+        self._straight_test_btn.setEnabled(True)
+        self._straight_back_test_btn.setEnabled(True)
+        self._turn_90_left_btn.setEnabled(True)
             self._turn_90_right_btn.setEnabled(True)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
         # update here. The title-row pill conveys the same state.

@@ -37,7 +37,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from nina.services.audio_player import start_persistent_audio_pipe, start_silence_keepalive
+from nina.services.audio_player import (
+    get_app_audio_volume_pct,
+    get_system_output_volume_pct,
+    set_app_audio_volume_pct,
+    set_system_output_volume_pct,
+    start_persistent_audio_pipe,
+    start_silence_keepalive,
+)
 from nina.sensors.ads1115 import get_battery_snapshot
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
@@ -130,6 +137,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
 
         self._header = HeaderBar()
+        self._header.volume_changed.connect(self._on_header_volume_changed)
         outer.addWidget(self._header)
 
         body = QHBoxLayout()
@@ -159,6 +167,12 @@ class MainWindow(QMainWindow):
         self._battery_ui_timer.timeout.connect(self._refresh_battery_tray)
         self._battery_ui_timer.start()
 
+        self._volume_ui_timer = QTimer(self)
+        self._volume_ui_timer.setInterval(2500)
+        self._volume_ui_timer.timeout.connect(self._refresh_header_volume)
+        self._volume_ui_timer.start()
+        QTimer.singleShot(400, self._refresh_header_volume)
+
         # Initial state
         self.navigate("home")
         self._sidebar.select("home")
@@ -174,6 +188,24 @@ class MainWindow(QMainWindow):
         # Try to bring up the bus shortly after the window appears so the
         # status bar shows accurate dots without blocking the UI.
         QTimer.singleShot(150, self._initialize_bus)
+
+    def _on_header_volume_changed(self, value: int) -> None:
+        """Map header speaker control to Nina app gain + OS mixer."""
+        value = set_app_audio_volume_pct(value)
+        QSettings("Sirena", "Nina").setValue("audio/gain_pct", value)
+        set_system_output_volume_pct(value)
+
+    def _refresh_header_volume(self) -> None:
+        sys_pct = get_system_output_volume_pct()
+        if sys_pct is not None:
+            self._header.set_volume_state(sys_pct, available=True)
+            return
+        app_pct = get_app_audio_volume_pct()
+        self._header.set_volume_state(
+            app_pct,
+            available=True,
+            hint="System mixer not detected — controlling Nina app volume.",
+        )
 
     def _load_persisted_audio_gain(self) -> None:
         if os.environ.get("NINA_AUDIO_GAIN_PCT"):

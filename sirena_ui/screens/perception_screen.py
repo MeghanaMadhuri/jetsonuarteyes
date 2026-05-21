@@ -161,9 +161,7 @@ class PerceptionScreen(QWidget):
         return self._autonomy_ref
 
     def _autonomy_is_enabled(self) -> bool:
-        if self._autonomy_ref is not None:
-            return self._autonomy_ref.is_enabled()
-        return self._autonomy_btn.isChecked()
+        return False
 
     def _ensure_signals_wired(self) -> None:
         if self._signals_wired:
@@ -334,19 +332,17 @@ class PerceptionScreen(QWidget):
     def _build_footer(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(8)
-        self._autonomy_btn = QPushButton("Autonomous mode: OFF")
+        self._autonomy_btn = QPushButton("Auto")
         self._autonomy_btn.setObjectName("primaryButton")
         self._autonomy_btn.setCursor(Qt.PointingHandCursor)
-        self._autonomy_btn.setCheckable(True)
+        self._autonomy_btn.setCheckable(False)
         self._autonomy_btn.setMinimumHeight(34)
         self._autonomy_btn.setMaximumHeight(34)
-        self._autonomy_btn.toggled.connect(self._on_autonomy_toggle)
+        self._autonomy_btn.clicked.connect(self._on_autonomy_coming_soon)
         row.addWidget(self._autonomy_btn)
 
         self._autonomy_status = MutedLabel(
-            "Autonomy is off. The depth panel above is open for "
-            "visualization, but Nina won't drive herself until the "
-            "toggle is ON."
+            "Autonomous mode is coming soon. Use Drive for manual control."
         )
         row.addWidget(self._autonomy_status, stretch=1)
         return row
@@ -602,46 +598,29 @@ class PerceptionScreen(QWidget):
     # ------------------------------------------------------------------
 
     def _on_autonomy_enabled(self, on: bool) -> None:
-        self._autonomy_btn.blockSignals(True)
-        self._autonomy_btn.setChecked(on)
-        self._autonomy_btn.setText(
-            f"Autonomous mode: {'ON' if on else 'OFF'}"
-        )
-        self._autonomy_btn.blockSignals(False)
-        # Lidar pane is click-to-set-goal whenever autonomy is on.
-        # When off, taps do nothing - same UX as the Map screen
-        # before the operator arms the Goto button there.
-        if self._grid is not None:
-            self._grid.set_clickable(bool(on))
-            if not on:
-                self._grid.clear_goal()
-        self._auto_pill.setText(
-            f"Autonomous: {'ON' if on else 'OFF'}"
-        )
-        self._auto_pill.set_kind(Pill.KIND_OK if on else Pill.KIND_NEUTRAL)
         if on:
-            self._autonomy_status.setText(
-                "Autonomy is ACTIVE. Nina is steering herself based "
-                "on the lidar + depth data shown above."
-            )
-        else:
-            self._autonomy_status.setText(
-                "Autonomy is off. The depth panel above is open for "
-                "visualization, but Nina won't drive herself until "
-                "the toggle is ON."
-            )
+            try:
+                self._autonomy.set_enabled(False)
+            except Exception:
+                pass
+        self._autonomy_btn.setText("Auto")
+        if self._grid is not None:
+            self._grid.set_clickable(False)
+            self._grid.clear_goal()
+        self._auto_pill.setText("Autonomous: coming soon")
+        self._auto_pill.set_kind(Pill.KIND_NEUTRAL)
+        self._autonomy_status.setText(
+            "Autonomous mode is coming soon. Use Drive for manual control."
+        )
 
-    def _on_autonomy_toggle(self, on: bool) -> None:
-        try:
-            self._autonomy.set_enabled(on)
-        except Exception as exc:
-            log.exception("autonomy.set_enabled(%s) failed: %s", on, exc)
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.critical(
-                self,
-                "Autonomous mode failed",
-                f"Could not toggle autonomy: {exc}",
-            )
+    def _on_autonomy_coming_soon(self) -> None:
+        from PyQt5.QtWidgets import QMessageBox
+
+        QMessageBox.information(
+            self,
+            "Autonomous mode",
+            "Autonomous mode is coming soon. Use manual drive and the D-pad for now.",
+        )
 
     def _on_sensor_health(self, health: dict) -> None:
         depth = health.get("depth", {}) if isinstance(health, dict) else {}

@@ -13,10 +13,11 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt5.QtCore import QSettings, Qt, QTimer
+from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -28,8 +29,11 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QStackedWidget,
     QVBoxLayout,
@@ -58,6 +62,30 @@ from nina.services.audio_player import (
 # Labels intentionally short - the sub-sidebar is 150 px wide on the
 # 1024 x 600 panel and longer strings ("Voice Module \u00b7 ESP",
 # "Network \u00b7 Wi-Fi") forced the whole pane to overflow.
+class _WifiScanWorker(QThread):
+    """Run ``GET /v1/wifi/scan`` off the GUI thread (nmcli can take several seconds)."""
+
+    finished_ok = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, screen: "SettingsScreen", *, rescan: bool) -> None:
+        super().__init__()
+        self._screen = screen
+        self._rescan = rescan
+
+    def run(self) -> None:
+        try:
+            payload = self._screen._link_request(
+                "/v1/wifi/scan",
+                query={"rescan": "1" if self._rescan else "0"},
+                timeout=30.0,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(payload)
+
+
 SETTINGS_CATEGORIES: List[Tuple[str, str, str]] = [
     ("general", "General", "\u2699"),
     ("network", "Network", "\u2706"),
@@ -166,9 +194,12 @@ class SettingsScreen(QWidget):
         *,
         method: str = "GET",
         body: Any = None,
+        query: Optional[Dict[str, Any]] = None,
         timeout: float = 8.0,
     ) -> Dict[str, Any]:
         url = self._link_base_url() + path
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
         data = None
         headers = {"Accept": "application/json"}
         if body is not None:
@@ -195,67 +226,108 @@ class SettingsScreen(QWidget):
             ) from e
 
     def _build_network_pane(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
+        scroll.setWidget(container)
 
         v.addWidget(Breadcrumb("Nina", "Settings", "Network"))
 
-        card = Card(padding=12, spacing=8)
-        v.addWidget(card, stretch=1)
+        status_card = Card(padding=10, spacing=6)
+        v.addWidget(status_card)
+        status_card.add(SectionLabel("Status"))
+        self._net_role_pill = Pill("Role —", Pill.KIND_NEUTRAL)
+        self._net_ip_pill = Pill("IP —", Pill.KIND_NEUTRAL)
+        pill_row = QHBoxLayout()
+        pill_row.setSpacing(8)
+        status_card.add_layout(pill_row)
+        pill_row.addWidget(self._net_role_pill)
+        pill_row.addWidget(self._net_ip_pill)
+        pill_row.addStretch(1)
+        self._net_status = MutedLabel("\u2014")
+        self._net_status.setWordWrap(True)
+        status_card.add(self._net_status)
 
-        title = QLabel("Connectivity")
-        title.setStyleSheet(
-            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
-            " background-color: transparent;"
+        tools = QHBoxLayout()
+        tools.setSpacing(6)
+        v.addLayout(tools)
+        for label, slot in (
+            ("Refresh", self._refresh_network_status),
+            ("Scan", self._net_scan_wifi),
+            ("Start AP", self._net_start_ap),
+            ("Home Wi-Fi", self._net_connect_home),
+        ):
+            btn = QPushButton(label)
+            btn.setObjectName("secondaryButton" if label != "Home Wi-Fi" else "primaryButton")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(slot)
+            tools.addWidget(btn)
+            if label == "Scan":
+                self._net_scan_btn = btn
+        tools.addStretch(1)
+
+        lists_row = QHBoxLayout()
+        lists_row.setSpacing(8)
+        v.addLayout(lists_row, stretch=1)
+
+        nearby_card = Card(padding=8, spacing=4)
+        lists_row.addWidget(nearby_card, stretch=1)
+        nearby_card.add(SectionLabel("Nearby networks"))
+        self._net_nearby_list = QListWidget()
+        self._net_nearby_list.setMinimumHeight(120)
+        self._net_nearby_list.itemDoubleClicked.connect(
+            lambda _item: self._net_connect_selected_scan()
         )
-        card.add(title)
-        card.add(
+        nearby_card.add(self._net_nearby_list, stretch=1)
+
+        saved_card = Card(padding=8, spacing=4)
+        lists_row.addWidget(saved_card, stretch=1)
+        saved_card.add(SectionLabel("Saved networks"))
+        self._net_saved_list = QListWidget()
+        self._net_saved_list.setMinimumHeight(120)
+        self._net_saved_list.itemDoubleClicked.connect(
+            lambda _item: self._net_connect_saved_selected()
+        )
+        saved_card.add(self._net_saved_list, stretch=1)
+
+        list_actions = QHBoxLayout()
+        list_actions.setSpacing(8)
+        v.addLayout(list_actions)
+        connect_btn = QPushButton("Connect")
+        connect_btn.setObjectName("primaryButton")
+        connect_btn.setCursor(Qt.PointingHandCursor)
+        connect_btn.clicked.connect(self._net_connect_any_selected)
+        list_actions.addWidget(connect_btn)
+        forget_btn = QPushButton("Forget saved")
+        forget_btn.setObjectName("secondaryButton")
+        forget_btn.setCursor(Qt.PointingHandCursor)
+        forget_btn.clicked.connect(self._net_forget_saved_selected)
+        list_actions.addWidget(forget_btn)
+        list_actions.addStretch(1)
+
+        manual_card = Card(padding=10, spacing=6)
+        v.addWidget(manual_card)
+        manual_card.add(SectionLabel("Manual / advanced"))
+        manual_card.add(
             MutedLabel(
-                "Controls the Jetson Wi-Fi role (access-point vs home network). "
-                "Uses the tablet HTTP API embedded in Sirena UI on this machine "
-                f"({self._link_base_url()})."
+                "Pick a network above or enter SSID and password here. "
+                f"API: {self._link_base_url()}"
             )
         )
-
-        self._net_status = QLabel("\u2014")
-        self._net_status.setWordWrap(True)
-        self._net_status.setStyleSheet(
-            "color: #1c1c1e; font-size: 12px; background-color: transparent;"
-        )
-        card.add(self._net_status)
-
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        card.add_layout(row)
-        refresh = QPushButton("Refresh")
-        refresh.setObjectName("secondaryButton")
-        refresh.setCursor(Qt.PointingHandCursor)
-        refresh.clicked.connect(self._refresh_network_status)
-        row.addWidget(refresh)
-        ap_btn = QPushButton("Start AP")
-        ap_btn.setObjectName("secondaryButton")
-        ap_btn.setCursor(Qt.PointingHandCursor)
-        ap_btn.clicked.connect(self._net_start_ap)
-        row.addWidget(ap_btn)
-        sta_btn = QPushButton("Use home Wi-Fi")
-        sta_btn.setObjectName("primaryButton")
-        sta_btn.setCursor(Qt.PointingHandCursor)
-        sta_btn.clicked.connect(self._net_connect_home)
-        row.addWidget(sta_btn)
-        row.addStretch(1)
-
         form = QFormLayout()
-        form.setSpacing(8)
+        form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignRight)
-        card.add_layout(form)
+        manual_card.add_layout(form)
 
         self._net_mode = QComboBox()
-        self._net_mode.addItems(
-            ["boot_default", "force_ap", "force_sta"]
-        )
-        apply_mode = QPushButton("Apply mode")
+        self._net_mode.addItems(["boot_default", "force_ap", "force_sta"])
+        apply_mode = QPushButton("Apply")
         apply_mode.setObjectName("secondaryButton")
         apply_mode.setCursor(Qt.PointingHandCursor)
         apply_mode.clicked.connect(self._net_apply_mode)
@@ -266,77 +338,232 @@ class SettingsScreen(QWidget):
         mode_wrap.setLayout(mode_row)
         form.addRow("User mode", mode_wrap)
 
-        self._net_pin = QLineEdit()
-        self._net_pin.setPlaceholderText("Pairing PIN (tablet)")
-        form.addRow("Pair PIN", self._net_pin)
-
-        pair_btn = QPushButton("Pair session (copy token to tablet)")
-        pair_btn.setObjectName("secondaryButton")
-        pair_btn.setCursor(Qt.PointingHandCursor)
-        pair_btn.clicked.connect(self._net_pair)
-        form.addRow("", pair_btn)
-
         self._net_home_ssid = QLineEdit()
-        self._net_home_ssid.setPlaceholderText("Home SSID")
-        form.addRow("Home SSID", self._net_home_ssid)
+        self._net_home_ssid.setPlaceholderText("SSID")
+        form.addRow("SSID", self._net_home_ssid)
 
         self._net_home_pw = QLineEdit()
         self._net_home_pw.setEchoMode(QLineEdit.Password)
-        self._net_home_pw.setPlaceholderText("Home Wi-Fi password")
-        form.addRow("Home password", self._net_home_pw)
+        self._net_home_pw.setPlaceholderText("Password (if required)")
+        form.addRow("Password", self._net_home_pw)
 
-        save_wifi = QPushButton("Save home credentials only")
+        save_wifi = QPushButton("Save credentials")
         save_wifi.setObjectName("secondaryButton")
         save_wifi.setCursor(Qt.PointingHandCursor)
         save_wifi.clicked.connect(self._net_save_home)
         form.addRow("", save_wifi)
 
-        card.add(HRule())
-        card.add(MutedLabel("Saved profiles can be removed from the Android companion app."))
-        card.add_stretch()
+        self._net_pin = QLineEdit()
+        self._net_pin.setPlaceholderText("Pairing PIN")
+        form.addRow("Pair PIN", self._net_pin)
+        pair_btn = QPushButton("Pair tablet")
+        pair_btn.setObjectName("secondaryButton")
+        pair_btn.setCursor(Qt.PointingHandCursor)
+        pair_btn.clicked.connect(self._net_pair)
+        form.addRow("", pair_btn)
 
+        wrapper = QWidget()
+        outer = QVBoxLayout(wrapper)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll, stretch=1)
+
+        self._net_scan_worker: Optional[_WifiScanWorker] = None
+        self._saved_profiles: Dict[str, Dict[str, Any]] = {}
         self._refresh_network_status()
 
         self._net_timer = QTimer(self)
         self._net_timer.timeout.connect(self._refresh_network_status)
-        self._net_timer.start(4000)
+        self._net_timer.start(6000)
 
-        return container
+        return wrapper
 
     def _refresh_network_status(self) -> None:
         try:
             st = self._link_request("/v1/status")
         except RuntimeError as e:
             self._net_status.setText(str(e))
+            self._net_role_pill.setText("Role —")
+            self._net_ip_pill.setText("IP —")
             return
+        role = str(st.get("wifi_role", "?"))
+        ipv4 = st.get("ipv4") or "—"
+        self._net_role_pill.setText(f"Role {role}")
+        self._net_role_pill.set_kind(
+            Pill.KIND_OK if role == "sta" else Pill.KIND_NEUTRAL
+        )
+        self._net_ip_pill.setText(f"IP {ipv4}")
         lines = [
-            f"Role: {st.get('wifi_role', '?')}",
-            f"IPv4: {st.get('ipv4') or '—'}",
-            f"AP SSID: {st.get('ap_ssid', '')}",
-            f"Boot window remaining: {st.get('boot_wait_remaining_sec', 0)} s",
-            f"Client seen: {st.get('client_seen')}",
             f"User mode: {st.get('user_mode')}",
+            f"AP SSID: {st.get('ap_ssid', '')}",
+            f"Client seen: {st.get('client_seen')}",
         ]
         sta_ssid = st.get("active_sta_ssid")
         if sta_ssid:
-            lines.append(f"STA connected: {sta_ssid}")
-            prof = st.get("active_sta_profile")
-            if prof:
-                lines.append(f"NM profile: {prof}")
-        pin = st.get("pairing_pin")
-        if pin:
-            lines.append(f"Pairing PIN: {pin}")
+            lines.append(f"Connected: {sta_ssid}")
         err = st.get("last_error") or ""
         if err:
             lines.append(f"Last error: {err}")
-        saved = st.get("saved_networks") or []
-        if saved:
-            brief = []
-            for s in saved[:8]:
-                ac = "on" if s.get("autoconnect") else "off"
-                brief.append(f"{s.get('ssid', '?')} (NM auto:{ac})")
-            lines.append("Saved: " + ", ".join(brief))
-        self._net_status.setText("\n".join(lines))
+        pin = st.get("pairing_pin")
+        if pin:
+            lines.append(f"Pairing PIN: {pin}")
+        self._net_status.setText(" · ".join(lines))
+        self._populate_saved_networks(st.get("saved_networks") or [])
+
+    def _populate_saved_networks(self, saved: List[Dict[str, Any]]) -> None:
+        self._saved_profiles = {}
+        self._net_saved_list.clear()
+        for entry in saved:
+            if not isinstance(entry, dict):
+                continue
+            ssid = str(entry.get("ssid") or entry.get("id") or "").strip()
+            pid = str(entry.get("id") or entry.get("uuid") or "").strip()
+            if not ssid or not pid:
+                continue
+            self._saved_profiles[ssid] = entry
+            mode = entry.get("wifi_mode") or "infra"
+            ac = "auto" if entry.get("autoconnect") else "manual"
+            item = QListWidgetItem(f"{ssid}  ({ac}, {mode})")
+            item.setData(Qt.UserRole, ssid)
+            self._net_saved_list.addItem(item)
+
+    def _net_scan_wifi(self) -> None:
+        if self._net_scan_worker is not None and self._net_scan_worker.isRunning():
+            return
+        self._net_scan_btn.setEnabled(False)
+        worker = _WifiScanWorker(self, rescan=True)
+        self._net_scan_worker = worker
+        worker.finished_ok.connect(self._on_wifi_scan_done)
+        worker.failed.connect(self._on_wifi_scan_failed)
+        worker.finished.connect(lambda: self._net_scan_btn.setEnabled(True))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_wifi_scan_done(self, payload: object) -> None:
+        self._net_scan_worker = None
+        if not isinstance(payload, dict):
+            return
+        self._net_nearby_list.clear()
+        for net in payload.get("networks") or []:
+            if not isinstance(net, dict):
+                continue
+            ssid = str(net.get("ssid") or "").strip()
+            if not ssid:
+                continue
+            sig = int(net.get("signal") or 0)
+            sec = str(net.get("security") or "")
+            in_use = bool(net.get("in_use"))
+            label = f"{ssid}  {sig}%"
+            if in_use:
+                label += "  (connected)"
+            if sec:
+                label += f"  [{sec}]"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, ssid)
+            self._net_nearby_list.addItem(item)
+
+    def _on_wifi_scan_failed(self, message: str) -> None:
+        self._net_scan_worker = None
+        QMessageBox.warning(self, "Wi-Fi scan", message)
+
+    def _selected_nearby_ssid(self) -> str:
+        item = self._net_nearby_list.currentItem()
+        if item is None:
+            return ""
+        return str(item.data(Qt.UserRole) or "").strip()
+
+    def _selected_saved_ssid(self) -> str:
+        item = self._net_saved_list.currentItem()
+        if item is None:
+            return ""
+        return str(item.data(Qt.UserRole) or "").strip()
+
+    def _net_connect_any_selected(self) -> None:
+        ssid = self._selected_nearby_ssid() or self._selected_saved_ssid()
+        if not ssid:
+            ssid = self._net_home_ssid.text().strip()
+        if not ssid:
+            QMessageBox.information(self, "Network", "Select or enter a network SSID.")
+            return
+        self._net_home_ssid.setText(ssid)
+        if ssid in self._saved_profiles:
+            self._net_connect_saved_ssid(ssid)
+        else:
+            self._net_connect_new_ssid(ssid)
+
+    def _net_connect_selected_scan(self) -> None:
+        ssid = self._selected_nearby_ssid()
+        if ssid:
+            self._net_home_ssid.setText(ssid)
+            self._net_connect_any_selected()
+
+    def _net_connect_saved_selected(self) -> None:
+        ssid = self._selected_saved_ssid()
+        if ssid:
+            self._net_connect_saved_ssid(ssid)
+
+    def _net_connect_saved_ssid(self, ssid: str) -> None:
+        try:
+            self._link_request(
+                "/v1/wifi/connect-home",
+                method="POST",
+                body={},
+                query={"ssid": ssid},
+            )
+            QMessageBox.information(self, "Network", f"Connecting to {ssid}…")
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_connect_new_ssid(self, ssid: str) -> None:
+        pw = self._net_home_pw.text()
+        if not pw:
+            QMessageBox.information(
+                self,
+                "Network",
+                "Enter the Wi-Fi password in Manual / advanced, then Connect again.",
+            )
+            return
+        try:
+            self._link_request(
+                "/v1/wifi/home-credentials",
+                method="POST",
+                body={"ssid": ssid, "password": pw},
+            )
+            self._link_request(
+                "/v1/wifi/connect-home",
+                method="POST",
+                body={},
+                query={"ssid": ssid},
+            )
+            QMessageBox.information(self, "Network", f"Saved and connecting to {ssid}…")
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_forget_saved_selected(self) -> None:
+        ssid = self._selected_saved_ssid()
+        if not ssid:
+            QMessageBox.information(self, "Network", "Select a saved network to forget.")
+            return
+        entry = self._saved_profiles.get(ssid) or {}
+        pid = str(entry.get("id") or entry.get("uuid") or "").strip()
+        if not pid:
+            QMessageBox.warning(self, "Network", "Could not resolve profile id.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Forget network",
+            f"Remove saved profile for “{ssid}”?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._link_request(f"/v1/wifi/saved/{pid}", method="DELETE")
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
 
     def _net_apply_mode(self) -> None:
         mode = self._net_mode.currentText()
@@ -534,10 +761,8 @@ class SettingsScreen(QWidget):
         card.add(title)
         card.add(
             MutedLabel(
-                "Controls Nina's app playback volume. On MAX98357A I2S this "
-                "can lower playback volume, but does not boost above the "
-                "original clip level. For more loudness, increase the "
-                "MAX98357A hardware gain."
+                "System volume adjusts the Jetson speaker (ALSA/Pulse). "
+                "Nina app volume scales greeting and action clips."
             )
         )
 
@@ -545,6 +770,28 @@ class SettingsScreen(QWidget):
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignRight)
         card.add_layout(form)
+
+        sys_pct = get_system_output_volume_pct()
+        if sys_pct is None:
+            sys_pct = get_app_audio_volume_pct()
+        self._sys_volume_value = QLabel(f"{sys_pct}%")
+        self._sys_volume_value.setFixedWidth(56)
+        self._sys_volume_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._sys_volume_value.setStyleSheet(
+            "color: #1c1c1e; font-size: 13px; font-weight: 700;"
+            " background-color: transparent;"
+        )
+        self._sys_volume_slider = QSlider(Qt.Horizontal)
+        self._sys_volume_slider.setRange(0, 100)
+        self._sys_volume_slider.setValue(max(0, min(100, sys_pct)))
+        self._sys_volume_slider.valueChanged.connect(self._on_system_volume_changed)
+        sys_row = QHBoxLayout()
+        sys_row.setSpacing(8)
+        sys_row.addWidget(self._sys_volume_slider, stretch=1)
+        sys_row.addWidget(self._sys_volume_value)
+        sys_wrap = QWidget()
+        sys_wrap.setLayout(sys_row)
+        form.addRow("System volume", sys_wrap)
 
         current = get_app_audio_volume_pct()
         self._audio_volume_value = QLabel(f"{current}%")
@@ -554,22 +801,19 @@ class SettingsScreen(QWidget):
             "color: #1c1c1e; font-size: 13px; font-weight: 700;"
             " background-color: transparent;"
         )
-
         self._audio_volume_slider = QSlider(Qt.Horizontal)
         self._audio_volume_slider.setRange(0, 100)
         self._audio_volume_slider.setSingleStep(5)
         self._audio_volume_slider.setPageStep(10)
-        self._audio_volume_slider.setTickInterval(25)
         self._audio_volume_slider.setValue(max(0, min(100, current)))
-        self._audio_volume_slider.valueChanged.connect(self._on_audio_volume_changed)
-
+        self._audio_volume_slider.valueChanged.connect(self._on_app_volume_changed)
         vol_row = QHBoxLayout()
         vol_row.setSpacing(8)
         vol_row.addWidget(self._audio_volume_slider, stretch=1)
         vol_row.addWidget(self._audio_volume_value)
         vol_wrap = QWidget()
         vol_wrap.setLayout(vol_row)
-        form.addRow("Speaker volume", vol_wrap)
+        form.addRow("Nina app volume", vol_wrap)
 
         self._audio_status = QLabel("")
         self._audio_status.setWordWrap(True)
@@ -592,17 +836,28 @@ class SettingsScreen(QWidget):
         self._refresh_audio_volume()
         return container
 
-    def _on_audio_volume_changed(self, value: int) -> None:
+    def _on_system_volume_changed(self, value: int) -> None:
+        ok = set_system_output_volume_pct(value)
+        pct = get_system_output_volume_pct()
+        shown = pct if pct is not None else value
+        if self._sys_volume_value is not None:
+            self._sys_volume_value.setText(f"{shown}%")
+        if self._audio_status is not None:
+            detail = (
+                f"System volume {shown}%."
+                if ok
+                else f"System mixer unchanged ({shown}% readback)."
+            )
+            self._audio_status.setText(detail)
+
+    def _on_app_volume_changed(self, value: int) -> None:
         value = set_app_audio_volume_pct(value)
         QSettings("Sirena", "Nina").setValue("audio/gain_pct", value)
         if self._audio_volume_value is not None:
             self._audio_volume_value.setText(f"{value}%")
-        # Best-effort OS mixer update for systems that expose Master/Pulse.
-        sys_ok = set_system_output_volume_pct(min(100, value))
         if self._audio_status is not None:
-            detail = "System mixer updated." if sys_ok else "Using Nina app volume."
             self._audio_status.setText(
-                f"Volume set to {value}%. {detail} Changes apply to the next clip."
+                f"Nina app volume {value}%. Applies to the next greeting or action clip."
             )
 
     def _refresh_audio_volume(self) -> None:
@@ -614,11 +869,21 @@ class SettingsScreen(QWidget):
         if self._audio_volume_value is not None:
             self._audio_volume_value.setText(f"{value}%")
         sys_pct = get_system_output_volume_pct()
-        if self._audio_status is not None:
-            sys_text = f"System mixer: {sys_pct}%." if sys_pct is not None else "No system mixer detected."
-            self._audio_status.setText(
-                f"Nina app volume: {value}%. {sys_text}"
+        if self._sys_volume_slider is not None and sys_pct is not None:
+            self._sys_volume_slider.blockSignals(True)
+            self._sys_volume_slider.setValue(max(0, min(100, sys_pct)))
+            self._sys_volume_slider.blockSignals(False)
+        if self._sys_volume_value is not None:
+            self._sys_volume_value.setText(
+                f"{sys_pct}%" if sys_pct is not None else "—"
             )
+        if self._audio_status is not None:
+            sys_text = (
+                f"System mixer: {sys_pct}%."
+                if sys_pct is not None
+                else "No system mixer — use Nina app volume or install alsa-utils."
+            )
+            self._audio_status.setText(f"Nina app volume: {value}%. {sys_text}")
 
     # ---------- Power ----------
 
@@ -772,59 +1037,66 @@ class SettingsScreen(QWidget):
             sys.exit(0)
 
     def _confirm_power_action(self, title: str, body: str) -> bool:
-        reply = QMessageBox.question(
-            self,
-            title,
-            body,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(title)
+        box.setText(body)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.setWindowFlags(
+            box.windowFlags() | Qt.WindowStaysOnTopHint
         )
-        return reply == QMessageBox.Yes
+        return box.exec_() == QMessageBox.Yes
 
     def _do_power_action(self, action: str) -> None:
-        """Invoke the host_control queue function and surface the result.
-
-        Uses the in-process helpers (not the HTTP gateway) so the
-        operator gets the same behaviour whether or not nina-link is
-        running on this Jetson. Drives bus shutdown first so motors
-        don't keep holding torque while the OS is brining services
-        down.
-        """
+        """Shut down motors, then queue host poweroff/reboot (HTTP + in-process)."""
         try:
             self._service.shutdown()
         except Exception:
             pass
+        path = (
+            "/v1/system/poweroff"
+            if action == "poweroff"
+            else "/v1/system/reboot"
+        )
+        msg = ""
         try:
-            from nina.jetson_net import host_control
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Power",
-                f"Could not import host_control: {exc}",
-            )
-            return
-        try:
-            if action == "poweroff":
-                result = host_control.queue_poweroff()
-            elif action == "reboot":
-                result = host_control.queue_reboot()
-            else:
-                raise ValueError(f"unknown action: {action}")
-        except Exception as exc:
-            QMessageBox.critical(self, "Power", f"{action} failed: {exc}")
-            return
-        msg = (
-            result.get("message")
-            if isinstance(result, dict)
-            else f"{action} queued"
+            result = self._link_request(path, method="POST", body={}, timeout=6.0)
+            if isinstance(result, dict):
+                msg = str(result.get("message") or "")
+        except RuntimeError:
+            try:
+                from nina.jetson_net import host_control
+
+                if action == "poweroff":
+                    result = host_control.queue_poweroff()
+                else:
+                    result = host_control.queue_reboot()
+                if isinstance(result, dict):
+                    msg = str(result.get("message") or "")
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    "Power",
+                    f"{action} failed: {exc}",
+                )
+                return
+        if not msg:
+            msg = f"{action} requested."
+        footer = (
+            f"{action} dispatched: {msg}\n"
+            "If nothing happens within ~10 s, add passwordless sudo for "
+            "systemctl/poweroff/reboot (see nina/jetson_net/host_control.py)."
         )
         if self._power_status is not None:
-            self._power_status.setText(
-                f"{action} dispatched: {msg}\n"
-                "If nothing happens within ~10 s, add a passwordless sudo "
-                "entry for systemctl/poweroff/reboot (see "
-                "nina/jetson_net/host_control.py for the drop-in)."
-            )
+            self._power_status.setText(footer)
+        info = QMessageBox(self)
+        info.setIcon(QMessageBox.Information)
+        info.setWindowTitle("Power")
+        info.setText(footer)
+        info.setStandardButtons(QMessageBox.Ok)
+        info.setWindowFlags(info.windowFlags() | Qt.WindowStaysOnTopHint)
+        info.exec_()
 
     # ---------- placeholder panes ----------
 

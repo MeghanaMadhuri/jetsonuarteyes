@@ -34,6 +34,16 @@ class SavedNetwork:
 
 
 @dataclass
+class ScannedWifi:
+    """One row from ``nmcli device wifi list``."""
+
+    ssid: str
+    signal: int = 0
+    security: str = ""
+    in_use: bool = False
+
+
+@dataclass
 class NMBackend:
     """Real nmcli or in-memory mock."""
 
@@ -541,6 +551,74 @@ class NMBackend:
                 # Often "192.168.1.5/24"
                 return ln.split("/")[0]
         return None
+
+    def scan_wifi(self, *, rescan: bool = False) -> List[ScannedWifi]:
+        """List nearby APs (optional ``nmcli device wifi rescan`` first)."""
+        if self.mock:
+            with self._lock:
+                return [
+                    ScannedWifi("Nina-AP", 72, "WPA2", self._mock_ap_active),
+                    ScannedWifi("Home-WiFi", 55, "WPA2", self._mock_sta_connected),
+                    ScannedWifi("Guest", 40, "WPA2", False),
+                ]
+
+        dev = self._wifi_device_name()
+        if not dev:
+            return []
+        if rescan:
+            subprocess.run(
+                ["nmcli", "device", "wifi", "rescan", "ifname", dev],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        raw = subprocess.run(
+            [
+                "nmcli",
+                "-t",
+                "-f",
+                "SSID,SIGNAL,SECURITY,IN-USE",
+                "device",
+                "wifi",
+                "list",
+                "ifname",
+                dev,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            check=False,
+        )
+        if raw.returncode != 0:
+            log.warning("nmcli wifi list failed: %s", raw.stderr)
+            return []
+        out: List[ScannedWifi] = []
+        seen: set = set()
+        for ln in raw.stdout.splitlines():
+            parts = ln.split(":")
+            if len(parts) < 4:
+                continue
+            ssid = parts[0].strip()
+            if not ssid or ssid in seen:
+                continue
+            seen.add(ssid)
+            try:
+                signal = int(parts[1] or "0")
+            except ValueError:
+                signal = 0
+            security = parts[2].strip()
+            in_use = (parts[3] or "").strip() == "*"
+            out.append(
+                ScannedWifi(
+                    ssid=ssid,
+                    signal=max(0, min(100, signal)),
+                    security=security,
+                    in_use=in_use,
+                )
+            )
+        out.sort(key=lambda n: (-n.in_use, -n.signal, n.ssid.lower()))
+        return out
 
 
 def _looks_like_bad_password(stderr: str) -> bool:
