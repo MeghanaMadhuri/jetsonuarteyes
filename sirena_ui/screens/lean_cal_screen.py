@@ -5,7 +5,8 @@ no settings mutation. The operator drags two sliders (or taps explicit
 ``−`` / ``+`` buttons) until the chassis goes straight backward on the
 bench, then copies the discovered tick values into
 ``/etc/nina-link/navigation.env`` as
-``NINA_HOVER_REV_POS_LEFT`` / ``NINA_HOVER_REV_POS_RIGHT``.
+``NINA_HOVER_FWD_POS_LEFT`` / ``NINA_HOVER_FWD_POS_RIGHT`` (loaded as
+backward lean after the fleet hall FWD/REV swap in ``settings.py``).
 
 Mechanism:
 
@@ -256,8 +257,8 @@ class LeanCalScreen(QWidget):
             "immediately. When the chassis goes straight backward, "
             "copy the L / R numbers into "
             "<code>/etc/nina-link/navigation.env</code> as "
-            "<code>NINA_HOVER_REV_POS_LEFT</code> / "
-            "<code>NINA_HOVER_REV_POS_RIGHT</code> and restart the "
+            "<code>NINA_HOVER_FWD_POS_LEFT</code> / "
+            "<code>NINA_HOVER_FWD_POS_RIGHT</code> and restart the "
             "service."
         )
         info.setTextFormat(Qt.RichText)
@@ -491,8 +492,8 @@ class LeanCalScreen(QWidget):
             self._status.setText(
                 f"SAVE failed: {exc}. "
                 f"Copy manually into {_NAV_ENV_PATH}: "
-                f"NINA_HOVER_REV_POS_LEFT={l}  "
-                f"NINA_HOVER_REV_POS_RIGHT={r}"
+                f"NINA_HOVER_FWD_POS_LEFT={l}  "
+                f"NINA_HOVER_FWD_POS_RIGHT={r}"
             )
             return
         except ValueError as exc:

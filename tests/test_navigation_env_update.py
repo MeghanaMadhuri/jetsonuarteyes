@@ -44,15 +44,15 @@ def test_update_replaces_existing_lines_in_place(tmp_path: Path) -> None:
 
     out = env.read_text()
 
-    # Backward keys replaced.
-    assert "NINA_HOVER_REV_POS_LEFT=2100\n" in out
-    assert "NINA_HOVER_REV_POS_RIGHT=1950\n" in out
+    # Backward keys (FWD env vars) replaced.
+    assert "NINA_HOVER_FWD_POS_LEFT=2100\n" in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=1950\n" in out
     # Old values gone.
-    assert "NINA_HOVER_REV_POS_LEFT=2068" not in out
-    assert "NINA_HOVER_REV_POS_RIGHT=2028" not in out
-    # Unrelated lines preserved.
+    assert "NINA_HOVER_FWD_POS_LEFT=2022" not in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=2080" not in out
+    # Forward (REV env) and unrelated lines preserved.
     assert "NINA_NAV_INVERT_LEFT=1\n" in out
-    assert "NINA_HOVER_FWD_POS_LEFT=2022\n" in out
+    assert "NINA_HOVER_REV_POS_LEFT=2068\n" in out
     assert "NINA_HOVER_BRAKE_POS_LEFT=2048\n" in out
     # Comments preserved.
     assert "# polarity\n" in out
@@ -67,17 +67,17 @@ def test_update_appends_keys_when_missing(tmp_path: Path) -> None:
     env.write_text(
         "# polarity overrides\n"
         "NINA_NAV_INVERT_LEFT=1\n"
-        "NINA_HOVER_FWD_POS_LEFT=2022\n"
+        "NINA_HOVER_REV_POS_LEFT=2150\n"
     )
     update_backward_lean(2110, 1985, env_path=env, allow_pkexec=False)
     out = env.read_text()
     # Original lines preserved.
     assert "# polarity overrides\n" in out
     assert "NINA_NAV_INVERT_LEFT=1\n" in out
-    assert "NINA_HOVER_FWD_POS_LEFT=2022\n" in out
+    assert "NINA_HOVER_REV_POS_LEFT=2150\n" in out
     # New lines appended with a header.
-    assert "NINA_HOVER_REV_POS_LEFT=2110\n" in out
-    assert "NINA_HOVER_REV_POS_RIGHT=1985\n" in out
+    assert "NINA_HOVER_FWD_POS_LEFT=2110\n" in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=1985\n" in out
     assert "# Backward lean (MX-28)" in out
 
 
@@ -88,8 +88,8 @@ def test_update_creates_file_when_missing(tmp_path: Path) -> None:
     assert not env.exists()
     update_backward_lean(2075, 2010, env_path=env, allow_pkexec=False)
     out = env.read_text()
-    assert "NINA_HOVER_REV_POS_LEFT=2075\n" in out
-    assert "NINA_HOVER_REV_POS_RIGHT=2010\n" in out
+    assert "NINA_HOVER_FWD_POS_LEFT=2075\n" in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=2010\n" in out
     assert env.exists()
 
 
@@ -101,23 +101,23 @@ def test_update_dedupes_repeated_keys(tmp_path: Path) -> None:
     stale one further down."""
     env = tmp_path / "navigation.env"
     env.write_text(
-        "NINA_HOVER_REV_POS_LEFT=2068\n"
+        "NINA_HOVER_FWD_POS_LEFT=2068\n"
         "NINA_NAV_INVERT_LEFT=1\n"
-        "NINA_HOVER_REV_POS_LEFT=9999\n"   # stale duplicate further down
-        "NINA_HOVER_REV_POS_RIGHT=2028\n"
-        "NINA_HOVER_REV_POS_RIGHT=8888\n"  # stale duplicate further down
+        "NINA_HOVER_FWD_POS_LEFT=9999\n"   # stale duplicate further down
+        "NINA_HOVER_FWD_POS_RIGHT=2028\n"
+        "NINA_HOVER_FWD_POS_RIGHT=8888\n"  # stale duplicate further down
     )
     update_backward_lean(2100, 1950, env_path=env, allow_pkexec=False)
     out = env.read_text()
     # Only one occurrence each, with the new value.
-    assert out.count("NINA_HOVER_REV_POS_LEFT=") == 1
-    assert out.count("NINA_HOVER_REV_POS_RIGHT=") == 1
-    assert "NINA_HOVER_REV_POS_LEFT=2100\n" in out
-    assert "NINA_HOVER_REV_POS_RIGHT=1950\n" in out
+    assert out.count("NINA_HOVER_FWD_POS_LEFT=") == 1
+    assert out.count("NINA_HOVER_FWD_POS_RIGHT=") == 1
+    assert "NINA_HOVER_FWD_POS_LEFT=2100\n" in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=1950\n" in out
     # The stale duplicates and the old originals are gone.
     assert "9999" not in out
     assert "8888" not in out
-    assert "NINA_HOVER_REV_POS_LEFT=2068" not in out
+    assert "NINA_HOVER_FWD_POS_LEFT=2068" not in out
     # Unrelated line preserved.
     assert "NINA_NAV_INVERT_LEFT=1\n" in out
 
@@ -128,14 +128,14 @@ def test_update_handles_export_prefix_and_quoted_values(tmp_path: Path) -> None:
     so the values aren't left behind as stale duplicates."""
     env = tmp_path / "navigation.env"
     env.write_text(
-        'export NINA_HOVER_REV_POS_LEFT="2068"\n'
-        "export NINA_HOVER_REV_POS_RIGHT='2028'\n"
+        'export NINA_HOVER_FWD_POS_LEFT="2068"\n'
+        "export NINA_HOVER_FWD_POS_RIGHT='2028'\n"
         "NINA_NAV_INVERT_LEFT=1\n"
     )
     update_backward_lean(2100, 1950, env_path=env, allow_pkexec=False)
     out = env.read_text()
-    assert "NINA_HOVER_REV_POS_LEFT=2100\n" in out
-    assert "NINA_HOVER_REV_POS_RIGHT=1950\n" in out
+    assert "NINA_HOVER_FWD_POS_LEFT=2100\n" in out
+    assert "NINA_HOVER_FWD_POS_RIGHT=1950\n" in out
     assert "2068" not in out
     assert "2028" not in out
 
@@ -160,7 +160,7 @@ def test_update_no_pkexec_when_disabled_raises_clear_error(tmp_path: Path) -> No
     explicitly disabled, surface a clear error rather than silently
     succeeding."""
     env = tmp_path / "navigation.env"
-    env.write_text("NINA_HOVER_REV_POS_LEFT=2068\n")
+    env.write_text("NINA_HOVER_FWD_POS_LEFT=2068\n")
     # Make the parent dir read-only so the rename inside _atomic_write_text
     # fails with PermissionError. (We can't chmod the file itself because
     # write goes via temp + rename — it's the rename into the directory
@@ -181,10 +181,10 @@ def test_parse_existing_backward_lean_reads_current_values(tmp_path: Path) -> No
     env.write_text(
         "NINA_HOVER_FWD_POS_LEFT=2022\n"
         "NINA_HOVER_REV_POS_LEFT=2068\n"
-        "NINA_HOVER_REV_POS_RIGHT=2028\n"
+        "NINA_HOVER_FWD_POS_RIGHT=2028\n"
     )
     left, right = parse_existing_backward_lean(env_path=env)
-    assert left == 2068
+    assert left == 2022
     assert right == 2028
 
 
@@ -206,10 +206,10 @@ def test_parse_existing_takes_last_occurrence(tmp_path: Path) -> None:
     actually loads."""
     env = tmp_path / "navigation.env"
     env.write_text(
-        "NINA_HOVER_REV_POS_LEFT=2068\n"
-        "NINA_HOVER_REV_POS_LEFT=2150\n"
-        "NINA_HOVER_REV_POS_RIGHT='2028'\n"
-        'NINA_HOVER_REV_POS_RIGHT="2000"\n'
+        "NINA_HOVER_FWD_POS_LEFT=2068\n"
+        "NINA_HOVER_FWD_POS_LEFT=2150\n"
+        "NINA_HOVER_FWD_POS_RIGHT='2028'\n"
+        'NINA_HOVER_FWD_POS_RIGHT="2000"\n'
     )
     assert parse_existing_backward_lean(env_path=env) == (2150, 2000)
 
@@ -219,7 +219,7 @@ def test_update_preserves_trailing_newline(tmp_path: Path) -> None:
     bare line that some editors would auto-add at next save (which
     would then show as a diff)."""
     env = tmp_path / "navigation.env"
-    env.write_text("NINA_HOVER_REV_POS_LEFT=2068\nNINA_HOVER_REV_POS_RIGHT=2028\n")
+    env.write_text("NINA_HOVER_FWD_POS_LEFT=2068\nNINA_HOVER_FWD_POS_RIGHT=2028\n")
     update_backward_lean(2100, 1950, env_path=env, allow_pkexec=False)
     out = env.read_text()
     assert out.endswith("\n")
@@ -231,7 +231,7 @@ def test_update_is_atomic_via_replace(tmp_path: Path, monkeypatch) -> None:
     the original file must remain intact AND no stray temp file
     should be left lying around in the parent dir."""
     env = tmp_path / "navigation.env"
-    env.write_text("NINA_HOVER_REV_POS_LEFT=2068\nNINA_HOVER_REV_POS_RIGHT=2028\n")
+    env.write_text("NINA_HOVER_FWD_POS_LEFT=2068\nNINA_HOVER_FWD_POS_RIGHT=2028\n")
     original = env.read_text()
 
     # Force os.replace to fail mid-write.
@@ -248,6 +248,6 @@ def test_update_is_atomic_via_replace(tmp_path: Path, monkeypatch) -> None:
     leftovers = [
         p.name
         for p in tmp_path.iterdir()
-        if p.name.startswith(".navigation.env.") and p.name.endswith(".tmp")
+        if p.name.startswith(".navigation.env.")
     ]
-    assert leftovers == [], f"stray temp files: {leftovers}"
+    assert leftovers == []

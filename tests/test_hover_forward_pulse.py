@@ -263,7 +263,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_settle_stable_sec() == 0.10
         assert _straight_settle_max_sec() == 1.50
         assert _straight_settle_poll_sec() == 0.02
-        assert _straight_corr_swap_pivot_dir() is True
+        assert _straight_corr_swap_pivot_dir() is False
 
 
 def test_straight_corr_swap_pivot_dir_truthy_values() -> None:

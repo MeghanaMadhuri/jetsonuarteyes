@@ -743,11 +743,10 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _imu_turn_post_settle_sec() == 0.30
     assert _imu_turn_progress_check_steps() == 6
     assert _imu_turn_progress_min_deg() == 3.0
-    # Swap defaults to True — same chassis-physics fix as the
-    # standstill correction swap. Operator overrides via
-    # NINA_HOVER_TURN_SWAP_PIVOT_DIR=0 on a chassis where the
-    # conventional mapping is correct.
-    assert _imu_turn_swap_pivot_dir() is True
+    # Swap defaults to False after the fleet hall FWD/REV swap.
+    # Operator sets NINA_HOVER_TURN_SWAP_PIVOT_DIR=1 if the mount
+    # still needs the inverted label-to-goals mapping.
+    assert _imu_turn_swap_pivot_dir() is False
 
 
 def test_turn_env_overrides_clamp(monkeypatch: pytest.MonkeyPatch) -> None:

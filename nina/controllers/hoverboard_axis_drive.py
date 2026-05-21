@@ -1001,16 +1001,13 @@ def _straight_corr_swap_pivot_dir() -> bool:
     stopped before the pivot fires), the mapping is the only
     remaining unknown — so we hardcode the swap as the default.
 
-    When True (default), a "pivot_left" decision uses ``L=BACK,
-    R=FWD`` goals and a "pivot_right" decision uses ``L=FWD, R=BACK``
-    goals — i.e. the label-to-goals mapping is inverted relative to
-    the conventional convention. This is the right setting for the
-    reference chassis (where pivot-left goals mechanically produce
-    right rotation).
-
-    Set ``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR=0`` on a chassis
-    where the conventional mapping is correct (label "left" ⇒ goals
-    that rotate the chassis left). Affects ONLY the at-standstill
+    When True, a "pivot_left" decision uses ``L=BACK, R=FWD`` goals and
+    a "pivot_right" decision uses ``L=FWD, R=BACK`` goals — i.e. the
+    label-to-goals mapping is inverted relative to the conventional
+    convention. Default **off** after the fleet hall FWD/REV swap in
+    ``settings.py``; set ``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR=1``
+    if standstill correction still pivots the wrong way. Affects ONLY
+    the at-standstill
     drift correction; the closed-loop 90° turn and the backward
     in-motion correction are unchanged.
 
@@ -1020,7 +1017,7 @@ def _straight_corr_swap_pivot_dir() -> bool:
     (whether a "pivot LEFT" decision uses one set of goals or the
     other). On chassis with both inversions you'd set both.
     """
-    val = os.environ.get("NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR", "1")
+    val = os.environ.get("NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR", "0")
     return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 
@@ -1703,15 +1700,12 @@ def _imu_turn_swap_pivot_dir() -> bool:
     UI commands ``L=FWD, R=BACK`` and the chassis rotates right
     (then the no-progress safeguard bails the turn).
 
-    When True (default), a turn-LEFT request applies ``L=BACK, R=FWD``
-    goals and a turn-RIGHT request applies ``L=FWD, R=BACK`` goals —
-    i.e. the label-to-goals mapping is inverted relative to the
-    conventional convention. This is the right setting for the
-    reference chassis.
-
-    Set ``NINA_HOVER_TURN_SWAP_PIVOT_DIR=0`` on a chassis where the
-    conventional mapping is correct (turn-left request rotates the
-    chassis left under the L=FWD,R=BACK geometry).
+    When True, a turn-LEFT request applies ``L=BACK, R=FWD`` goals and a
+    turn-RIGHT request applies ``L=FWD, R=BACK`` goals — i.e. the
+    label-to-goals mapping is inverted relative to the conventional
+    convention. Default **off** after the fleet hall FWD/REV swap;
+    set ``NINA_HOVER_TURN_SWAP_PIVOT_DIR=1`` if timed / closed-loop
+    turns still rotate the wrong way.
 
     Independent of :func:`_straight_corr_swap_pivot_dir` so the
     operator can tune turn vs standstill correction separately;
@@ -1725,7 +1719,7 @@ def _imu_turn_swap_pivot_dir() -> bool:
     goals or the other). On chassis with both inversions you'd set
     both.
     """
-    val = os.environ.get("NINA_HOVER_TURN_SWAP_PIVOT_DIR", "1")
+    val = os.environ.get("NINA_HOVER_TURN_SWAP_PIVOT_DIR", "0")
     return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 

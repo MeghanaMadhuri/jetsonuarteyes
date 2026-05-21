@@ -152,14 +152,14 @@
 
       | Direction | Left (12) | Right (13) | Variables |
       |-----------|-----------|------------|-----------|
-      | Forward | 2022 | 2080 | `NINA_HOVER_FWD_POS_LEFT`, `NINA_HOVER_FWD_POS_RIGHT` |
-      | Backward | 2150 | 2000 | `NINA_HOVER_REV_POS_LEFT`, `NINA_HOVER_REV_POS_RIGHT` |
+      | UI forward | 2150 | 2000 | `NINA_HOVER_REV_POS_LEFT`, `NINA_HOVER_REV_POS_RIGHT` (cross-mapped at load) |
+      | UI backward | 2022 | 2080 | `NINA_HOVER_FWD_POS_LEFT`, `NINA_HOVER_FWD_POS_RIGHT` (cross-mapped at load) |
 
-      Tune per chassis. Optional straight prime: `NINA_HOVER_STRAIGHT_PRIME_POS` (default 2048).
+      Env key names are unchanged from the original fleet tune; `settings.py` maps REV→in-memory forward and FWD→in-memory backward because hall FWD/REV wiring was swapped on the chassis. Tune per chassis. Optional straight prime: `NINA_HOVER_STRAIGHT_PRIME_POS` (default 2048).
 
       ### 5.3 Turns
 
-      **Turn left:** left toward forward goals, right toward backward (mirror for right). Overrides: `NINA_HOVER_TURN_LEFT_POS_*`, `NINA_HOVER_TURN_RIGHT_POS_*`. GUI alignment: `NINA_HOVER_SWAP_TURN_LR` (default on).
+      **Turn left:** left toward forward goals, right toward backward (mirror for right). Overrides: `NINA_HOVER_TURN_LEFT_POS_*`, `NINA_HOVER_TURN_RIGHT_POS_*`. `NINA_HOVER_SWAP_TURN_LR` defaults off after the hall swap; set `1` if GUI yaw is still reversed.
 
       ### 5.4 Slew rate
 
@@ -262,12 +262,12 @@
       | `NINA_HOVER_ID_RIGHT` | `13` | Right lean ID |
       | `NINA_HOVER_BRAKE_POS_LEFT` | `2048` | Brake goal |
       | `NINA_HOVER_BRAKE_POS_RIGHT` | `2048` | Brake goal |
-      | `NINA_HOVER_FWD_POS_LEFT` | `2022` | Forward lean |
-      | `NINA_HOVER_FWD_POS_RIGHT` | `2080` | Forward lean |
-      | `NINA_HOVER_REV_POS_LEFT` | `2150` | Reverse lean |
-      | `NINA_HOVER_REV_POS_RIGHT` | `2000` | Reverse lean |
+      | `NINA_HOVER_FWD_POS_LEFT` | `2022` | Backward lean (env name; mapped to `backward_pos_*`) |
+      | `NINA_HOVER_FWD_POS_RIGHT` | `2080` | Backward lean |
+      | `NINA_HOVER_REV_POS_LEFT` | `2150` | Forward lean (env name; mapped to `forward_pos_*`) |
+      | `NINA_HOVER_REV_POS_RIGHT` | `2000` | Forward lean |
       | `NINA_HOVER_MOVING_SPEED` | `0` | Lean slew |
-      | `NINA_HOVER_SWAP_TURN_LR` | `1` | GUI turn mapping |
+      | `NINA_HOVER_SWAP_TURN_LR` | `0` | Extra GUI turn L/R swap (off after hall swap) |
       | `NINA_HOVER_PULSE_FORWARD` | `1` | Straight pulse series |
 
       Also used when needed: `NINA_HOVER_SIGN_LEFT`, `NINA_HOVER_SIGN_RIGHT`, turn position overrides, IMU correction `NINA_HOVER_IMU_CORR_*`.

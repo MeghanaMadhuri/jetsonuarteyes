@@ -160,12 +160,14 @@ class HoverboardAxisSettings:
     legacy ``NINA_HOVER_NEUTRAL_*`` is read if the ``BRAKE`` vars are unset),
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED`` (0–1023; **0** = fastest
     joint move on Protocol 1, higher = slower — default 0),
-    ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Straight-line forward
-    uses ``NINA_HOVER_FWD_POS_*`` (defaults 2022 / 2080); straight backward uses ``NINA_HOVER_REV_POS_*``
-    (defaults 2150 / 2000 — L 102 ticks above brake=2048, R 48 ticks below). In-place pivots pair
-    ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
-    ``NINA_HOVER_SWAP_TURN_LR`` defaults on so GUI pivots match this mount;
-    set ``NINA_HOVER_SWAP_TURN_LR=0`` if yaw sense is reversed.
+    ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Env var names are unchanged
+    (``NINA_HOVER_FWD_POS_*`` / ``NINA_HOVER_REV_POS_*``); at load time they are
+    **cross-mapped** onto the in-memory lean fields because hall FWD/REV wiring
+    on the chassis was swapped (UI forward reads ``REV_*`` ticks, UI backward
+    reads ``FWD_*``). Defaults: FWD env 2022/2080, REV env 2150/2000. In-place
+    pivots pair ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
+    ``NINA_HOVER_SWAP_TURN_LR`` defaults off after the hall swap; set ``1`` if
+    GUI yaw sense is still reversed on a given mount.
     ``NINA_HOVER_TURN_PUSH_TICKS`` (default 100). ``tilt_deg`` remains for any legacy
     asymmetric fallback (non-straight paths).
 
@@ -569,16 +571,15 @@ def load_settings(repo_root: Path) -> NinaSettings:
             if "NINA_HOVER_BRAKE_POS_RIGHT" in os.environ
             else _env_int("NINA_HOVER_NEUTRAL_RIGHT", 2048)
         ),
-        # Defaults reflect the operator-validated tune from the previous
-        # calibration sessions; override via ``NINA_HOVER_FWD_POS_*`` /
-        # ``NINA_HOVER_REV_POS_*`` in ``/etc/nina-link/navigation.env``.
-        # There is no longer a Motion-cal UI nor a persisted JSON file —
-        # this is the single source of truth for lean goals.
-        forward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2022),
-        forward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2080),
-        backward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2150),
-        backward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2000),
-        swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", True),
+        # Hall FWD/REV on each lean module is wired opposite the original
+        # fleet map. Env keys keep operator semantics (FWD_* = tune saved
+        # when the bench said "forward"); we cross-map at load so existing
+        # ``navigation.env`` files work without renumbering.
+        forward_pos_left=_env_int("NINA_HOVER_REV_POS_LEFT", 2150),
+        forward_pos_right=_env_int("NINA_HOVER_REV_POS_RIGHT", 2000),
+        backward_pos_left=_env_int("NINA_HOVER_FWD_POS_LEFT", 2022),
+        backward_pos_right=_env_int("NINA_HOVER_FWD_POS_RIGHT", 2080),
+        swap_turn_lr=_env_bool("NINA_HOVER_SWAP_TURN_LR", False),
         turn_push_ticks=max(
             0, min(100, _env_int("NINA_HOVER_TURN_PUSH_TICKS", 100))
         ),
