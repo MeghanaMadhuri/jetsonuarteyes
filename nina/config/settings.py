@@ -54,63 +54,26 @@ def _env_optional_int_clamped(name: str, lo: int, hi: int) -> Optional[int]:
         return None
 
 
-# Pre-hall-swap bench calibration (attachment / original fleet table).
-_LEGACY_HOVER_FWD_LEFT = 2022
-_LEGACY_HOVER_FWD_RIGHT = 2080
-_LEGACY_HOVER_REV_LEFT = 2150
-_LEGACY_HOVER_REV_RIGHT = 2000
-
-# Post hall F/B wiring swap: same env key names, tick values exchanged.
-_POST_SWAP_HOVER_FWD_LEFT = _LEGACY_HOVER_REV_LEFT
-_POST_SWAP_HOVER_FWD_RIGHT = _LEGACY_HOVER_REV_RIGHT
-_POST_SWAP_HOVER_REV_LEFT = _LEGACY_HOVER_FWD_LEFT
-_POST_SWAP_HOVER_REV_RIGHT = _LEGACY_HOVER_FWD_RIGHT
-
-# Tolerance when auto-detecting an unmigrated navigation.env (FWD still ≈2022/2080).
-_LEGACY_FWD_REV_MATCH_TICKS = 40
-
-
-def _looks_like_pre_hall_swap_fwd_rev_env(
-    fwd_left: int,
-    fwd_right: int,
-    rev_left: int,
-    rev_right: int,
-) -> bool:
-    """True when env still stores the original forward row under FWD_* and backward under REV_*."""
-    return (
-        abs(fwd_left - _LEGACY_HOVER_FWD_LEFT) <= _LEGACY_FWD_REV_MATCH_TICKS
-        and abs(fwd_right - _LEGACY_HOVER_FWD_RIGHT) <= _LEGACY_FWD_REV_MATCH_TICKS
-        and abs(rev_left - _LEGACY_HOVER_REV_LEFT) <= _LEGACY_FWD_REV_MATCH_TICKS
-        and abs(rev_right - _LEGACY_HOVER_REV_RIGHT) <= _LEGACY_FWD_REV_MATCH_TICKS
-    )
+# Fleet hover lean defaults (override via ``/etc/nina-link/navigation.env``).
+_DEFAULT_HOVER_FWD_LEFT = 2022
+_DEFAULT_HOVER_FWD_RIGHT = 2080
+_DEFAULT_HOVER_REV_LEFT = 2100
+_DEFAULT_HOVER_REV_RIGHT = 2000
 
 
 def _load_hover_forward_backward_positions() -> tuple[int, int, int, int]:
     """Map ``NINA_HOVER_FWD_POS_*`` / ``REV_POS_*`` to in-memory lean goals.
 
-    Env names always mean UI forward / backward. After the fleet hall F/B
-    swap, code defaults use the **exchanged** tick values from the
-    original bench table (forward was 2022/2080, backward 2150/2000).
-
-    Unmigrated ``navigation.env`` files that still list the pre-swap
-    numbers under the same keys are auto-swapped at load unless
-    ``NINA_HOVER_SWAP_FWD_REV_ENV_VALUES=0``. Set that to ``0`` after you
-    update the file to the post-swap values (FWD=2150/2000, REV=2022/2080).
+    Env names match UI forward / backward. Code defaults match the current
+    fleet bench tune. Set ``NINA_HOVER_SWAP_FWD_REV_ENV_VALUES=1`` only if an
+    old env file still stores pre-swap rows under the same key names.
     """
-    fwd_left = _env_int("NINA_HOVER_FWD_POS_LEFT", _POST_SWAP_HOVER_FWD_LEFT)
-    fwd_right = _env_int("NINA_HOVER_FWD_POS_RIGHT", _POST_SWAP_HOVER_FWD_RIGHT)
-    rev_left = _env_int("NINA_HOVER_REV_POS_LEFT", _POST_SWAP_HOVER_REV_LEFT)
-    rev_right = _env_int("NINA_HOVER_REV_POS_RIGHT", _POST_SWAP_HOVER_REV_RIGHT)
+    fwd_left = _env_int("NINA_HOVER_FWD_POS_LEFT", _DEFAULT_HOVER_FWD_LEFT)
+    fwd_right = _env_int("NINA_HOVER_FWD_POS_RIGHT", _DEFAULT_HOVER_FWD_RIGHT)
+    rev_left = _env_int("NINA_HOVER_REV_POS_LEFT", _DEFAULT_HOVER_REV_LEFT)
+    rev_right = _env_int("NINA_HOVER_REV_POS_RIGHT", _DEFAULT_HOVER_REV_RIGHT)
 
-    swap_raw = os.environ.get("NINA_HOVER_SWAP_FWD_REV_ENV_VALUES")
-    if swap_raw is None:
-        swap_values = _looks_like_pre_hall_swap_fwd_rev_env(
-            fwd_left, fwd_right, rev_left, rev_right
-        )
-    else:
-        swap_values = swap_raw.strip().lower() in ("1", "true", "yes", "on", "y")
-
-    if swap_values:
+    if _env_bool("NINA_HOVER_SWAP_FWD_REV_ENV_VALUES", False):
         return rev_left, rev_right, fwd_left, fwd_right
     return fwd_left, fwd_right, rev_left, rev_right
 
@@ -222,10 +185,9 @@ class HoverboardAxisSettings:
     ``NINA_HOVER_TILT_DEG``, ``NINA_HOVER_MOVING_SPEED`` (0–1023; **0** = fastest
     joint move on Protocol 1, higher = slower — default 0),
     ``NINA_HOVER_SIGN_LEFT`` / ``RIGHT`` (+1 or -1). Env var names are unchanged
-    (``NINA_HOVER_FWD_POS_*`` / ``NINA_HOVER_REV_POS_*``). After the fleet hall
-    F/B swap, defaults are the **exchanged** bench ticks (FWD 2150/2000, REV
-    2022/2080). Unmigrated env files that still list the pre-swap numbers are
-    auto-swapped at load (see ``_load_hover_forward_backward_positions``).
+    (``NINA_HOVER_FWD_POS_*`` / ``NINA_HOVER_REV_POS_*``). Code defaults:
+    FWD 2022/2080, REV 2100/2000; ``NINA_HOVER_SWAP_FWD_REV_ENV_VALUES`` defaults
+    off (see ``_load_hover_forward_backward_positions``).
     In-place
     pivots pair ``backward_pos_*`` on one side with ``forward_pos_*`` on the other.
     ``NINA_HOVER_SWAP_TURN_LR`` defaults off after the hall swap; set ``1`` if

@@ -152,10 +152,10 @@
 
       | Direction | Left (12) | Right (13) | Variables |
       |-----------|-----------|------------|-----------|
-      | UI forward | 2150 | 2000 | `NINA_HOVER_FWD_POS_LEFT`, `NINA_HOVER_FWD_POS_RIGHT` |
-      | UI backward | 2022 | 2080 | `NINA_HOVER_REV_POS_LEFT`, `NINA_HOVER_REV_POS_RIGHT` |
+      | UI forward | 2022 | 2080 | `NINA_HOVER_FWD_POS_LEFT`, `NINA_HOVER_FWD_POS_RIGHT` |
+      | UI backward | 2100 | 2000 | `NINA_HOVER_REV_POS_LEFT`, `NINA_HOVER_REV_POS_RIGHT` |
 
-      Pre–hall-swap bench (historical): forward was **2022 / 2080**, backward **2150 / 2000**. After the fleet hall F/B wiring swap, use the **exchanged** ticks above under the same env names. Unmigrated `navigation.env` files that still list the old numbers are auto-swapped at load; after editing the file, set `NINA_HOVER_SWAP_FWD_REV_ENV_VALUES=0`. Straight forward also applies per-side trim: `NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET` (default **−10**, motor 12) and `NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET` (default **+10**, motor 13) on top of `NINA_HOVER_FWD_POS_*`. Optional straight prime: `NINA_HOVER_STRAIGHT_PRIME_POS` (default 2048).
+      Code defaults match the current fleet bench tune (`NINA_HOVER_SWAP_FWD_REV_ENV_VALUES=0`). Straight forward also applies per-side trim: `NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET` (default **−10**, motor 12) and `NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET` (default **+10**, motor 13) on top of `NINA_HOVER_FWD_POS_*`. Optional straight prime: `NINA_HOVER_STRAIGHT_PRIME_POS` (default 2048).
 
       ### 5.3 Turns
 
@@ -262,11 +262,11 @@
       | `NINA_HOVER_ID_RIGHT` | `13` | Right lean ID |
       | `NINA_HOVER_BRAKE_POS_LEFT` | `2048` | Brake goal |
       | `NINA_HOVER_BRAKE_POS_RIGHT` | `2048` | Brake goal |
-      | `NINA_HOVER_FWD_POS_LEFT` | `2150` | Forward lean (post hall-swap default) |
-      | `NINA_HOVER_FWD_POS_RIGHT` | `2000` | Forward lean |
-      | `NINA_HOVER_REV_POS_LEFT` | `2022` | Backward lean |
-      | `NINA_HOVER_REV_POS_RIGHT` | `2080` | Backward lean |
-      | `NINA_HOVER_SWAP_FWD_REV_ENV_VALUES` | auto | `1`/`0` or unset: swap legacy pre-swap env rows at load |
+      | `NINA_HOVER_FWD_POS_LEFT` | `2022` | Forward lean |
+      | `NINA_HOVER_FWD_POS_RIGHT` | `2080` | Forward lean |
+      | `NINA_HOVER_REV_POS_LEFT` | `2100` | Backward lean |
+      | `NINA_HOVER_REV_POS_RIGHT` | `2000` | Backward lean |
+      | `NINA_HOVER_SWAP_FWD_REV_ENV_VALUES` | `0` | Set `1` to exchange FWD/REV rows at load (legacy env only) |
       | `NINA_HOVER_MOVING_SPEED` | `0` | Lean slew |
       | `NINA_HOVER_SWAP_TURN_LR` | `0` | Extra GUI turn L/R swap (off after hall swap) |
       | `NINA_HOVER_PULSE_FORWARD` | `1` | Straight pulse series |
