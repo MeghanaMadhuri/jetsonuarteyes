@@ -156,6 +156,15 @@ if [[ -x "${VISION_SCRIPT}" ]]; then
     fi
 fi
 
+# Fleet default: gTTS + ffmpeg for Actions → Audio (Generate & Save).
+AUDIO_SCRIPT="${REPO_ROOT}/scripts/install-action-audio-jetson.sh"
+if [[ -x "${AUDIO_SCRIPT}" && -x "${REPO_ROOT}/.venv-link/bin/python" ]]; then
+    echo "[INSTALL] installing action audio (gTTS) into .venv-link"
+    if ! bash "${AUDIO_SCRIPT}"; then
+        echo "[WARN] install-action-audio-jetson.sh failed (Actions audio Generate will error)" >&2
+    fi
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable nina-ui-kiosk.service
 # `restart` rather than `start` so re-running the installer after an
@@ -194,6 +203,7 @@ Useful commands:
   # HDMI audio defaults: /etc/nina-link/navigation.env (setup-hdmi-audio.sh).
   # MAX98357A I2S amp bots: scripts/setup-max98357a-audio.sh instead.
   # Vision / object detection: install-vision-jetson.sh (runs automatically here).
+  # Actions audio (gTTS): install-action-audio-jetson.sh (runs automatically here).
 
   # After git pull, re-run this script to refresh the unit from
   # desktop/nina-ui-kiosk.service (e.g. ExecStartPre Pulse stop, tablet API).
