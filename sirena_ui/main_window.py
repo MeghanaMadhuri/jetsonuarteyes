@@ -483,7 +483,23 @@ class MainWindow(QMainWindow):
         except Exception:
             return ""
 
+    def _wait_background_qthreads(self, timeout_ms: int = 8000) -> None:
+        """Avoid 'QThread: Destroyed while thread is still running' on exit/restart."""
+        for attr in ("_bus_init_thread",):
+            thread = getattr(self, attr, None)
+            if thread is not None and thread.isRunning():
+                thread.wait(timeout_ms)
+            setattr(self, attr, None)
+        home = self._screens.get("home")
+        if home is not None:
+            ht = getattr(home, "_health_collect_thread", None)
+            if ht is not None and ht.isRunning():
+                ht.wait(timeout_ms)
+            if hasattr(home, "_health_collect_thread"):
+                home._health_collect_thread = None
+
     def closeEvent(self, event) -> None:
+        self._wait_background_qthreads()
         try:
             self._service.shutdown()
         except Exception:
