@@ -123,6 +123,11 @@ Environment=NINA_ESP32_TRIGGER_ACTION=namaste
 # Environment=NINA_BATTERY_R2_OHM=33000
 # Environment=NINA_BATTERY_CAL_SCALE=1.082
 
+# HDMI/DP audio: tegra HDA (see /etc/nina-link/navigation.env from
+# scripts/setup-hdmi-audio.sh, run by install-nina-ui-kiosk.sh).
+# Stop PipeWire/Pulse so plughw:CARD=HDA,DEV=3 is not "Device or resource busy".
+ExecStartPre=/bin/sh -c 'systemctl --user stop pipewire pipewire-pulse wireplumber 2>/dev/null; pulseaudio -k 2>/dev/null; true'
+
 ExecStart=__EXEC__
 
 # Restart on transient failure so a one-off Qt / camera hiccup doesn't

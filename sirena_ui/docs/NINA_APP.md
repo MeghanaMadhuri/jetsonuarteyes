@@ -637,6 +637,9 @@ export NINA_VISION_TARGET_FPS=30
 # Face greetings (Vision): cached MP3s under nina/data/greetings/<name>.mp3 (repo root).
 # Playback: sudo apt install -y mpg123 alsa-utils espeak-ng pulseaudio-utils
 # (mpg123 for MP3; espeak-ng writes WAV then aplay or paplay; logs stderr on failure).
+# Jetson kiosk HDMI (monitor speakers): install-nina-ui-kiosk.sh runs setup-hdmi-audio.sh
+# and the unit stops PipeWire before start (ExecStartPre). MAX98357A I2S bots use
+# scripts/setup-max98357a-audio.sh instead — see docs/MAX98357A_JETSON_I2S.md.
 # Troubleshooting: if `espeak-ng: command not found`, install the package above — without
 # it, no WAV is produced and aplay/paplay report "No such file or directory" for /tmp/t.wav.
 # If aplay is silent but `paplay /tmp/t.wav` works, audio is on Pulse: keep pulseaudio-utils

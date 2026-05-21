@@ -128,6 +128,16 @@ if command -v loginctl >/dev/null 2>&1; then
         echo "[WARN] could not enable-linger; kiosk will only start once you log in" >&2
 fi
 
+# Fleet Jetson default: HDMI via tegra-HDA + no I2S keepalive (override with
+# scripts/setup-max98357a-audio.sh on bots with a MAX98357A amp).
+HDMI_AUDIO_SCRIPT="${REPO_ROOT}/scripts/setup-hdmi-audio.sh"
+if [[ -x "${HDMI_AUDIO_SCRIPT}" ]]; then
+    echo "[INSTALL] seeding HDMI audio in /etc/nina-link/navigation.env"
+    if ! sudo "${HDMI_AUDIO_SCRIPT}" --no-test; then
+        echo "[WARN] setup-hdmi-audio.sh failed (install alsa-utils mpg123 on the Jetson)" >&2
+    fi
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable nina-ui-kiosk.service
 # `restart` rather than `start` so re-running the installer after an
@@ -163,8 +173,11 @@ Useful commands:
   # tweak env vars without editing the repo (e.g. NINA_NAV_INVERT_* or pin overrides)
   systemctl --user edit nina-ui-kiosk
 
+  # HDMI audio defaults: /etc/nina-link/navigation.env (setup-hdmi-audio.sh).
+  # MAX98357A I2S amp bots: scripts/setup-max98357a-audio.sh instead.
+
   # After git pull, re-run this script to refresh the unit from
-  # desktop/nina-ui-kiosk.service (e.g. new default env for the tablet API).
+  # desktop/nina-ui-kiosk.service (e.g. ExecStartPre Pulse stop, tablet API).
 
   # Android companion: same process as the kiosk; use http://<jetson-ip>:8787
   # (re-run this installer if the unit file in the repo was updated).
