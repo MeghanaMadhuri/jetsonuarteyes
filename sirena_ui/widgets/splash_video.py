@@ -1,16 +1,19 @@
-"""Full-screen startup splash (``assets/nina_splash.mp4``), Android parity."""
+"""Full-screen startup splash; blocks until minimum display time + video end."""
 
 from __future__ import annotations
 
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt5.QtCore import QEventLoop, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QPalette, QPixmap
+from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+
+from sirena_ui.styles import asset_path
 
 log = logging.getLogger("sirena_ui.splash_video")
 
@@ -36,21 +39,44 @@ def splash_video_path() -> Optional[Path]:
     return None
 
 
+def _splash_min_ms() -> int:
+    raw = (os.environ.get("NINA_UI_SPLASH_MIN_MS") or "3500").strip()
+    try:
+        return max(1500, int(raw))
+    except ValueError:
+        return 3500
+
+
+def _splash_post_ms() -> int:
+    raw = (os.environ.get("NINA_UI_SPLASH_POST_MS") or "400").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 400
+
+
 class SplashScreen(QWidget):
-    """Borderless splash; emits ``finished`` when video ends or on timeout/error."""
+    """Borderless splash; emits ``finished`` after video (if any) + minimum hold."""
 
     finished = pyqtSignal()
 
     def __init__(
         self,
-        video_path: Path,
+        video_path: Optional[Path] = None,
         *,
-        max_ms: int = 45_000,
+        min_ms: int = 3500,
+        post_ms: int = 400,
+        max_ms: int = 60_000,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._video_path = video_path
+        self._min_ms = int(min_ms)
+        self._post_ms = int(post_ms)
+        self._t0 = time.monotonic()
         self._done = False
+        self._finish_scheduled = False
+        self._video_finished = video_path is None
         self._external_proc: Optional[subprocess.Popen] = None
 
         self.setWindowFlags(
@@ -64,19 +90,42 @@ class SplashScreen(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._fallback = QLabel("Nina", self)
-        self._fallback.setAlignment(Qt.AlignCenter)
-        self._fallback.setStyleSheet(
-            "color: #c8102e; font-size: 42px; font-weight: 700;"
-            " background: transparent;"
+        layout.setSpacing(0)
+
+        self._logo = QLabel(self)
+        self._logo.setAlignment(Qt.AlignCenter)
+        self._logo.setStyleSheet("background: transparent;")
+        pix = QPixmap(asset_path("nina.png"))
+        if not pix.isNull():
+            self._logo.setPixmap(
+                pix.scaled(
+                    320,
+                    320,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            )
+        else:
+            self._logo.setText("Nina")
+            self._logo.setStyleSheet(
+                "color: #c8102e; font-size: 42px; font-weight: 700;"
+                " background: transparent;"
+            )
+        layout.addStretch(1)
+        layout.addWidget(self._logo, alignment=Qt.AlignCenter)
+        self._status = QLabel("Loading Nina…", self)
+        self._status.setAlignment(Qt.AlignCenter)
+        self._status.setStyleSheet(
+            "color: #8e8e93; font-size: 14px; background: transparent;"
+            " padding-bottom: 48px;"
         )
-        self._fallback.hide()
-        layout.addWidget(self._fallback)
+        layout.addWidget(self._status)
+        layout.addStretch(1)
 
         self._guard = QTimer(self)
         self._guard.setSingleShot(True)
-        self._guard.timeout.connect(self._finish)
-        self._guard.start(max(3000, int(max_ms)))
+        self._guard.timeout.connect(self._schedule_finish)
+        self._guard.start(max(5000, int(max_ms)))
 
         self._player = None
         self._video_widget = None
@@ -90,13 +139,17 @@ class SplashScreen(QWidget):
         QTimer.singleShot(0, self._start_playback)
 
     def _start_playback(self) -> None:
+        if self._video_path is None:
+            log.info("splash: no video file — logo hold only")
+            self._schedule_finish()
+            return
         if self._try_qt_multimedia():
             return
         if self._try_external_player():
             return
-        log.warning("splash: no video backend; showing brief placeholder")
-        self._fallback.show()
-        QTimer.singleShot(1500, self._finish)
+        log.warning("splash: no video backend — logo hold only")
+        self._video_finished = True
+        self._schedule_finish()
 
     def _try_qt_multimedia(self) -> bool:
         try:
@@ -109,14 +162,13 @@ class SplashScreen(QWidget):
 
         try:
             video = QVideoWidget(self)
-            video.setSizePolicy(
-                video.sizePolicy().horizontalPolicy(),
-                video.sizePolicy().verticalPolicy(),
-            )
-            self.layout().addWidget(video, stretch=1)
+            video.setStyleSheet("background: #000000;")
+            self.layout().insertWidget(0, video, stretch=1)
             player = QMediaPlayer(self)
             player.setVideoOutput(video)
-            player.setMedia(QMediaContent(QUrl.fromLocalFile(str(self._video_path))))
+            player.setMedia(
+                QMediaContent(QUrl.fromLocalFile(str(self._video_path)))
+            )
             player.mediaStatusChanged.connect(self._on_media_status)
             player.error.connect(self._on_player_error)  # type: ignore[attr-defined]
             player.stateChanged.connect(self._on_state_changed)
@@ -136,12 +188,12 @@ class SplashScreen(QWidget):
                 QMediaPlayer.EndOfMedia,
                 QMediaPlayer.InvalidMedia,
             ):
-                self._finish()
+                self._on_video_done()
         except Exception:
             pass
 
     def _on_player_error(self, *_args) -> None:
-        self._finish()
+        self._on_video_done()
 
     def _on_state_changed(self, state) -> None:
         try:
@@ -149,13 +201,19 @@ class SplashScreen(QWidget):
 
             if state == QMediaPlayer.StoppedState and self._player:
                 if self._player.mediaStatus() == QMediaPlayer.EndOfMedia:
-                    self._finish()
+                    self._on_video_done()
         except Exception:
             pass
 
+    def _on_video_done(self) -> None:
+        if self._video_finished:
+            return
+        self._video_finished = True
+        if self._video_widget is not None:
+            self._video_widget.hide()
+        self._schedule_finish()
+
     def _try_external_player(self) -> bool:
-        # ffplay/mpv fullscreen fights the kiosk WM and can leave orphan processes.
-        # Opt in with NINA_UI_SPLASH_EXTERNAL=1 only on dev machines.
         if os.environ.get("NINA_UI_SPLASH_EXTERNAL", "").strip().lower() not in (
             "1",
             "true",
@@ -185,13 +243,20 @@ class SplashScreen(QWidget):
 
     def _poll_external(self) -> None:
         if self._external_proc is None:
-            self._finish()
+            self._on_video_done()
             return
-        rc = self._external_proc.poll()
-        if rc is not None:
-            self._finish()
+        if self._external_proc.poll() is not None:
+            self._on_video_done()
 
-    def _finish(self) -> None:
+    def _schedule_finish(self) -> None:
+        if self._finish_scheduled:
+            return
+        self._finish_scheduled = True
+        elapsed_ms = (time.monotonic() - self._t0) * 1000.0
+        delay_ms = max(0.0, float(self._min_ms) - elapsed_ms) + float(self._post_ms)
+        QTimer.singleShot(int(delay_ms), self._emit_finished)
+
+    def _emit_finished(self) -> None:
         if self._done:
             return
         self._done = True
@@ -211,32 +276,35 @@ class SplashScreen(QWidget):
 
     def closeEvent(self, event) -> None:
         if not self._done:
-            self._finish()
+            self._emit_finished()
         super().closeEvent(event)
 
 
-def show_splash_then(
-    *,
-    on_finished: Callable[[], None],
-    parent=None,
-    app=None,
-) -> bool:
-    """Show splash if enabled and file exists; return True if splash was shown."""
+def run_startup_splash(app: QApplication) -> None:
+    """Block until splash completes (logo + optional video). Gateway starts after."""
     if os.environ.get("NINA_UI_SPLASH", "1").strip().lower() in (
         "0",
         "false",
         "no",
         "off",
     ):
-        return False
-    path = splash_video_path()
-    if path is None:
-        log.info("splash: nina_splash.mp4 not found — skipping")
-        return False
-    splash = SplashScreen(path, parent=parent)
-    splash.finished.connect(on_finished)
+        return
+
+    splash = SplashScreen(
+        splash_video_path(),
+        min_ms=_splash_min_ms(),
+        post_ms=_splash_post_ms(),
+    )
+    loop = QEventLoop()
+    splash.finished.connect(loop.quit)
     splash.finished.connect(splash.deleteLater)
-    if app is not None:
-        app._splash_screen = splash  # type: ignore[attr-defined]
+    app._splash_screen = splash  # type: ignore[attr-defined]
     splash.showFullScreen()
-    return True
+    app.processEvents()
+    loop.exec_()
+
+
+def show_splash_then(*, on_finished, parent=None, app=None) -> bool:
+    """Deprecated: use :func:`run_startup_splash` before creating ``MainWindow``."""
+    del on_finished, parent, app
+    return False

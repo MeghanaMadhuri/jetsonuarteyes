@@ -6,8 +6,6 @@ import atexit
 import logging
 import os
 import sys
-from typing import Optional
-
 from sirena_ui.resource_limits import log_startup_limits, raise_nofile_limit
 
 raise_nofile_limit()
@@ -19,7 +17,7 @@ from PyQt5.QtWidgets import QApplication
 from sirena_ui.main_window import MainWindow
 from sirena_ui.styles import STYLESHEET, asset_path
 from sirena_ui.android_gateway.server import start_tablet_gateway
-from sirena_ui.widgets.splash_video import show_splash_then
+from sirena_ui.widgets.splash_video import run_startup_splash
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.osk import OnScreenKeyboardManager
 
@@ -120,25 +118,18 @@ def main() -> int:
     # when main() returns.
     app._osk = OnScreenKeyboardManager(app)  # type: ignore[attr-defined]
 
+    # Splash before gateway / MainWindow so nmcli logs and bus threads do not
+    # cover the splash and QThreads are not started while splash is visible.
+    run_startup_splash(app)
+
     service = NinaService()
     start_tablet_gateway(service)
 
-    # Build MainWindow only after splash (if any). Creating it during the
-    # splash used to start QThreads (bus init, health scan) while the splash
-    # widget was still up and triggered "QThread: Destroyed while still running".
-    window: Optional[MainWindow] = None
-
-    def _show_main() -> None:
-        nonlocal window
-        if window is None:
-            window = MainWindow(service)
-            window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
-        window.show()
-        if _env_truthy("NINA_UI_FULLSCREEN"):
-            window.showFullScreen()
-
-    if not show_splash_then(on_finished=_show_main, app=app):
-        _show_main()
+    window = MainWindow(service)
+    window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
+    window.show()
+    if _env_truthy("NINA_UI_FULLSCREEN"):
+        window.showFullScreen()
 
     return app.exec_()
 

@@ -46,6 +46,7 @@ from nina.services.audio_player import (
     start_silence_keepalive,
 )
 from nina.sensors.ads1115 import get_battery_snapshot
+from sirena_ui.host_power import confirm_power_action, perform_host_power
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from sirena_ui.widgets.status_bar import StatusBar
@@ -139,6 +140,8 @@ class MainWindow(QMainWindow):
 
         self._header = HeaderBar()
         self._header.volume_changed.connect(self._on_header_volume_changed)
+        self._header.poweroff_requested.connect(self._on_header_poweroff)
+        self._header.reboot_requested.connect(self._on_header_reboot)
         outer.addWidget(self._header)
 
         body = QHBoxLayout()
@@ -195,6 +198,28 @@ class MainWindow(QMainWindow):
         value = set_app_audio_volume_pct(value)
         QSettings("Sirena", "Nina").setValue("audio/gain_pct", value)
         set_system_output_volume_pct(value)
+
+    def _on_header_poweroff(self) -> None:
+        if not confirm_power_action(
+            self,
+            "Shutdown Jetson",
+            "Bring the Jetson down NOW?\n\n"
+            "The screen will go dark in a few seconds. Press the physical "
+            "power button on the chassis to turn Nina back on.",
+        ):
+            return
+        perform_host_power(self, self._service, "poweroff")
+
+    def _on_header_reboot(self) -> None:
+        if not confirm_power_action(
+            self,
+            "Reboot Jetson",
+            "Reboot the Jetson NOW?\n\n"
+            "The current session will end. Nina returns at the kiosk "
+            "screen in about 45 seconds.",
+        ):
+            return
+        perform_host_power(self, self._service, "reboot")
 
     def _refresh_header_volume(self) -> None:
         sys_pct = get_system_output_volume_pct()

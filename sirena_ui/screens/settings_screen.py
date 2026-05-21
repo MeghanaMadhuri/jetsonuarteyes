@@ -460,6 +460,7 @@ class SettingsScreen(QWidget):
     def _net_scan_wifi(self) -> None:
         if self._net_scan_worker is not None and self._net_scan_worker.isRunning():
             return
+        self._net_nearby_list.clear()
         self._net_scan_btn.setEnabled(False)
         worker = _WifiScanWorker(self, rescan=True)
         self._net_scan_worker = worker
@@ -1108,56 +1109,10 @@ class SettingsScreen(QWidget):
 
     def _do_power_action(self, action: str) -> None:
         """Shut down motors, then queue host poweroff/reboot (HTTP + in-process)."""
-        try:
-            self._service.shutdown()
-        except Exception:
-            pass
-        from nina.jetson_net import host_control
+        from sirena_ui.host_power import perform_host_power
 
-        result: Dict[str, Any] = {}
-        path = (
-            "/v1/system/poweroff"
-            if action == "poweroff"
-            else "/v1/system/reboot"
-        )
-        try:
-            result = self._link_request(path, method="POST", body={}, timeout=6.0)
-        except RuntimeError:
-            if action == "poweroff":
-                result = host_control.queue_poweroff()
-            else:
-                result = host_control.queue_reboot()
-
-        ok = bool(result.get("ok", False))
-        msg = str(result.get("message") or "").strip()
-        hint = str(result.get("install_hint") or "").strip()
-        if not msg:
-            msg = f"{action} requested." if ok else f"{action} failed."
-
-        if not ok:
-            body = msg
-            if hint:
-                body = f"{body}\n\n{hint}"
-            warn = QMessageBox(self)
-            warn.setIcon(QMessageBox.Warning)
-            warn.setWindowTitle("Power")
-            warn.setText(body)
-            warn.setStandardButtons(QMessageBox.Ok)
-            warn.setWindowFlags(warn.windowFlags() | Qt.WindowStaysOnTopHint)
-            warn.exec_()
-            self._refresh_power_privilege()
-            return
-
-        footer = msg
-        if self._power_status is not None:
-            self._power_status.setText(footer)
-        info = QMessageBox(self)
-        info.setIcon(QMessageBox.Information)
-        info.setWindowTitle("Power")
-        info.setText(footer)
-        info.setStandardButtons(QMessageBox.Ok)
-        info.setWindowFlags(info.windowFlags() | Qt.WindowStaysOnTopHint)
-        info.exec_()
+        perform_host_power(self, self._service, action)
+        self._refresh_power_privilege()
 
     # ---------- placeholder panes ----------
 

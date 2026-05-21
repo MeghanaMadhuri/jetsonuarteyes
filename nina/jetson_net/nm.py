@@ -573,6 +573,8 @@ class NMBackend:
                 timeout=20,
                 check=False,
             )
+            # nmcli can return cached BSSIDs until the scan completes.
+            time.sleep(2.5)
         raw = subprocess.run(
             [
                 "nmcli",
@@ -609,6 +611,11 @@ class NMBackend:
                 signal = 0
             security = parts[2].strip()
             in_use = (parts[3] or "").strip() == "*"
+            # Drop stale cache rows (hotspot off but SSID still listed at 0%).
+            if not in_use and signal <= 0:
+                continue
+            if not in_use and signal < 5:
+                continue
             out.append(
                 ScannedWifi(
                     ssid=ssid,

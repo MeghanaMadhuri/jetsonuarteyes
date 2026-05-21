@@ -20,6 +20,8 @@ from PyQt5.QtWidgets import (
 
 class HeaderBar(QFrame):
     volume_changed = pyqtSignal(int)
+    poweroff_requested = pyqtSignal()
+    reboot_requested = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -56,10 +58,13 @@ class HeaderBar(QFrame):
         )
         h.addWidget(self._battery)
 
-        self._volume_btn = QPushButton("\u266A")
+        self._volume_btn = QPushButton("\U0001F50A")
         self._volume_btn.setObjectName("headerTray")
         self._volume_btn.setCursor(Qt.PointingHandCursor)
         self._volume_btn.setFixedSize(36, 36)
+        self._volume_btn.setStyleSheet(
+            "color: white; font-size: 17px; background: transparent; border: none;"
+        )
         self._volume_btn.setToolTip("Speaker volume")
         self._volume_btn.clicked.connect(self._open_volume_menu)
         h.addWidget(self._volume_btn)
@@ -75,6 +80,8 @@ class HeaderBar(QFrame):
         self._menu.setObjectName("headerTray")
         self._menu.setCursor(Qt.PointingHandCursor)
         self._menu.setFixedSize(36, 36)
+        self._menu.setToolTip("System menu")
+        self._menu.clicked.connect(self._open_system_menu)
         h.addWidget(self._menu)
 
         self._volume_menu = QMenu(self)
@@ -208,6 +215,32 @@ class HeaderBar(QFrame):
             return
         pos = self._volume_btn.mapToGlobal(self._volume_btn.rect().bottomLeft())
         self._volume_menu.popup(pos)
+
+    def _open_system_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            """
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #e3e3e6;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 8px 28px;
+                color: #1c1c1e;
+            }
+            QMenu::item:selected {
+                background-color: #fbe7eb;
+            }
+            """
+        )
+        off_act = menu.addAction("Power off")
+        reboot_act = menu.addAction("Reboot")
+        off_act.triggered.connect(self.poweroff_requested.emit)
+        reboot_act.triggered.connect(self.reboot_requested.emit)
+        pos = self._menu.mapToGlobal(self._menu.rect().bottomRight())
+        menu.popup(pos)
 
     def _refresh_clock(self) -> None:
         from datetime import datetime
