@@ -1635,6 +1635,43 @@ def _held_dpad_pivot_blend_pct() -> int:
     return _HELD_DPAD_PIVOT_BLEND_PCT
 
 
+def _straight_corr_max_drift_correct_deg() -> float:
+    """Skip standstill micro-pivots during saved sequences when |drift| exceeds this.
+
+    After a bad turn the cumulative heading error can be tens or hundreds of
+    degrees; iterative 5° correction pivots every 0.5 s leg will overload the
+    BLDC motors. During :meth:`HoverboardAxisDrive.begin_saved_sequence` the
+    straight loop logs a warning and skips correction until the next leg.
+
+    Default **45°**. Override ``NINA_HOVER_STRAIGHT_CORR_MAX_DRIFT_CORRECT_DEG``.
+    """
+    try:
+        return max(
+            5.0,
+            min(
+                180.0,
+                float(
+                    os.environ.get(
+                        "NINA_HOVER_STRAIGHT_CORR_MAX_DRIFT_CORRECT_DEG", "45.0"
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return 45.0
+
+
+def _sequence_turn_max_steps_for_deg(target_deg: float) -> int:
+    """Cap closed-loop turn steps during saved movement sequences.
+
+    Uses the same per-step yaw budget as straight drift correction
+    (``NINA_HOVER_STRAIGHT_CORR_STEP_DEG``) so a 180° U-turn needs at most
+    ~36 micro-steps, not the 160 steps a raw 360°/90° scaling would allow.
+    """
+    per_step = _straight_corr_step_deg()
+    return max(3, min(80, int(round(float(target_deg) / per_step)) + 2))
+
+
 def _straight_corr_step_deg() -> float:
     """Yaw budget per standstill drift-correction step (straight FWD/BACK only).
 
@@ -1858,6 +1895,7 @@ class HoverboardAxisDrive:
         # Held D-pad L/R and single-click Turn buttons share one IMU session.
         self._hold_turn_session_dir: Optional[str] = None
         self._hold_turn_yaw_current: float = 0.0
+        self._saved_sequence_depth: int = 0
 
         # IMU yaw-correction hooks (wired from NinaService when the MPU-9250
         # monitor is enabled). All three may be None on dev hosts without IMU.
@@ -2669,6 +2707,45 @@ class HoverboardAxisDrive:
         """True while a forward or backward straight pulse series thread is running."""
         return self.is_straight_pulse_series_active()
 
+    def begin_saved_sequence(self) -> None:
+        """Mark an automated saved-movement run (gentler turns, capped correction)."""
+        self._saved_sequence_depth += 1
+        log.info(
+            "hover saved sequence: begin (depth=%d)",
+            self._saved_sequence_depth,
+        )
+
+    def end_saved_sequence(self) -> None:
+        """Leave saved-movement mode after :meth:`execute_saved_movement` finishes."""
+        self._saved_sequence_depth = max(0, self._saved_sequence_depth - 1)
+        log.info(
+            "hover saved sequence: end (depth=%d)",
+            self._saved_sequence_depth,
+        )
+
+    def post_turn_settle_for_sequence(self) -> None:
+        """Brake and settle after a sequence turn before the next straight leg."""
+        brake_goals = {
+            self._left_id: self._brake_left,
+            self._right_id: self._brake_right,
+        }
+        try:
+            self._apply_goals(brake_goals)
+        except Exception:
+            log.debug("sequence post-turn: brake apply failed", exc_info=True)
+        halt = threading.Event()
+        status, elapsed, _ = self._active_settle_until_still(
+            halt, context="saved sequence post-turn"
+        )
+        extra = _post_turn_settle_sec()
+        if status == "no_rate" and extra > 0.0:
+            time.sleep(extra)
+        elif status == "settled":
+            log.debug("sequence post-turn: settled in %.3fs", elapsed)
+
+    def _in_saved_sequence(self) -> bool:
+        return self._saved_sequence_depth > 0
+
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
         """Drift-corrected forward motion (Straight bench + D-pad forward).
 
@@ -3143,10 +3220,22 @@ class HoverboardAxisDrive:
                 # rotation), so the same correction logic works for
                 # both forward and backward.
                 if abs(drift) > deadband:
-                    self._correct_drift_at_standstill(
-                        drift, brake_goals, halt,
-                        direction_label=direction_label,
-                    )
+                    max_correct = _straight_corr_max_drift_correct_deg()
+                    if self._in_saved_sequence() and abs(drift) > max_correct:
+                        log.warning(
+                            "hover %s straight: cycle %d — |drift| %.2f deg "
+                            "> sequence correction cap %.2f deg; skipping "
+                            "micro-pivot (fix turn step or reduce leg bias)",
+                            direction_label,
+                            cycle,
+                            drift,
+                            max_correct,
+                        )
+                    else:
+                        self._correct_drift_at_standstill(
+                            drift, brake_goals, halt,
+                            direction_label=direction_label,
+                        )
                 else:
                     log.info(
                         "hover %s straight: cycle %d — drift %+.2f deg "
@@ -4337,9 +4426,16 @@ class HoverboardAxisDrive:
                 self._pulse_turn_timed_fallback(direction)
                 return False
 
+            sequence_mode = self._in_saved_sequence()
             base_steps = _imu_turn_max_steps()
             max_steps = max(5, min(200, int(round(base_steps * target_deg / 90.0))))
-            step_blend = _imu_turn_step_blend_pct()
+            if sequence_mode:
+                max_steps = min(max_steps, _sequence_turn_max_steps_for_deg(target_deg))
+            step_blend = (
+                _held_dpad_pivot_blend_pct()
+                if sequence_mode
+                else _imu_turn_step_blend_pct()
+            )
             step_rate = _imu_turn_step_rate_deg_per_sec()
             step_dur_cap = _turn_step_dur_cap_sec()
             step_min = _turn_step_min_sec()
@@ -4367,7 +4463,7 @@ class HoverboardAxisDrive:
                 "hover IMU turn (%s): begin target=%+.1f deg (intent frame, "
                 "invert=%s, swap_pivot=%s), step_blend=%d%%, step_rate=%.1fdps, "
                 "step_dur_cap=%.2fs, step_min=%.2fs, step_settle=%.2fs, "
-                "deadband=%.2f deg, max_steps=%d, progress_check=%d/%.2f deg",
+                "deadband=%.2f deg, max_steps=%d, sequence=%s, progress_check=%d/%.2f deg",
                 direction,
                 target_intent,
                 invert,
@@ -4379,6 +4475,7 @@ class HoverboardAxisDrive:
                 step_settle,
                 deadband,
                 max_steps,
+                sequence_mode,
                 progress_check,
                 progress_min,
             )
@@ -4418,80 +4515,102 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-                # Decide chassis-frame pivot direction from the sign of
-                # remaining yaw budget. ``swap_pivot`` then flips the
-                # label-to-goals mapping for chassis where the
-                # conventional "L=BACK,R=FWD → rotate RIGHT" doesn't
-                # hold (field-observed default on the reference
-                # chassis is the swapped mapping; see
-                # :func:`_imu_turn_swap_pivot_dir`).
-                pivot_right_decision = remaining > 0.0
-                apply_right_goals = (
-                    not pivot_right_decision if swap_pivot else pivot_right_decision
-                )
-                if apply_right_goals:
-                    step_goals = self._goals_for_wheels(
-                        left_dir=self.DIR_BACKWARD,
-                        left_speed=step_blend,
-                        right_dir=self.DIR_FORWARD,
-                        right_speed=step_blend,
+                if sequence_mode:
+                    # Saved sequences: same D-pad hold-turn goals and step
+                    # duration as straight drift correction (30% blend, ~5°
+                    # per micro-step) — not the 100% blend Turn-button path.
+                    step_budget = min(
+                        abs(remaining), _straight_corr_step_deg(),
                     )
+                    sample = self._imu_turn_run_one_step(
+                        direction,
+                        step_budget,
+                        step_index=step + 1,
+                    )
+                    this_step_dur = _hold_turn_step_duration_sec(step_budget)
                 else:
-                    step_goals = self._goals_for_wheels(
-                        left_dir=self.DIR_FORWARD,
-                        left_speed=step_blend,
-                        right_dir=self.DIR_BACKWARD,
-                        right_speed=step_blend,
+                    # Decide chassis-frame pivot direction from the sign of
+                    # remaining yaw budget. ``swap_pivot`` then flips the
+                    # label-to-goals mapping for chassis where the
+                    # conventional "L=BACK,R=FWD → rotate RIGHT" doesn't
+                    # hold (field-observed default on the reference
+                    # chassis is the swapped mapping; see
+                    # :func:`_imu_turn_swap_pivot_dir`).
+                    pivot_right_decision = remaining > 0.0
+                    apply_right_goals = (
+                        not pivot_right_decision
+                        if swap_pivot
+                        else pivot_right_decision
+                    )
+                    if apply_right_goals:
+                        step_goals = self._goals_for_wheels(
+                            left_dir=self.DIR_BACKWARD,
+                            left_speed=step_blend,
+                            right_dir=self.DIR_FORWARD,
+                            right_speed=step_blend,
+                        )
+                    else:
+                        step_goals = self._goals_for_wheels(
+                            left_dir=self.DIR_FORWARD,
+                            left_speed=step_blend,
+                            right_dir=self.DIR_BACKWARD,
+                            right_speed=step_blend,
+                        )
+
+                    # Proportional duration: aim to land at **zero**
+                    # remaining (same change we made to standstill drift
+                    # correction). The old "land at ½ deadband short of
+                    # target" formula weakens the per-step kick for the
+                    # last few degrees of the budget; aiming for zero
+                    # gives the step a full deadband-worth more torque
+                    # budget and the next sample exits via the deadband
+                    # if it overshoots.
+                    rotation_target = max(0.5, abs(remaining))
+                    this_step_dur = max(
+                        step_min,
+                        min(step_dur_cap, rotation_target / step_rate),
                     )
 
-                # Proportional duration: aim to land at **zero**
-                # remaining (same change we made to standstill drift
-                # correction). The old "land at ½ deadband short of
-                # target" formula weakens the per-step kick for the
-                # last few degrees of the budget; aiming for zero
-                # gives the step a full deadband-worth more torque
-                # budget and the next sample exits via the deadband
-                # if it overshoots.
-                rotation_target = max(0.5, abs(remaining))
-                this_step_dur = max(
-                    step_min,
-                    min(step_dur_cap, rotation_target / step_rate),
-                )
+                    try:
+                        self._apply_goals(step_goals)
+                    except Exception:
+                        log.debug(
+                            "hover IMU turn (%s): step apply failed",
+                            direction,
+                            exc_info=True,
+                        )
+                    time.sleep(this_step_dur)
 
-                try:
-                    self._apply_goals(step_goals)
-                except Exception:
-                    log.debug(
-                        "hover IMU turn (%s): step apply failed", direction,
-                        exc_info=True,
+                    # Brake then wait for the chassis to actually stop
+                    # before sampling. Active settle on the yaw rate
+                    # avoids the "brief pivot can't punch through the
+                    # ongoing rotation" failure mode that bit the straight
+                    # drift correction. Falls back to the legacy fixed
+                    # step_settle timer when no yaw_rate_fn is wired.
+                    try:
+                        self._apply_goals(brake_goals)
+                    except Exception:
+                        pass
+                    settle_status, settle_elapsed, _ = (
+                        self._active_settle_until_still(
+                            turn_halt,
+                            context=f"turn ({direction}) step {step + 1}",
+                        )
                     )
-                time.sleep(this_step_dur)
+                    if settle_status == "no_rate":
+                        if step_settle > 0.0:
+                            time.sleep(step_settle)
+                    elif settle_status == "settled":
+                        log.debug(
+                            "hover IMU turn (%s): step %d settled in %.3fs",
+                            direction,
+                            step + 1,
+                            settle_elapsed,
+                        )
+                    # "timeout" continues to the sample anyway — the loop's
+                    # next iteration will re-evaluate progress / max_steps.
 
-                # Brake then wait for the chassis to actually stop
-                # before sampling. Active settle on the yaw rate
-                # avoids the "brief pivot can't punch through the
-                # ongoing rotation" failure mode that bit the straight
-                # drift correction. Falls back to the legacy fixed
-                # step_settle timer when no yaw_rate_fn is wired.
-                try:
-                    self._apply_goals(brake_goals)
-                except Exception:
-                    pass
-                settle_status, settle_elapsed, _ = self._active_settle_until_still(
-                    turn_halt, context=f"turn ({direction}) step {step + 1}"
-                )
-                if settle_status == "no_rate":
-                    if step_settle > 0.0:
-                        time.sleep(step_settle)
-                elif settle_status == "settled":
-                    log.debug(
-                        "hover IMU turn (%s): step %d settled in %.3fs",
-                        direction, step + 1, settle_elapsed,
-                    )
-                # "timeout" continues to the sample anyway — the loop's
-                # next iteration will re-evaluate progress / max_steps.
-
-                sample = yaw_intent()
+                    sample = yaw_intent()
                 if sample is None:
                     # Transient None — don't update ``current``; the
                     # next iteration will re-sample. We still count the

@@ -45,7 +45,7 @@ class MovementStep:
             return f"Turn right {self.degrees:.0f}°"
         if k == STEP_UTURN:
             d = "left" if self.uturn_direction == "left" else "right"
-            return f"U-turn 360° ({d})"
+            return f"U-turn 180° ({d})"
         return k
 
 

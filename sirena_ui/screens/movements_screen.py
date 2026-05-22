@@ -212,7 +212,7 @@ class MovementsScreen(QWidget):
         v.addWidget(CardTitle("Create movement"))
         intro = MutedLabel(
             "Build a sequence: forward time in seconds, turn angles (IMU closed-loop), "
-            "or a 360° U-turn. Steps run in order on the Drive worker thread."
+            "or a 180° U-turn. Steps run in order on the Drive worker thread."
         )
         intro.setWordWrap(True)
         v.addWidget(intro)
@@ -322,7 +322,7 @@ class MovementsScreen(QWidget):
         direction, ok = QInputDialog.getItem(
             self,
             "U-turn direction",
-            "Rotate 360° which way?",
+            "Rotate 180° (U-turn) which way?",
             ["Right", "Left"],
             0,
             False,
@@ -331,7 +331,7 @@ class MovementsScreen(QWidget):
             return
         uturn_dir = "left" if direction == "Left" else "right"
         self._append_step(
-            MovementStep(kind=STEP_UTURN, degrees=360.0, uturn_direction=uturn_dir)
+            MovementStep(kind=STEP_UTURN, degrees=180.0, uturn_direction=uturn_dir)
         )
 
     def _remove_step(self) -> None:

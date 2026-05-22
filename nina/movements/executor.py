@@ -38,36 +38,34 @@ def execute_saved_movement(nav: Any, movement: SavedMovement) -> Optional[str]:
         except Exception as exc:
             log.warning("release_brake before sequence: %s", exc)
 
-    for index, step in enumerate(steps, start=1):
-        kind = step.kind
-        log.info(
-            "saved movement %r step %d/%d: %s",
-            movement.name,
-            index,
-            len(steps),
-            step.summary(),
-        )
-        try:
-            err = _run_step(nav, step)
-        except Exception as exc:
-            log.exception("saved movement step failed: %s", step.summary())
-            try:
-                nav.stop()
-            except Exception:
-                pass
-            return f"Step {index} failed: {exc}"
-        if err:
-            try:
-                nav.stop()
-            except Exception:
-                pass
-            return f"Step {index}: {err}"
-
+    begin_seq = getattr(nav, "begin_saved_sequence", None)
+    end_seq = getattr(nav, "end_saved_sequence", None)
+    if callable(begin_seq):
+        begin_seq()
     try:
-        nav.stop()
-    except Exception:
-        pass
-    return None
+        for index, step in enumerate(steps, start=1):
+            log.info(
+                "saved movement %r step %d/%d: %s",
+                movement.name,
+                index,
+                len(steps),
+                step.summary(),
+            )
+            try:
+                err = _run_step(nav, step)
+            except Exception as exc:
+                log.exception("saved movement step failed: %s", step.summary())
+                return f"Step {index} failed: {exc}"
+            if err:
+                return f"Step {index}: {err}"
+        return None
+    finally:
+        if callable(end_seq):
+            end_seq()
+        try:
+            nav.stop()
+        except Exception:
+            pass
 
 
 def _run_step(nav: Any, step: Any) -> Optional[str]:
@@ -82,7 +80,8 @@ def _run_step(nav: Any, step: Any) -> Optional[str]:
         return _run_turn(nav, "right", float(step.degrees))
     if kind == STEP_UTURN:
         direction = "left" if step.uturn_direction == "left" else "right"
-        return _run_turn(nav, direction, 360.0)
+        # True U-turn = 180° heading reversal (not a full 360° spin).
+        return _run_turn(nav, direction, 180.0)
     return f"Unknown step kind {kind!r}"
 
 
@@ -128,4 +127,7 @@ def _run_turn(nav: Any, direction: str, degrees: float) -> Optional[str]:
         ok = bool(turn_fn(direction, deg))
     if not ok:
         return f"Turn {direction} {deg:.0f}° did not finish within IMU deadband"
+    settle = getattr(nav, "post_turn_settle_for_sequence", None)
+    if callable(settle):
+        settle()
     return None
