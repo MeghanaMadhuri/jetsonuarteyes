@@ -1089,10 +1089,10 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         tld: String,
         audioOffsetSec: Double,
         slow: Boolean = false,
-    ): String? =
-        try {
-            actionAudioMutateError()?.let { return it }
-            if (text.isBlank()) return "Enter text to speak before generating."
+    ): String? {
+        actionAudioMutateError()?.let { return it }
+        if (text.isBlank()) return "Enter text to speak before generating."
+        return try {
             vmD("postActionAudioGenerate action=$action lang=$lang textLen=${text.length}")
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
@@ -1101,6 +1101,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             linkApiErrorMessage(e)
         }
+    }
 
     suspend fun fetchVisionStatus(): JSONObject? =
         try {
