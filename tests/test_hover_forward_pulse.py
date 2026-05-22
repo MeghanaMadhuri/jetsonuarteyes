@@ -48,6 +48,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _straight_corr_residual_deg,
     _straight_corr_step_dur_cap_sec,
     _straight_corr_step_min_sec,
+    _straight_corr_step_deg,
     _straight_corr_step_rate_dps,
     _straight_corr_swap_pivot_dir,
     _straight_leg_sec,
@@ -242,6 +243,7 @@ _STRAIGHT_ENV_KEYS = (
     "NINA_HOVER_STRAIGHT_CORR_BACK_STEP_MIN_SEC",
     "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS",
     "NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG",
+    "NINA_HOVER_STRAIGHT_CORR_STEP_DEG",
     "NINA_HOVER_STRAIGHT_CORR_RESIDUAL_DEG",
     "NINA_HOVER_STRAIGHT_SETTLE_RATE_DPS",
     "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC",
@@ -278,6 +280,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_corr_back_step_min_sec() == 0.015
         assert _straight_corr_step_rate_dps() == 84.0
         assert _straight_corr_deadband_deg() == 3.0
+        assert _straight_corr_step_deg() == 5.0
         assert _straight_corr_residual_deg() == 1.0
         assert _straight_settle_rate_dps() == 3.0
         assert _straight_settle_stable_sec() == 0.10
@@ -485,11 +488,15 @@ def test_drift_correct_loop_backward_uses_backward_leg_getter_only(
     )
 
 
-def test_drift_correction_uses_hold_turn_step_duration(
+def test_drift_correction_uses_smaller_step_deg_than_hold_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Straight FWD/BACK correction must hold the pivot as long as D-pad L/R."""
-    from nina.controllers.hoverboard_axis_drive import _hold_turn_step_duration_sec
+    """Straight FWD/BACK correction uses STRAIGHT_CORR_STEP_DEG, not D-pad 15°."""
+    from nina.controllers.hoverboard_axis_drive import (
+        _drive_turn_micro_step_deg,
+        _hold_turn_step_duration_sec,
+        _straight_corr_step_deg,
+    )
 
     axis = _axis_pulse_fast()
     hb, _dxl = _make_hb(axis)
@@ -510,6 +517,7 @@ def test_drift_correction_uses_hold_turn_step_duration(
         "NINA_HOVER_IMU_CORR_MAX_STEPS": "1",
         "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.01",
         "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.001",
+        "NINA_HOVER_STRAIGHT_CORR_STEP_DEG": "5",
     }
     with patch.dict(os.environ, env, clear=False):
         hb._correct_drift_at_standstill(
@@ -519,9 +527,11 @@ def test_drift_correction_uses_hold_turn_step_duration(
             direction_label="backward",
         )
 
-    assert len(calls) >= 1, "correction must resolve duration via hold-turn helper"
-    assert _hold_turn_step_duration_sec() > 0.20, (
-        "hold-turn duration should be >> legacy 0.030s straight-correction kicks"
+    assert len(calls) >= 1
+    assert calls[0] == 5.0
+    assert _straight_corr_step_deg() < _drive_turn_micro_step_deg()
+    assert _hold_turn_step_duration_sec(_straight_corr_step_deg()) < (
+        _hold_turn_step_duration_sec(_drive_turn_micro_step_deg())
     )
 
 

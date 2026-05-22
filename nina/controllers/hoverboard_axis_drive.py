@@ -1635,13 +1635,32 @@ def _held_dpad_pivot_blend_pct() -> int:
     return _HELD_DPAD_PIVOT_BLEND_PCT
 
 
-def _hold_turn_step_duration_sec(rotation_deg: Optional[float] = None) -> float:
-    """Lean-hold duration for one held L/R micro-step (and straight drift correction).
+def _straight_corr_step_deg() -> float:
+    """Yaw budget per standstill drift-correction step (straight FWD/BACK only).
 
-    Uses the same cap, floor, and rate as :meth:`HoverboardAxisDrive._imu_turn_run_one_step`
-    with ``NINA_DRIVE_TURN_PIVOT_DEG`` as the default rotation budget. Straight FWD/BACK
-    correction reuses this so the servos hold the pivot long enough to rotate the chassis,
-    not the legacy 0.030 s straight-correction kicks that shared tick goals but barely moved.
+    Smaller than :func:`_drive_turn_micro_step_deg` (held D-pad L/R and Turn click)
+    so each correction bite is gentler and less likely to oscillate past zero.
+    Lean goals still match held L/R at 30% blend; only hold duration scales with
+    this angle via :func:`_hold_turn_step_duration_sec`.
+
+    Default **5.0°** (vs 15° operator turn micro-step). Override
+    ``NINA_HOVER_STRAIGHT_CORR_STEP_DEG``.
+    """
+    raw = (os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DEG") or "").strip()
+    if raw:
+        try:
+            return max(1.0, min(15.0, float(raw)))
+        except ValueError:
+            pass
+    return 5.0
+
+
+def _hold_turn_step_duration_sec(rotation_deg: Optional[float] = None) -> float:
+    """Lean-hold duration from a yaw budget, turn step rate, cap, and floor.
+
+    Held L/R and Turn micro-steps pass ``NINA_DRIVE_TURN_PIVOT_DEG`` (default 15°).
+    Straight FWD/BACK drift correction passes :func:`_straight_corr_step_deg`
+    (default 5°) so each correction rotates less per step than operator turns.
     """
     if rotation_deg is None:
         rotation_deg = _drive_turn_micro_step_deg()
@@ -3207,7 +3226,8 @@ class HoverboardAxisDrive:
             residual = max(0.1, deadband * 0.5)
         invert = _imu_corr_invert_sign()
         step_blend = _held_dpad_pivot_blend_pct()  # logged; goals via hold-turn helper
-        hold_step_dur = _hold_turn_step_duration_sec()
+        corr_step_deg = _straight_corr_step_deg()
+        hold_step_dur = _hold_turn_step_duration_sec(corr_step_deg)
         step_settle = _imu_corr_step_settle_sec()
         max_steps = _imu_corr_max_steps()
         yaw_fn = self._imu_yaw_drift_fn
@@ -3216,7 +3236,7 @@ class HoverboardAxisDrive:
         log.info(
             "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
             "residual=%.2f deg invert=%s turn_swap=%s hold_turn_blend=%d%% "
-            "hold_step_dur=%.3fs (same as D-pad L/R) step_settle=%.2fs max_steps=%d",
+            "corr_step_deg=%.1f hold_step_dur=%.3fs step_settle=%.2fs max_steps=%d",
             direction_label,
             current,
             deadband,
@@ -3224,6 +3244,7 @@ class HoverboardAxisDrive:
             invert,
             _imu_turn_swap_pivot_dir(),
             step_blend,
+            corr_step_deg,
             hold_step_dur,
             step_settle,
             max_steps,
