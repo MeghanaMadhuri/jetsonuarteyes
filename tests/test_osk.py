@@ -282,7 +282,11 @@ def test_focus_in_lineedit_spawns_osk(
     _send_focus_in(edit)
     assert osk.is_running is True
     assert len(fake_subprocess.instances) == 1
-    assert fake_subprocess.instances[0].argv == ("onboard",)
+    assert fake_subprocess.instances[0].argv == (
+        "onboard",
+        "--not-show-in-launcher",
+        "--layout=Compact",
+    )
     edit.deleteLater()
 
 
@@ -546,30 +550,25 @@ def test_stderr_is_not_redirected_to_devnull(
     assert inst.kwargs.get("stderr", None) is not _subprocess.DEVNULL
 
 
-def test_spawn_immediate_death_disables_manager(
+def test_spawn_immediate_death_disables_after_three_failures(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
-    """If onboard dies within the first 500 ms (typical when DISPLAY
-    isn't set on the systemd user service, or another OSK is grabbing
-    the input device) the manager must disable itself rather than
-    spawn-storming on every subsequent FocusIn. We simulate that by
-    marking the just-spawned process as dead and invoking the health
-    check directly (the QTimer fires it asynchronously in production)."""
+    """Three immediate deaths disable the manager; one failure still retries."""
     osk = make_osk(mode="auto")
 
     edit = QLineEdit()
-    _send_focus_in(edit)
-    assert len(fake_subprocess.instances) == 1
-    fake_subprocess.instances[0].die(returncode=1)  # onboard exited 1
-
-    osk._check_spawn_health()  # what QTimer.singleShot(500, ...) calls
+    for attempt in range(3):
+        _send_focus_in(edit)
+        assert len(fake_subprocess.instances) == attempt + 1
+        fake_subprocess.instances[-1].die(returncode=1)
+        osk._check_spawn_health()
+        if attempt < 2:
+            assert osk.enabled is True
     assert osk.enabled is False
 
-    # Subsequent FocusIns must NOT trigger another spawn now that the
-    # manager has disabled itself.
     edit2 = QLineEdit()
     _send_focus_in(edit2)
-    assert len(fake_subprocess.instances) == 1  # still only one
+    assert len(fake_subprocess.instances) == 3
     edit.deleteLater()
     edit2.deleteLater()
 
@@ -729,6 +728,8 @@ def test_dbus_owned_but_show_fails_still_spawns_onboard(
             return _FailShow()
         if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Hide" in argv:
             return _FailShow()
+        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Quit" in argv:
+            return _RunResult()
         return _RunResult()
 
     monkeypatch.setattr(osk_module.shutil, "which", lambda name: f"/usr/bin/{name}")

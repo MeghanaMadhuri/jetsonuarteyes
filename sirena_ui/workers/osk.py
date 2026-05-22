@@ -94,10 +94,20 @@ _OSK_TRIGGER_EVENTS: Tuple[int, ...] = (
 
 # Modal dialogs often open without FocusIn on the line editor; Show is
 # the reliable hook to focus the first field and raise the OSK.
-_OSK_DIALOG_PREPARE_DELAY_MS = 50
+_OSK_DIALOG_PREPARE_DELAY_MS = 120
 
-# One touchscreen tap often delivers MouseButtonPress and FocusIn back-to-back.
+# Debounce rapid duplicate events (mouse + FocusIn on the same tap).
 _SHOW_DEBOUNCE_SEC = 0.35
+
+# If the keyboard still is not up shortly after activation, retry once.
+_SHOW_RETRY_DELAY_MS = 450
+
+# Default onboard flags when NINA_UI_OSK_ARGS is unset (compact layout,
+# no launcher entry — sized for the 1024×600 kiosk panel).
+_DEFAULT_ONBOARD_ARGS: Tuple[str, ...] = (
+    "--not-show-in-launcher",
+    "--layout=Compact",
+)
 
 
 def _env_truthy(name: str) -> bool:
@@ -218,6 +228,8 @@ class OnScreenKeyboardManager(QObject):
         self._last_show_mono: float = -1e30
         self._last_activation_mono: float = -1e30
         self._last_activation_target_id: Optional[int] = None
+        self._spawn_failures = 0
+        self._show_retry_timer: Optional[QTimer] = None
 
         if not self._enabled:
             return
@@ -267,17 +279,51 @@ class OnScreenKeyboardManager(QObject):
 
         if self._is_onboard_binary():
             self._configure_onboard_window_mode()
-            if self._raise_onboard():
+            if self._raise_onboard() and (
+                self.is_running or self._onboard_dbus_name_owned()
+            ):
+                self._schedule_show_retry()
                 return
-            # Hidden docked onboard often owns D-Bus but ignores Show — retry.
+            # Hidden / stuck docked onboard often owns D-Bus but ignores Show.
             self._hide_onboard()
             if self._raise_onboard():
+                self._schedule_show_retry()
                 return
+            self._quit_onboard_dbus()
             if self.is_running:
                 self._kill_process()
         elif self.is_running:
             return
 
+        self._spawn()
+        self._schedule_show_retry()
+
+    def _schedule_show_retry(self) -> None:
+        """One delayed retry when D-Bus Show may have lied (keyboard invisible)."""
+        if not self._enabled or not self._is_onboard_binary():
+            return
+        timer = self._show_retry_timer
+        if timer is not None and timer.isActive():
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._retry_show_after_activation)
+        self._show_retry_timer = timer
+        timer.start(_SHOW_RETRY_DELAY_MS)
+
+    def _retry_show_after_activation(self) -> None:
+        if not self._enabled:
+            return
+        if (time.monotonic() - self._last_activation_mono) > 1.5:
+            return
+        if self.is_running:
+            return
+        if self._raise_onboard():
+            return
+        self._hide_onboard()
+        if self._raise_onboard():
+            return
+        self._quit_onboard_dbus()
         self._spawn()
 
     def activate_text_input(self, widget: QWidget) -> None:
@@ -380,7 +426,9 @@ class OnScreenKeyboardManager(QObject):
                 int(event_type),
             )
             self._first_focus_logged = True
-        self.show()
+        # Touch / mouse taps bypass show debounce — FocusIn alone is debounced.
+        force_show = event_type != QEvent.FocusIn
+        self.show(force=force_show)
 
     # ------------------------------------------------------------------
     # Internals
@@ -506,6 +554,28 @@ class OnScreenKeyboardManager(QObject):
             if self._matches_text_input(child):
                 return child
         return None
+
+    def _quit_onboard_dbus(self) -> bool:
+        """Stop a stale session-owned onboard so a fresh spawn can take over."""
+        if not self._is_onboard_binary() or shutil.which("dbus-send") is None:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    "dbus-send",
+                    "--type=method_call",
+                    "--dest=org.onboard.Onboard",
+                    "/org/onboard/Onboard/Keyboard",
+                    "org.onboard.Onboard.Keyboard.Quit",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            return result.returncode == 0
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OSK: dbus Quit failed: %s", exc)
+            return False
 
     def _hide_onboard(self) -> bool:
         """Hide onboard via D-Bus so a subsequent Show can unstick a dock."""
@@ -660,6 +730,8 @@ class OnScreenKeyboardManager(QObject):
         self._configure_onboard_window_mode()
 
         argv = [self._binary, *self._extra_args]
+        if self._is_onboard_binary() and not self._extra_args:
+            argv.extend(_DEFAULT_ONBOARD_ARGS)
         try:
             self._process = subprocess.Popen(
                 argv,
@@ -719,14 +791,24 @@ class OnScreenKeyboardManager(QObject):
             return
         rc = self._process.poll()
         if rc is None:
-            return  # still alive - good
+            self._spawn_failures = 0
+            return
+        self._spawn_failures += 1
         log.warning(
-            "OSK %r exited %s within 500 ms of spawn - disabling further "
-            "auto-launches. Try running %r from a terminal to see why; "
-            "common causes are missing DISPLAY env on the systemd user "
-            "service, no D-Bus session bus, or a conflicting OSK already "
-            "holding the input grab.",
-            self._binary, rc, self._binary,
+            "OSK %r exited %s within 500 ms of spawn (failure %d/3). "
+            "Try running %r from a terminal to see why; common causes "
+            "are missing DISPLAY env on the systemd user service, no D-Bus "
+            "session bus, or a conflicting OSK already holding the input grab.",
+            self._binary,
+            rc,
+            self._spawn_failures,
+            self._binary,
         )
-        self._enabled = False
         self._process = None
+        if self._spawn_failures >= 3:
+            log.warning(
+                "OSK disabled after %d immediate-death spawns — "
+                "fix the environment and restart Nina.",
+                self._spawn_failures,
+            )
+            self._enabled = False
