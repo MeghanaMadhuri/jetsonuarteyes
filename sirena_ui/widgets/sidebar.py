@@ -42,12 +42,13 @@ class Sidebar(QFrame):
     def __init__(self, version_label: str = "v0.4", host_label: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("sidebar")
-        # 136–160 px — narrower sidebar frees horizontal space on 1024×600.
-        raw = (os.environ.get("NINA_UI_SIDEBAR_WIDTH") or "136").strip()
+        # 160 px (was 200) — nav rows fit at 14 px font; override via
+        # ``NINA_UI_SIDEBAR_WIDTH`` (e.g. 136) only if Drive needs more room.
+        raw = (os.environ.get("NINA_UI_SIDEBAR_WIDTH") or "160").strip()
         try:
             width = max(120, min(200, int(raw)))
         except ValueError:
-            width = 136
+            width = 160
         self.setFixedWidth(width)
         self._buttons: Dict[str, QPushButton] = {}
 

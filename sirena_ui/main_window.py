@@ -304,39 +304,32 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(250, self._apply_kiosk_geometry)
 
     def _kiosk_target_rect(self) -> Optional[QRect]:
-        """Visible kiosk rect: never wider than the physical screen.
+        """Kiosk window rect: fill the primary screen's visible area.
 
-        Misconfigured ``xrandr`` desktops sometimes report an
-        ``availableGeometry`` wider than the panel; that sizes the window
-        past the right edge and clips the Drive manual column. Clamp to
-        ``geometry()`` and optional ``NINA_UI_PANEL_WIDTH`` /
-        ``NINA_UI_PANEL_HEIGHT`` (default 1024×600).
+        Uses ``availableGeometry()`` so the 10.1" panel (typically 1024×600
+        when ``xrandr`` is configured correctly) is fully covered. Do **not**
+        shrink against ``geometry()`` — on some Jetson images ``geometry()``
+        is smaller than the touch panel and produced a letterboxed UI.
+
+        Optional ``NINA_UI_PANEL_WIDTH`` + ``NINA_UI_PANEL_HEIGHT`` force an
+        explicit size (both must be set); use only for bench/debug overrides.
+        Drive layout clipping is handled inside :class:`DriveScreen`, not by
+        shrinking the main window.
         """
         primary = QGuiApplication.primaryScreen()
         if primary is None:
             return None
         avail = primary.availableGeometry()
-        full = primary.geometry()
-        w = min(avail.width(), full.width())
-        h = min(avail.height(), full.height())
         raw_w = (os.environ.get("NINA_UI_PANEL_WIDTH") or "").strip()
         raw_h = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "").strip()
-        try:
-            if raw_w:
-                w = min(w, max(640, int(raw_w)))
-        except ValueError:
-            pass
-        try:
-            if raw_h:
-                h = min(h, max(360, int(raw_h)))
-        except ValueError:
-            pass
-        if not raw_w and not raw_h and w > 1024:
-            # Common 10.1" panel — cap when the WM reports an oversized desktop.
-            w = min(w, 1024)
-        if not raw_w and not raw_h and h > 600:
-            h = min(h, 600)
-        return QRect(avail.x(), avail.y(), w, h)
+        if raw_w and raw_h:
+            try:
+                w = max(640, int(raw_w))
+                h = max(360, int(raw_h))
+                return QRect(avail.x(), avail.y(), w, h)
+            except ValueError:
+                pass
+        return avail
 
     def _apply_kiosk_geometry(self) -> None:
         """Force the kiosk window to fill the primary screen exactly.
