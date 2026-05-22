@@ -27,6 +27,22 @@ from typing import Dict, Optional
 
 log = logging.getLogger("sirena_ui.main_window")
 
+# Fleet 10.1" panel design resolution (all screens laid out for this size).
+_FLEET_PANEL_W = 1024
+_FLEET_PANEL_H = 600
+
+
+def _fleet_panel_size() -> tuple[int, int]:
+    """Return (width, height) for the kiosk window — default 1024×600."""
+    raw_w = (os.environ.get("NINA_UI_PANEL_WIDTH") or "").strip()
+    raw_h = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "").strip()
+    if raw_w and raw_h:
+        try:
+            return max(640, int(raw_w)), max(360, int(raw_h))
+        except ValueError:
+            pass
+    return _FLEET_PANEL_W, _FLEET_PANEL_H
+
 from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, QRect, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
@@ -302,34 +318,36 @@ class MainWindow(QMainWindow):
         # placement pass would have run.
         QTimer.singleShot(0, self._apply_kiosk_geometry)
         QTimer.singleShot(250, self._apply_kiosk_geometry)
+        QTimer.singleShot(1000, self._apply_kiosk_geometry)
+        QTimer.singleShot(3000, self._apply_kiosk_geometry)
 
     def _kiosk_target_rect(self) -> Optional[QRect]:
-        """Kiosk window rect: fill the primary screen's visible area.
+        """Kiosk window rect at fleet design size (1024×600 by default).
 
-        Uses ``availableGeometry()`` so the 10.1" panel (typically 1024×600
-        when ``xrandr`` is configured correctly) is fully covered. Do **not**
-        shrink against ``geometry()`` — on some Jetson images ``geometry()``
-        is smaller than the touch panel and produced a letterboxed UI.
+        Always sizes the frameless window to the design resolution so the UI
+        is not letterboxed when ``availableGeometry()`` is smaller than the
+        physical panel. ``launch-sirena.sh`` forces ``xrandr`` to 1024×600 when
+        ``NINA_UI_FULLSCREEN=1`` so Qt's QScreen should match; if it does not,
+        we still use 1024×600 and log a warning.
 
-        Optional ``NINA_UI_PANEL_WIDTH`` + ``NINA_UI_PANEL_HEIGHT`` force an
-        explicit size (both must be set); use only for bench/debug overrides.
-        Drive layout clipping is handled inside :class:`DriveScreen`, not by
-        shrinking the main window.
+        Optional ``NINA_UI_PANEL_WIDTH`` + ``NINA_UI_PANEL_HEIGHT`` (both
+        required) override the default for bench use only.
         """
         primary = QGuiApplication.primaryScreen()
         if primary is None:
             return None
-        avail = primary.availableGeometry()
-        raw_w = (os.environ.get("NINA_UI_PANEL_WIDTH") or "").strip()
-        raw_h = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "").strip()
-        if raw_w and raw_h:
-            try:
-                w = max(640, int(raw_w))
-                h = max(360, int(raw_h))
-                return QRect(avail.x(), avail.y(), w, h)
-            except ValueError:
-                pass
-        return avail
+        geo = primary.geometry()
+        w, h = _fleet_panel_size()
+        if geo.width() != w or geo.height() != h:
+            log.warning(
+                "[kiosk] QScreen reports %dx%d but fleet panel is %dx%d — "
+                "check xrandr (launch-sirena.sh forces 1024×600 in kiosk mode)",
+                geo.width(),
+                geo.height(),
+                w,
+                h,
+            )
+        return QRect(geo.x(), geo.y(), w, h)
 
     def _apply_kiosk_geometry(self) -> None:
         """Force the kiosk window to fill the primary screen exactly.
@@ -339,28 +357,41 @@ class MainWindow(QMainWindow):
         pass after our first override (we schedule a 250ms re-run
         from showEvent for exactly that reason).
         """
+        if _env_truthy("NINA_UI_FULLSCREEN_STRICT"):
+            primary = QGuiApplication.primaryScreen()
+            if primary is None:
+                if not self.isFullScreen():
+                    self.showFullScreen()
+                return
+            if self.isMaximized():
+                self.showNormal()
+            if not self.isFullScreen():
+                self.showFullScreen()
+            self._log_kiosk_state()
+            return
+
         primary = QGuiApplication.primaryScreen()
         if primary is None:
-            # No screens reported - last-resort fullscreen so the
-            # operator at least sees the GUI even if stacking is
-            # broken.
             if not self.isFullScreen():
                 self.showFullScreen()
             return
 
-        # Drop any prior fullscreen/maximized state so setGeometry
-        # actually takes - Qt ignores geometry changes on a window
-        # in those states.
-        if self.isFullScreen() or self.isMaximized():
-            self.showNormal()
-
         target = self._kiosk_target_rect()
         if target is None:
             return
+
+        # Frameless kiosk: setGeometry to fleet 1024×600. Only leave true X11
+        # fullscreen for NINA_UI_FULLSCREEN_STRICT. Do not call showNormal() here
+        # — it was shrinking the window after __main__ had called showFullScreen().
+        if self.isFullScreen() or self.isMaximized():
+            self.showNormal()
+
         if (self.x(), self.y(), self.width(), self.height()) != (
             target.x(), target.y(), target.width(), target.height()
         ):
             self.setGeometry(target)
+        self.raise_()
+        self.activateWindow()
         self._log_kiosk_state()
 
     def _log_kiosk_state(self) -> None:

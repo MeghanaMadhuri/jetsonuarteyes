@@ -52,6 +52,23 @@ def _configure_logging() -> None:
     )
 
 
+def _configure_qt_display_scaling() -> None:
+    """10.1\" kiosk: one logical pixel = one design pixel (1024×600).
+
+    High-DPI scaling on Jetson often reports a fractional ``devicePixelRatio``
+    and shrinks the whole UI even when the window is fullscreen. Dev desktops
+    keep scaling enabled.
+    """
+    if _env_truthy("NINA_UI_FULLSCREEN"):
+        os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
+        os.environ.setdefault("QT_SCALE_FACTOR", "1")
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+        QApplication.setAttribute(Qt.AA_DisableHighDpiScaling, True)
+    else:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+
 def _pin_qt_platform_plugins() -> None:
     """Keep OpenCV's bundled Qt plugin directory from hijacking PyQt.
 
@@ -81,8 +98,7 @@ def main() -> int:
     _configure_logging()
     log_startup_limits()
     _pin_qt_platform_plugins()
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    _configure_qt_display_scaling()
     app = QApplication(sys.argv)
     app.setApplicationName("Sirena")
     app.setOrganizationName("Sirena Technologies")
@@ -128,8 +144,8 @@ def main() -> int:
     window = MainWindow(service)
     window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
     window.show()
-    if _env_truthy("NINA_UI_FULLSCREEN"):
-        window.showFullScreen()
+    # Kiosk geometry is owned by MainWindow (frameless 1024×600). Calling
+    # showFullScreen() here made showEvent's showNormal()+setGeometry shrink the UI.
 
     return app.exec_()
 
