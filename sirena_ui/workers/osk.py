@@ -154,7 +154,29 @@ def activate_text_input(widget: QWidget) -> None:
         osk.activate_text_input(widget)
 
 
-def _split_args(raw: Optional[str]) -> Tuple[str, ...]:
+def _kiosk_panel_height_px() -> int:
+    raw = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "600").strip()
+    try:
+        return max(360, int(raw))
+    except ValueError:
+        return 600
+
+
+def _kiosk_keyboard_height_px() -> int:
+    return _env_int("NINA_UI_OSK_HEIGHT", 220, 120, 400)
+
+
+def _resolve_osk_binary(name: str) -> Optional[str]:
+    """Resolve OSK binary even when systemd gives a minimal PATH."""
+    if os.path.isabs(name) and os.access(name, os.X_OK):
+        return name
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in (f"/usr/bin/{name}", f"/usr/local/bin/{name}"):
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return None
     """Split a shell-style arg string into argv pieces. Empty / None
     -> no extra args. Used for NINA_UI_OSK_ARGS so the operator can
     pass `--theme=Nightshade --not-show-in-launcher` etc."""
@@ -205,6 +227,7 @@ class OnScreenKeyboardManager(QObject):
             if binary is not None
             else os.environ.get("NINA_UI_OSK_BIN", "onboard")
         )
+        self._binary_path = _resolve_osk_binary(self._binary)
         self._extra_args = (
             tuple(extra_args)
             if extra_args is not None
@@ -239,6 +262,7 @@ class OnScreenKeyboardManager(QObject):
         # open later (Audio Editor, Face Enroll, etc.). Per-widget
         # installation would miss those.
         self._app.installEventFilter(self)
+        self._app.focusChanged.connect(self._on_app_focus_changed)
         self._app.aboutToQuit.connect(self.shutdown)
 
         # 'always' mode launches immediately; auto waits for the first
@@ -246,9 +270,15 @@ class OnScreenKeyboardManager(QObject):
         # on a fresh boot.
         if self._mode == "always":
             self._spawn()
+        print(
+            f"[osk] manager enabled={self._enabled} mode={self._mode} "
+            f"binary={self._binary_path or self._binary!r} "
+            f"PATH={os.environ.get('PATH', '')[:120]}",
+            flush=True,
+        )
         log.info(
             "OnScreenKeyboardManager active mode=%s binary=%r extra_args=%s",
-            self._mode, self._binary, list(self._extra_args),
+            self._mode, self._binary_path or self._binary, list(self._extra_args),
         )
 
     # ------------------------------------------------------------------
@@ -269,7 +299,7 @@ class OnScreenKeyboardManager(QObject):
         return self._process is not None and self._process.poll() is None
 
     def show(self, *, force: bool = False) -> None:
-        """Ensure a single OSK is visible (D-Bus raise preferred, else spawn)."""
+        """Ensure a single OSK is visible (spawn Nina-owned onboard, then raise)."""
         if not self._enabled:
             return
         now = time.monotonic()
@@ -277,25 +307,28 @@ class OnScreenKeyboardManager(QObject):
             return
         self._last_show_mono = now
 
-        if self._is_onboard_binary():
-            self._configure_onboard_window_mode()
-            if self._raise_onboard() and (
-                self.is_running or self._onboard_dbus_name_owned()
-            ):
-                self._schedule_show_retry()
-                return
-            # Hidden / stuck docked onboard often owns D-Bus but ignores Show.
-            self._hide_onboard()
-            if self._raise_onboard():
-                self._schedule_show_retry()
-                return
-            self._quit_onboard_dbus()
+        if not self._is_onboard_binary():
             if self.is_running:
-                self._kill_process()
-        elif self.is_running:
+                return
+            self._spawn()
             return
 
+        self._configure_onboard_window_mode()
+
+        if self.is_running:
+            self._raise_onboard()
+            self._schedule_show_retry()
+            return
+
+        # A stale session onboard on D-Bus often accepts Show but stays invisible
+        # (docked off-screen, wrong WM stacking). Quit it and spawn our own.
+        if self._onboard_dbus_name_owned():
+            print("[osk] quitting stale session onboard on D-Bus", flush=True)
+            self._quit_onboard_dbus()
+
         self._spawn()
+        QTimer.singleShot(150, self._raise_onboard)
+        QTimer.singleShot(400, self._raise_onboard)
         self._schedule_show_retry()
 
     def _schedule_show_retry(self) -> None:
@@ -355,6 +388,10 @@ class OnScreenKeyboardManager(QObject):
                 self._app.removeEventFilter(self)
             except Exception:
                 pass
+            try:
+                self._app.focusChanged.disconnect(self._on_app_focus_changed)
+            except Exception:
+                pass
         self._kill_process()
 
     def _kill_process(self) -> None:
@@ -375,6 +412,18 @@ class OnScreenKeyboardManager(QObject):
     # ------------------------------------------------------------------
     # Qt event filter
     # ------------------------------------------------------------------
+
+    def _on_app_focus_changed(self, _old: Optional[QWidget], new: Optional[QWidget]) -> None:
+        """Backup path when FocusIn events are swallowed by scroll areas."""
+        if new is None or not self._enabled:
+            return
+        try:
+            target = self._resolve_text_target(new)
+            if target is None:
+                return
+            self._on_text_widget_activated(target, QEvent.FocusIn)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("OSK focusChanged handler raised: %s", exc)
 
     def eventFilter(self, obj: QObject, event) -> bool:  # type: ignore[override]
         """Spawn or raise the OSK when the operator taps a text field.
@@ -420,11 +469,12 @@ class OnScreenKeyboardManager(QObject):
         if event_type != QEvent.FocusIn:
             self._focus_for_keyboard(target)
         if not self._first_focus_logged:
-            log.info(
-                "OSK: first text-widget activation (%s, event=%s) - calling show()",
-                type(target).__name__,
-                int(event_type),
+            msg = (
+                f"OSK: first text-widget activation ({type(target).__name__}, "
+                f"event={int(event_type)}) - calling show()"
             )
+            print(f"[osk] {msg}", flush=True)
+            log.info(msg)
             self._first_focus_logged = True
         # Touch / mouse taps bypass show debounce — FocusIn alone is debounced.
         force_show = event_type != QEvent.FocusIn
@@ -438,13 +488,20 @@ class OnScreenKeyboardManager(QObject):
         if self._mode == "off":
             log.info("OnScreenKeyboardManager disabled via NINA_UI_OSK=off")
             return False
-        if shutil.which(self._binary) is None:
+        if self._binary_path is None:
             log.warning(
                 "On-screen keyboard %r not found on PATH - touchscreen text "
                 "entry will not pop up a keyboard. Install with "
                 "`sudo apt install onboard` (or set NINA_UI_OSK_BIN to a "
-                "different OSK binary, or NINA_UI_OSK=off to silence this).",
+                "different OSK binary, or NINA_UI_OSK=off to silence this). "
+                "PATH=%r",
                 self._binary,
+                os.environ.get("PATH", ""),
+            )
+            print(
+                f"[osk] DISABLED: binary {self._binary!r} not found "
+                f"(PATH={os.environ.get('PATH', '')})",
+                flush=True,
             )
             return False
         return True
@@ -600,28 +657,48 @@ class OnScreenKeyboardManager(QObject):
             return False
 
     def _raise_onboard(self) -> bool:
-        """Show an already-running onboard via D-Bus (best effort)."""
+        """Show an already-running onboard via D-Bus and wmctrl (best effort)."""
         if not self._is_onboard_binary():
             return False
-        if shutil.which("dbus-send") is None:
+        raised = False
+        if shutil.which("dbus-send") is not None:
+            try:
+                result = subprocess.run(
+                    [
+                        "dbus-send",
+                        "--type=method_call",
+                        "--dest=org.onboard.Onboard",
+                        "/org/onboard/Onboard/Keyboard",
+                        "org.onboard.Onboard.Keyboard.Show",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                )
+                raised = result.returncode == 0
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OSK: dbus Show failed: %s", exc)
+        if self._raise_onboard_with_wmctrl():
+            raised = True
+        return raised
+
+    def _raise_onboard_with_wmctrl(self) -> bool:
+        wmctrl = shutil.which("wmctrl")
+        if not wmctrl:
             return False
-        try:
-            result = subprocess.run(
-                [
-                    "dbus-send",
-                    "--type=method_call",
-                    "--dest=org.onboard.Onboard",
-                    "/org/onboard/Onboard/Keyboard",
-                    "org.onboard.Onboard.Keyboard.Show",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=2.0,
-            )
-            return result.returncode == 0
-        except Exception as exc:  # noqa: BLE001
-            log.debug("OSK: dbus Show failed: %s", exc)
-            return False
+        for title in ("Onboard", "onboard"):
+            try:
+                result = subprocess.run(
+                    [wmctrl, "-a", title],
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _configure_onboard_window_mode(self) -> None:
         """One-shot gsettings tweak so onboard renders above the kiosk.
@@ -683,6 +760,15 @@ class OnScreenKeyboardManager(QObject):
             # would stack a second keyboard on top of our D-Bus Show/spawn.
             ("org.onboard.auto-show", "enabled", "false"),
         )
+        panel_h = _kiosk_panel_height_px()
+        kb_h = _kiosk_keyboard_height_px()
+        kb_y = max(0, panel_h - kb_h)
+        tweaks += (
+            ("org.onboard.window.landscape", "width", "1024"),
+            ("org.onboard.window.landscape", "height", str(kb_h)),
+            ("org.onboard.window.landscape", "x", "0"),
+            ("org.onboard.window.landscape", "y", str(kb_y)),
+        )
         for schema, key, value in tweaks:
             try:
                 # Short timeout so a hung dconf service can't stall the
@@ -729,7 +815,7 @@ class OnScreenKeyboardManager(QObject):
         # only when we actually intend to spawn onboard.
         self._configure_onboard_window_mode()
 
-        argv = [self._binary, *self._extra_args]
+        argv = [self._binary_path or self._binary, *self._extra_args]
         if self._is_onboard_binary() and not self._extra_args:
             argv.extend(_DEFAULT_ONBOARD_ARGS)
         try:
@@ -737,12 +823,10 @@ class OnScreenKeyboardManager(QObject):
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                # New session so a Ctrl-C in the parent terminal during
-                # development doesn't also kill the OSK in a way the
-                # user can see (it'll still die when the app exits via
-                # aboutToQuit / shutdown()).
+                # stderr inherited so launch.log captures onboard startup errors.
                 start_new_session=True,
             )
+            print(f"[osk] launched: {' '.join(argv)} pid={self._process.pid}", flush=True)
             log.info("OSK launched: %s (pid=%s)", " ".join(argv), self._process.pid)
         except FileNotFoundError:
             # Race: shutil.which said yes but exec failed. Disable so

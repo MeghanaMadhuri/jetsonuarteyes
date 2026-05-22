@@ -283,7 +283,7 @@ def test_focus_in_lineedit_spawns_osk(
     assert osk.is_running is True
     assert len(fake_subprocess.instances) == 1
     assert fake_subprocess.instances[0].argv == (
-        "onboard",
+        "/usr/bin/onboard",
         "--not-show-in-launcher",
         "--layout=Compact",
     )
@@ -742,11 +742,11 @@ def test_dbus_owned_but_show_fails_still_spawns_onboard(
     edit.deleteLater()
 
 
-def test_dbus_singleton_avoids_second_onboard_spawn(
+def test_dbus_singleton_quits_stale_onboard_and_spawns(
     isolate_env, with_osk_binary, fake_subprocess, make_osk,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If GNOME already owns org.onboard.Onboard, only D-Bus Show — no Popen."""
+    """Stale session onboard on D-Bus must not block Nina from spawning."""
     from sirena_ui.workers import osk as osk_module
 
     class _RunResult:
@@ -758,7 +758,7 @@ def test_dbus_singleton_avoids_second_onboard_spawn(
         fake_subprocess.run_calls.append(tuple(argv))  # type: ignore[attr-defined]
         if len(argv) >= 4 and argv[-1] == "string:org.onboard.Onboard":
             return _RunResult()
-        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Show" in argv:
+        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Quit" in argv:
             return _RunResult()
         return _RunResult()
 
@@ -768,7 +768,12 @@ def test_dbus_singleton_avoids_second_onboard_spawn(
     osk = make_osk(mode="auto")
     edit = QLineEdit()
     _send_focus_in(edit)
-    assert fake_subprocess.instances == []
+    assert len(fake_subprocess.instances) == 1
+    quit_calls = [
+        c for c in fake_subprocess.run_calls
+        if c and c[0] == "dbus-send" and "Keyboard.Quit" in c
+    ]
+    assert quit_calls
     edit.deleteLater()
 
 

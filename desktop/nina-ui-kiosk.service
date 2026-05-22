@@ -126,6 +126,8 @@ Environment=NINA_TOUCH_COOLDOWN_SEC=30
 Environment=NINA_TOUCH_BLIND_SEC=3
 
 # On-screen keyboard (onboard). Compact layout; auto = pop up on text focus.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NINA_LOG_LEVEL=INFO
 Environment=NINA_UI_OSK=auto
 Environment=NINA_UI_OSK_ARGS=--not-show-in-launcher --layout=Compact
 

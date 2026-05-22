@@ -109,8 +109,8 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
     if ! command -v onboard >/dev/null 2>&1; then
         echo "[INSTALL] installing on-screen keyboard (onboard)..."
-        if sudo apt-get install -y onboard gsettings-desktop-schemas libglib2.0-bin >/dev/null 2>&1; then
-            echo "[INSTALL]   onboard + gsettings installed"
+        if sudo apt-get install -y onboard gsettings-desktop-schemas libglib2.0-bin wmctrl >/dev/null 2>&1; then
+            echo "[INSTALL]   onboard + gsettings + wmctrl installed"
         else
             echo "[WARN] could not install onboard automatically; touchscreen text" >&2
             echo "[WARN]   entry will not pop up a keyboard until you run:" >&2
