@@ -21,8 +21,9 @@ into the back stroke without slowing down.
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
 lean. **Timed** ``turn_left`` / ``turn_right`` use full pivot goals (100% blend).
-**Held** D-pad pivots use ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer
-``speed_percent`` when the UI applies asymmetric duties. **Turn right** is the mirror.
+**Held** D-pad L/R use ``pulse_turn_micro_step`` at :data:`_HELD_DPAD_PIVOT_BLEND_PCT`
+(50% of full pivot by default). Legacy unequal-duty path uses
+``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer ``speed_percent``. **Turn right** mirrors left.
 
 **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
 ``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` run **independent** timed
@@ -465,9 +466,12 @@ def _straight_back_right_ticks_offset() -> int:
 # can land on brake and wipe blended timed-turn motion for that axis.
 _TURN_PIVOT_GOAL_OFFSET_TICKS = 100
 
-# All pivot micro-steps (closed-loop turns, IMU drift correction, standstill
-# correction, timed turn_left/right) use full calibrated pivot goals.
+# IMU drift correction + closed-loop 90° turns: full calibrated pivot goals.
 _PIVOT_MICROSTEP_BLEND_PCT = 100
+
+# Held D-pad left/right (``pulse_turn_micro_step``): softer lean to reduce
+# mechanical shock vs full pivot.
+_HELD_DPAD_PIVOT_BLEND_PCT = 50
 
 
 def hover_computed_turn_pivot_goals(
@@ -1592,6 +1596,11 @@ def _imu_turn_step_rate_deg_per_sec() -> float:
 def _imu_turn_step_blend_pct() -> int:
     """Closed-loop 90° turn micro-step blend % — always full pivot."""
     return _PIVOT_MICROSTEP_BLEND_PCT
+
+
+def _held_dpad_pivot_blend_pct() -> int:
+    """Blend % for held D-pad L/R micro-steps (``pulse_turn_micro_step``)."""
+    return _HELD_DPAD_PIVOT_BLEND_PCT
 
 
 def _imu_turn_pre_settle_sec() -> float:
@@ -4059,7 +4068,7 @@ class HoverboardAxisDrive:
         step_index: int,
     ) -> Optional[float]:
         """One closed-loop pivot step; returns updated yaw in intent frame."""
-        step_blend = _imu_turn_step_blend_pct()
+        step_blend = _held_dpad_pivot_blend_pct()
         step_rate = _imu_turn_step_rate_deg_per_sec()
         step_dur_cap = _imu_corr_pivot_max_sec()
         step_min = _imu_corr_step_min_sec()

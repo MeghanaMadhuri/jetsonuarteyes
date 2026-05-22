@@ -55,6 +55,7 @@ from nina.controllers.hoverboard_axis_drive import (
     _imu_turn_pre_settle_sec,
     _imu_turn_progress_check_steps,
     _imu_turn_progress_min_deg,
+    _held_dpad_pivot_blend_pct,
     _imu_turn_step_blend_pct,
     _imu_turn_step_rate_deg_per_sec,
     _imu_turn_swap_pivot_dir,
@@ -187,6 +188,17 @@ def _pivot_right_goals_full() -> dict[int, int]:
     """Full-pivot goals for L=BACK, R=FWD (yaw right) on the test axis."""
     l, r = hover_computed_turn_pivot_goals(_axis(), turn_left=False)
     return {12: l, 13: r}
+
+
+def _pivot_left_goals_at_blend(blend_pct: int) -> dict[int, int]:
+    """Interpolated pivot goals for L=FWD, R=BACK at *blend_pct* on the test axis."""
+    full = _pivot_left_goals_full()
+    brk = {12: 2048, 13: 2048}
+    u = blend_pct / 100.0
+    return {
+        12: int(round(brk[12] + (full[12] - brk[12]) * u)),
+        13: int(round(brk[13] + (full[13] - brk[13]) * u)),
+    }
 
 
 def _make_drive(yaw_fn=None, begin_fn=None, end_fn=None) -> HoverboardAxisDrive:
@@ -718,6 +730,8 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _imu_turn_max_steps() == 40
     assert _imu_turn_step_rate_deg_per_sec() == 30.0
     assert _imu_turn_step_blend_pct() == 100
+    assert _held_dpad_pivot_blend_pct() == 50
+    assert _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct()) == _pivot_left_goals_at_blend(50)
     assert _imu_turn_pre_settle_sec() == 0.20
     assert _imu_turn_post_settle_sec() == 0.30
     assert _imu_turn_progress_check_steps() == 6
