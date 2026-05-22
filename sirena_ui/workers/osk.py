@@ -102,6 +102,9 @@ _SHOW_DEBOUNCE_SEC = 0.35
 # If the keyboard still is not up shortly after activation, retry once.
 _SHOW_RETRY_DELAY_MS = 450
 
+# After D-Bus Quit, wait before spawning so the name is released.
+_SPAWN_AFTER_QUIT_MS = 200
+
 # Default onboard flags when NINA_UI_OSK_ARGS is unset (compact layout,
 # no launcher entry — sized for the 1024×600 kiosk panel).
 _DEFAULT_ONBOARD_ARGS: Tuple[str, ...] = (
@@ -266,6 +269,7 @@ class OnScreenKeyboardManager(QObject):
         self._last_activation_target_id: Optional[int] = None
         self._spawn_failures = 0
         self._show_retry_timer: Optional[QTimer] = None
+        self._process_watch_timer: Optional[QTimer] = None
 
         if not self._enabled:
             return
@@ -275,8 +279,8 @@ class OnScreenKeyboardManager(QObject):
         # open later (Audio Editor, Face Enroll, etc.). Per-widget
         # installation would miss those.
         self._app.installEventFilter(self)
-        self._app.focusChanged.connect(self._on_app_focus_changed)
         self._app.aboutToQuit.connect(self.shutdown)
+        self._start_process_watch()
 
         # 'always' mode launches immediately; auto waits for the first
         # FocusIn so the keyboard doesn't pop up over the Home screen
@@ -311,10 +315,29 @@ class OnScreenKeyboardManager(QObject):
         member directly."""
         return self._process is not None and self._process.poll() is None
 
+    def _reap_process(self) -> None:
+        """Drop dead Popen handles so the next tap can respawn onboard."""
+        if self._process is None:
+            return
+        rc = self._process.poll()
+        if rc is None:
+            return
+        print(f"[osk] process exited rc={rc}", flush=True)
+        log.info("OSK process exited rc=%s", rc)
+        self._process = None
+
+    def _start_process_watch(self) -> None:
+        timer = QTimer(self)
+        timer.setInterval(1000)
+        timer.timeout.connect(self._reap_process)
+        timer.start()
+        self._process_watch_timer = timer
+
     def show(self, *, force: bool = False) -> None:
         """Ensure a single OSK is visible (spawn Nina-owned onboard, then raise)."""
         if not self._enabled:
             return
+        self._reap_process()
         now = time.monotonic()
         if not force and (now - self._last_show_mono) < _SHOW_DEBOUNCE_SEC:
             return
@@ -330,15 +353,28 @@ class OnScreenKeyboardManager(QObject):
 
         if self.is_running:
             self._raise_onboard()
+            QTimer.singleShot(120, self._raise_onboard)
             self._schedule_show_retry()
             return
 
-        # A stale session onboard on D-Bus often accepts Show but stays invisible
-        # (docked off-screen, wrong WM stacking). Quit it and spawn our own.
+        self._spawn_fresh_onboard()
+
+    def _spawn_fresh_onboard(self) -> None:
+        """Quit any stale session onboard, then spawn and raise ours."""
         if self._onboard_dbus_name_owned():
             print("[osk] quitting stale session onboard on D-Bus", flush=True)
             self._quit_onboard_dbus()
+            QTimer.singleShot(_SPAWN_AFTER_QUIT_MS, self._spawn_fresh_onboard_once)
+            return
+        self._spawn_fresh_onboard_once()
 
+    def _spawn_fresh_onboard_once(self) -> None:
+        if not self._enabled:
+            return
+        self._reap_process()
+        if self.is_running:
+            self._raise_onboard()
+            return
         self._spawn()
         QTimer.singleShot(150, self._raise_onboard)
         QTimer.singleShot(400, self._raise_onboard)
@@ -360,17 +396,16 @@ class OnScreenKeyboardManager(QObject):
     def _retry_show_after_activation(self) -> None:
         if not self._enabled:
             return
-        if (time.monotonic() - self._last_activation_mono) > 1.5:
+        if (time.monotonic() - self._last_activation_mono) > 2.0:
             return
+        self._reap_process()
         if self.is_running:
+            self._raise_onboard()
             return
         if self._raise_onboard():
             return
-        self._hide_onboard()
-        if self._raise_onboard():
-            return
-        self._quit_onboard_dbus()
-        self._spawn()
+        print("[osk] retry: respawning onboard", flush=True)
+        self._spawn_fresh_onboard()
 
     def activate_text_input(self, widget: QWidget) -> None:
         """Focus a text field and raise the OSK (dialogs / editor panes)."""
@@ -401,10 +436,8 @@ class OnScreenKeyboardManager(QObject):
                 self._app.removeEventFilter(self)
             except Exception:
                 pass
-            try:
-                self._app.focusChanged.disconnect(self._on_app_focus_changed)
-            except Exception:
-                pass
+            if self._process_watch_timer is not None:
+                self._process_watch_timer.stop()
         self._kill_process()
 
     def _kill_process(self) -> None:
@@ -425,18 +458,6 @@ class OnScreenKeyboardManager(QObject):
     # ------------------------------------------------------------------
     # Qt event filter
     # ------------------------------------------------------------------
-
-    def _on_app_focus_changed(self, _old: Optional[QWidget], new: Optional[QWidget]) -> None:
-        """Backup path when FocusIn events are swallowed by scroll areas."""
-        if new is None or not self._enabled:
-            return
-        try:
-            target = self._resolve_text_target(new)
-            if target is None:
-                return
-            self._on_text_widget_activated(target, QEvent.FocusIn)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("OSK focusChanged handler raised: %s", exc)
 
     def eventFilter(self, obj: QObject, event) -> bool:  # type: ignore[override]
         """Spawn or raise the OSK when the operator taps a text field.
@@ -483,15 +504,13 @@ class OnScreenKeyboardManager(QObject):
             self._focus_for_keyboard(target)
         if not self._first_focus_logged:
             msg = (
-                f"OSK: first text-widget activation ({type(target).__name__}, "
+                f"OSK: text-widget activation ({type(target).__name__}, "
                 f"event={int(event_type)}) - calling show()"
             )
             print(f"[osk] {msg}", flush=True)
             log.info(msg)
             self._first_focus_logged = True
-        # Touch / mouse taps bypass show debounce — FocusIn alone is debounced.
-        force_show = event_type != QEvent.FocusIn
-        self.show(force=force_show)
+        self.show(force=True)
 
     # ------------------------------------------------------------------
     # Internals
@@ -781,6 +800,7 @@ class OnScreenKeyboardManager(QObject):
             ("org.onboard.window.landscape", "height", str(kb_h)),
             ("org.onboard.window.landscape", "x", "0"),
             ("org.onboard.window.landscape", "y", str(kb_y)),
+            ("org.onboard.window.landscape", "dock-expand", "false"),
         )
         for schema, key, value in tweaks:
             try:
@@ -891,6 +911,11 @@ class OnScreenKeyboardManager(QObject):
             self._spawn_failures = 0
             return
         self._spawn_failures += 1
+        print(
+            f"[osk] WARNING: exited rc={rc} within 500ms "
+            f"(failure {self._spawn_failures}/3)",
+            flush=True,
+        )
         log.warning(
             "OSK %r exited %s within 500 ms of spawn (failure %d/3). "
             "Try running %r from a terminal to see why; common causes "

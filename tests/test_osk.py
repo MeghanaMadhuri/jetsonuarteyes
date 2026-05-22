@@ -768,6 +768,7 @@ def test_dbus_singleton_quits_stale_onboard_and_spawns(
     osk = make_osk(mode="auto")
     edit = QLineEdit()
     _send_focus_in(edit)
+    QTest.qWait(osk_module._SPAWN_AFTER_QUIT_MS + 80)
     assert len(fake_subprocess.instances) == 1
     quit_calls = [
         c for c in fake_subprocess.run_calls
