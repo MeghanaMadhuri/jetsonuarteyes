@@ -34,15 +34,18 @@ pytest.importorskip("PyQt5.QtWidgets")
 
 from PyQt5.QtCore import QEvent, QPoint, Qt
 from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -701,6 +704,43 @@ def test_gsettings_failure_does_not_block_spawn(
     assert len(fake_subprocess.instances) == 1
 
 
+def test_dbus_owned_but_show_fails_still_spawns_onboard(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When D-Bus owns onboard but Show/Hide cannot raise it, spawn anyway."""
+    from sirena_ui.workers import osk as osk_module
+
+    class _RunResult:
+        returncode = 0
+        stdout = "boolean true\n"
+        stderr = ""
+
+    class _FailShow:
+        returncode = 1
+        stdout = ""
+        stderr = "error"
+
+    def _fake_run(argv, **_kw):
+        fake_subprocess.run_calls.append(tuple(argv))  # type: ignore[attr-defined]
+        if len(argv) >= 4 and argv[-1] == "string:org.onboard.Onboard":
+            return _RunResult()
+        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Show" in argv:
+            return _FailShow()
+        if len(argv) >= 2 and argv[0] == "dbus-send" and "Keyboard.Hide" in argv:
+            return _FailShow()
+        return _RunResult()
+
+    monkeypatch.setattr(osk_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(osk_module.subprocess, "run", _fake_run)
+
+    osk = make_osk(mode="auto")
+    edit = QLineEdit()
+    _send_focus_in(edit)
+    assert len(fake_subprocess.instances) == 1
+    edit.deleteLater()
+
+
 def test_dbus_singleton_avoids_second_onboard_spawn(
     isolate_env, with_osk_binary, fake_subprocess, make_osk,
     monkeypatch: pytest.MonkeyPatch,
@@ -751,6 +791,48 @@ def test_show_uses_dbus_when_onboard_already_running(
     ]
     assert dbus_calls, f"expected dbus-send, got {fake_subprocess.run_calls}"
     assert len(fake_subprocess.instances) == 1  # no respawn
+
+
+def test_dialog_show_activates_keyboard_for_spinbox(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk, qapp: QApplication,
+) -> None:
+    """QEvent.Show on a QDialog must focus the first text field and spawn OSK."""
+    make_osk(mode="auto")
+
+    dlg = QDialog()
+    dlg.setWindowTitle("Duration")
+    spin = QDoubleSpinBox()
+    lay = QVBoxLayout(dlg)
+    lay.addWidget(spin)
+    dlg.show()
+    QApplication.sendEvent(dlg, QEvent(QEvent.Show))
+    QTest.qWait(80)
+    assert len(fake_subprocess.instances) == 1
+    dlg.close()
+    dlg.deleteLater()
+
+
+def test_readonly_lineedit_does_not_spawn(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+) -> None:
+    make_osk(mode="auto")
+    edit = QLineEdit()
+    edit.setReadOnly(True)
+    _send_focus_in(edit)
+    assert fake_subprocess.instances == []
+    edit.deleteLater()
+
+
+def test_activate_text_input_helper_spawns_keyboard(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+) -> None:
+    from sirena_ui.workers.osk import activate_text_input
+
+    make_osk(mode="auto")
+    edit = QLineEdit()
+    activate_text_input(edit)
+    assert len(fake_subprocess.instances) == 1
+    edit.deleteLater()
 
 
 def test_first_focus_logs_diagnostic_line(

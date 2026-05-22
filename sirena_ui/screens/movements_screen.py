@@ -278,6 +278,11 @@ class MovementsScreen(QWidget):
         self._refresh_steps_list()
         self._stack.setCurrentWidget(self._editor_page)
         self._breadcrumb.set_parts("Nina", "Movements", "Edit")
+        from PyQt5.QtCore import QTimer
+
+        from sirena_ui.workers.osk import activate_text_input
+
+        QTimer.singleShot(50, lambda: activate_text_input(self._name_field))
 
     def _refresh_steps_list(self) -> None:
         self._steps_list.clear()
@@ -411,6 +416,7 @@ def _prompt_seconds(parent: QWidget, title: str, *, default: float, max_sec: flo
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
     lay.addWidget(buttons)
+    spin.setFocus()
     if dlg.exec_() != QDialog.Accepted:
         return None
     return float(spin.value())
@@ -432,6 +438,7 @@ def _prompt_degrees(parent: QWidget, title: str, *, default: float) -> Optional[
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
     lay.addWidget(buttons)
+    spin.setFocus()
     if dlg.exec_() != QDialog.Accepted:
         return None
     return float(spin.value())

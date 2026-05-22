@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QAbstractSpinBox,
     QComboBox,
+    QDialog,
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
@@ -91,6 +92,10 @@ _OSK_TRIGGER_EVENTS: Tuple[int, ...] = (
     QEvent.TouchBegin,
 )
 
+# Modal dialogs often open without FocusIn on the line editor; Show is
+# the reliable hook to focus the first field and raise the OSK.
+_OSK_DIALOG_PREPARE_DELAY_MS = 50
+
 # One touchscreen tap often delivers MouseButtonPress and FocusIn back-to-back.
 _SHOW_DEBOUNCE_SEC = 0.35
 
@@ -123,6 +128,20 @@ def _resolve_mode(raw: Optional[str]) -> str:
         raw,
     )
     return "auto"
+
+
+def activate_text_input(widget: QWidget) -> None:
+    """Focus ``widget`` (or its text child) and show the OSK if enabled.
+
+    Call from screens after building a modal or switching to an editor
+    pane so the keyboard appears without requiring an extra tap.
+    """
+    app = QApplication.instance()
+    if app is None:
+        return
+    osk = getattr(app, "_osk", None)
+    if isinstance(osk, OnScreenKeyboardManager):
+        osk.activate_text_input(widget)
 
 
 def _split_args(raw: Optional[str]) -> Tuple[str, ...]:
@@ -237,12 +256,12 @@ class OnScreenKeyboardManager(QObject):
         member directly."""
         return self._process is not None and self._process.poll() is None
 
-    def show(self) -> None:
-        """Ensure a single OSK is visible (D-Bus singleton preferred over spawn)."""
+    def show(self, *, force: bool = False) -> None:
+        """Ensure a single OSK is visible (D-Bus raise preferred, else spawn)."""
         if not self._enabled:
             return
         now = time.monotonic()
-        if (now - self._last_show_mono) < _SHOW_DEBOUNCE_SEC:
+        if not force and (now - self._last_show_mono) < _SHOW_DEBOUNCE_SEC:
             return
         self._last_show_mono = now
 
@@ -250,12 +269,9 @@ class OnScreenKeyboardManager(QObject):
             self._configure_onboard_window_mode()
             if self._raise_onboard():
                 return
-            # GNOME may already run onboard on the session bus — do not spawn a second.
-            if self._onboard_dbus_name_owned():
-                log.debug(
-                    "OSK: org.onboard.Onboard on D-Bus but Show failed — "
-                    "not spawning a duplicate onboard"
-                )
+            # Hidden docked onboard often owns D-Bus but ignores Show — retry.
+            self._hide_onboard()
+            if self._raise_onboard():
                 return
             if self.is_running:
                 self._kill_process()
@@ -263,6 +279,21 @@ class OnScreenKeyboardManager(QObject):
             return
 
         self._spawn()
+
+    def activate_text_input(self, widget: QWidget) -> None:
+        """Focus a text field and raise the OSK (dialogs / editor panes)."""
+        if not self._enabled:
+            return
+        target = self._resolve_text_target(widget)
+        if target is None and isinstance(widget, QWidget):
+            if self._matches_text_input(widget):
+                target = widget
+        if target is None:
+            return
+        self._focus_for_keyboard(target)
+        self._last_activation_target_id = id(target)
+        self._last_activation_mono = time.monotonic()
+        self.show(force=True)
 
     def shutdown(self) -> None:
         """Tear down the OSK subprocess and disconnect from the app.
@@ -308,6 +339,12 @@ class OnScreenKeyboardManager(QObject):
         broken OSK must never break the app.
         """
         try:
+            if event.type() == QEvent.Show and isinstance(obj, QDialog):
+                QTimer.singleShot(
+                    _OSK_DIALOG_PREPARE_DELAY_MS,
+                    lambda dlg=obj: self._prepare_dialog(dlg),
+                )
+                return False
             if event.type() not in _OSK_TRIGGER_EVENTS:
                 return False
             if event.type() == QEvent.MouseButtonPress:
@@ -367,13 +404,15 @@ class OnScreenKeyboardManager(QObject):
     @staticmethod
     def _matches_text_input(obj: QObject) -> bool:
         """True when ``obj`` itself is a text-entry target."""
-        if isinstance(obj, _TEXT_INPUT_TYPES):
-            return True
+        if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return obj.isEnabled() and not obj.isReadOnly()
         if isinstance(obj, QAbstractSpinBox):
-            return True
+            return obj.isEnabled()
         if isinstance(obj, QComboBox) and obj.isEditable():
-            return True
+            return obj.isEnabled()
         if isinstance(obj, QWidget) and obj.testAttribute(Qt.WA_InputMethodEnabled):
+            if not obj.isEnabled():
+                return False
             policy = obj.focusPolicy()
             if policy not in (Qt.NoFocus,):
                 return True
@@ -438,6 +477,56 @@ class OnScreenKeyboardManager(QObject):
                 return False
             return "boolean true" in (result.stdout or "").lower()
         except Exception:
+            return False
+
+    def _prepare_dialog(self, dialog: QDialog) -> None:
+        """Focus the first text field when a modal opens."""
+        if not self._enabled:
+            return
+        try:
+            if not dialog.isVisible():
+                return
+        except RuntimeError:
+            return
+        target = self._find_first_text_input(dialog)
+        if target is None:
+            return
+        if not self._first_focus_logged:
+            log.info(
+                "OSK: dialog %r opened with text field %s — activating keyboard",
+                dialog.windowTitle(),
+                type(target).__name__,
+            )
+            self._first_focus_logged = True
+        self.activate_text_input(target)
+
+    def _find_first_text_input(self, root: QWidget) -> Optional[QWidget]:
+        """First enabled text widget in tab order under ``root``."""
+        for child in root.findChildren(QWidget):
+            if self._matches_text_input(child):
+                return child
+        return None
+
+    def _hide_onboard(self) -> bool:
+        """Hide onboard via D-Bus so a subsequent Show can unstick a dock."""
+        if not self._is_onboard_binary() or shutil.which("dbus-send") is None:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    "dbus-send",
+                    "--type=method_call",
+                    "--dest=org.onboard.Onboard",
+                    "/org/onboard/Onboard/Keyboard",
+                    "org.onboard.Onboard.Keyboard.Hide",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            return result.returncode == 0
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OSK: dbus Hide failed: %s", exc)
             return False
 
     def _raise_onboard(self) -> bool:

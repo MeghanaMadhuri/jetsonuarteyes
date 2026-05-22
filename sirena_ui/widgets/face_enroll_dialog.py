@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -107,6 +107,12 @@ class FaceEnrollDialog(QDialog):
 
         worker.enrollment_progress.connect(self._on_progress)
         worker.enrollment_finished.connect(self._on_finished)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        from sirena_ui.workers.osk import activate_text_input
+
+        QTimer.singleShot(50, lambda: activate_text_input(self._name_edit))
 
     # ------------------------------------------------------------------
     # Slots
