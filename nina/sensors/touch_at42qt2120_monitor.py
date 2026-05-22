@@ -142,6 +142,7 @@ class TouchAt42qt2120Monitor:
         self._stuck_clear_reads = int(s.stuck_clear_reads)
         self._cooldown_sec = float(s.cooldown_sec)
         self._blind_sec = float(s.blind_after_reaction_sec)
+        self._use_key_mask = bool(getattr(s, "use_key_mask", False))
         self._poll_sec = float(s.poll_interval_sec)
         self._touch = AT42QT2120(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
@@ -156,7 +157,7 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_fire_mono = -1e30
-        self._blind_until_mono = -1e30
+        self._quiet_until_mono = -1e30
 
     def start(self) -> None:
         s = self._svc.settings.touch_at42qt2120
@@ -184,7 +185,7 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_fire_mono = -1e30
-        self._blind_until_mono = -1e30
+        self._quiet_until_mono = -1e30
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, name="TouchAt42qt2120Monitor", daemon=True
@@ -192,7 +193,8 @@ class TouchAt42qt2120Monitor:
         self._thread.start()
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
-            "debounce=%d release=%d baseline_clear=%d stuck=%.1fs cooldown=%.1fs blind=%.2fs)",
+            "debounce=%d release=%d baseline_clear=%d stuck=%.1fs "
+            "cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) use_key_mask=%s)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
             self._poll_sec,
@@ -202,6 +204,7 @@ class TouchAt42qt2120Monitor:
             self._stuck_after_sec,
             self._cooldown_sec,
             self._blind_sec,
+            self._use_key_mask,
         )
 
     def stop(self) -> None:
@@ -231,7 +234,7 @@ class TouchAt42qt2120Monitor:
                     self._prev_touched = False
                     time.sleep(self._poll_sec)
                     continue
-                touched_raw = self._touch.any_touch()
+                touched_raw = self._touch.touch_active(use_key_mask=self._use_key_mask)
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
                 self._hits = 0
@@ -275,17 +278,12 @@ class TouchAt42qt2120Monitor:
                 time.sleep(self._poll_sec)
                 continue
 
-            if now < self._blind_until_mono:
-                if not touched:
-                    self._armed, self._release_hits = touch_release_rearm_step(
-                        touched,
-                        armed=self._armed,
-                        release_reads=self._release_reads,
-                        consecutive_clear=self._release_hits,
-                    )
-                else:
-                    self._release_hits = 0
+            # After a reaction, stay disarmed until the quiet window ends
+            # (max of blind + cooldown) so motor vibration cannot retrigger.
+            if now < self._quiet_until_mono:
+                self._armed = False
                 self._hits = 0
+                self._release_hits = 0
                 self._prev_touched = touched
                 time.sleep(self._poll_sec)
                 continue
@@ -308,11 +306,6 @@ class TouchAt42qt2120Monitor:
                 time.sleep(self._poll_sec)
                 continue
 
-            if (now - self._last_fire_mono) < self._cooldown_sec:
-                self._prev_touched = touched
-                time.sleep(self._poll_sec)
-                continue
-
             fire, self._hits = touch_rising_edge_debounce_step(
                 touched,
                 self._prev_touched,
@@ -330,7 +323,12 @@ class TouchAt42qt2120Monitor:
                 except Exception:
                     log.exception("Touch reaction failed")
                 self._last_fire_mono = time.monotonic()
-                if self._blind_sec > 0:
-                    self._blind_until_mono = self._last_fire_mono + self._blind_sec
+                quiet_sec = max(self._blind_sec, self._cooldown_sec)
+                if quiet_sec > 0:
+                    self._quiet_until_mono = self._last_fire_mono + quiet_sec
+                log.info(
+                    "AT42QT2120 touch reaction complete — quiet for %.1fs",
+                    quiet_sec,
+                )
 
             time.sleep(self._poll_sec)

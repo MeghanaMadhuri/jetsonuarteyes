@@ -153,10 +153,22 @@ class AT42QT2120:
         return ((hi & 0x0F) << 8) | (lo & 0xFF)
 
     def any_touch(self) -> bool:
-        """True if STATUS or key mask reports activity (bench + safety)."""
+        """True if STATUS or (optionally) key mask reports activity."""
         if self.keys_pressed():
             return True
         return self.read_key_mask() != 0
+
+    def touch_active(self, *, use_key_mask: bool = False) -> bool:
+        """Conservative touch detect for safety reactions.
+
+        Prefer STATUS bit 0 only; the 12-bit key mask often picks up
+        cross-talk / floating channels and causes false retriggers.
+        """
+        if self.keys_pressed():
+            return True
+        if use_key_mask:
+            return self.read_key_mask() != 0
+        return False
 
     def touch_snapshot(self) -> dict:
         """Raw register view for bench/debug (STATUS vs key mask)."""

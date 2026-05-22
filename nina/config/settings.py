@@ -300,11 +300,14 @@ class TouchAt42qt2120Settings:
     On touch: stop drive, speak (bundled MP3), park Dynamixel IDs **1–13** at
     ``motor_goal`` (default **2048**). One shot per physical touch (rising edge +
     release before re-arm). Enable with ``NINA_TOUCH_AT42QT2120_ENABLE=1``.
+    Set ``NINA_TOUCH_USE_KEY_MASK=1`` only if STATUS bit 0 never asserts on
+    your wiring (mask-only setups are noisier).
     """
 
     enabled: bool
     i2c_bus: int
     i2c_address: int
+    use_key_mask: bool
     debounce_reads: int
     release_reads: int
     baseline_clear_reads: int
@@ -919,8 +922,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
         i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
-        debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 3))),
-        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 2))),
+        use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", False),
+        debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 5))),
+        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 5))),
         baseline_clear_reads=max(
             1, min(50, _env_int("NINA_TOUCH_BASELINE_CLEAR_READS", 10))
         ),
@@ -934,9 +938,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         startup_probe_delay_sec=max(
             0.0, _env_float("NINA_TOUCH_PROBE_DELAY_SEC", 0.4)
         ),
-        cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 10.0)),
+        cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 30.0)),
         blind_after_reaction_sec=max(
-            0.0, _env_float("NINA_TOUCH_BLIND_SEC", 0.75)
+            0.0, _env_float("NINA_TOUCH_BLIND_SEC", 3.0)
         ),
         poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.1)),
         tts_text=(

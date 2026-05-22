@@ -108,13 +108,13 @@ def test_stuck_high_clears_after_release() -> None:
         False,
         stuck_latched=True,
         touch_high_since_mono=None,
-        stuck_clear_hits=4,
+        stuck_clear_hits=3,
         now=0.0,
         stuck_after_sec=2.0,
         stuck_clear_reads=5,
     )
     assert latched
-    assert clear_hits == 5
+    assert clear_hits == 4
     eff, latched, _, _, _ = touch_stuck_high_step(
         False,
         stuck_latched=True,
@@ -148,8 +148,8 @@ def test_simulated_monitor_loop_one_fire_per_gesture() -> None:
     hits = 0
     release_hits = 0
     fires = 0
-    debounce_reads = 3
-    release_reads = 2
+    debounce_reads = 5
+    release_reads = 5
 
     def poll(touched: bool) -> None:
         nonlocal armed, prev, hits, release_hits, fires
@@ -178,14 +178,14 @@ def test_simulated_monitor_loop_one_fire_per_gesture() -> None:
             hits = 0
 
     # Gesture 1
-    for _ in range(3):
+    for _ in range(debounce_reads):
         poll(True)
     for _ in range(5):
         poll(True)  # held — must not fire again
     for _ in range(release_reads):
         poll(False)
     # Gesture 2
-    for _ in range(3):
+    for _ in range(debounce_reads):
         poll(True)
 
     assert fires == 2
