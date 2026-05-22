@@ -1,0 +1,28 @@
+{
+  "movements": [
+    {
+      "id": "d50bd84b8276",
+      "name": "hari test",
+      "steps": [
+        {
+          "kind": "forward",
+          "seconds": 8.0,
+          "degrees": 0.0,
+          "uturn_direction": "right"
+        },
+        {
+          "kind": "uturn",
+          "seconds": 0.0,
+          "degrees": 180.0,
+          "uturn_direction": "right"
+        },
+        {
+          "kind": "forward",
+          "seconds": 8.0,
+          "degrees": 0.0,
+          "uturn_direction": "right"
+        }
+      ]
+    }
+  ]
+}
