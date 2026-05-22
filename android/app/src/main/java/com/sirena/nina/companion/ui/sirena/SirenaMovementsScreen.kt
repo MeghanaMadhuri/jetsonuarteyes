@@ -205,7 +205,8 @@ fun SirenaMovementsScreen(
                 "failed" -> {
                     running = false
                     busy = false
-                    status = st.optString("error", "Movement failed")
+                    status = st?.optString("error")?.takeIf { it.isNotBlank() }
+                        ?: "Movement failed"
                     return@LaunchedEffect
                 }
             }
