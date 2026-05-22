@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from nina.movements.model import (
     STEP_BACKWARD,
+    STEP_BRAKE,
     STEP_FORWARD,
     STEP_TURN_LEFT,
     STEP_TURN_RIGHT,
@@ -68,21 +69,56 @@ def execute_saved_movement(nav: Any, movement: SavedMovement) -> Optional[str]:
             pass
 
 
+def _release_brake_for_motion(nav: Any) -> None:
+    release = getattr(nav, "release_brake", None)
+    if callable(release):
+        try:
+            release()
+        except Exception as exc:
+            log.warning("release_brake before motion step: %s", exc)
+
+
 def _run_step(nav: Any, step: Any) -> Optional[str]:
     kind = step.kind
+    if kind == STEP_BRAKE:
+        return _run_brake(nav)
     if kind == STEP_FORWARD:
+        _release_brake_for_motion(nav)
         return _run_straight(nav, forward=True, seconds=float(step.seconds))
     if kind == STEP_BACKWARD:
+        _release_brake_for_motion(nav)
         return _run_straight(nav, forward=False, seconds=float(step.seconds))
     if kind == STEP_TURN_LEFT:
+        _release_brake_for_motion(nav)
         return _run_turn(nav, "left", float(step.degrees))
     if kind == STEP_TURN_RIGHT:
+        _release_brake_for_motion(nav)
         return _run_turn(nav, "right", float(step.degrees))
     if kind == STEP_UTURN:
+        _release_brake_for_motion(nav)
         direction = "left" if step.uturn_direction == "left" else "right"
         # True U-turn = 180° heading reversal (not a full 360° spin).
         return _run_turn(nav, direction, 180.0)
     return f"Unknown step kind {kind!r}"
+
+
+def _run_brake(nav: Any) -> Optional[str]:
+    engage = getattr(nav, "engage_brake", None)
+    if not callable(engage):
+        stop = getattr(nav, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception as exc:
+                return f"Brake stop failed: {exc}"
+            return None
+        return "Brake is not available on this drive backend"
+    try:
+        engage()
+    except Exception as exc:
+        log.exception("engage_brake in saved sequence")
+        return f"Brake failed: {exc}"
+    return None
 
 
 def _run_straight(nav: Any, *, forward: bool, seconds: float) -> Optional[str]:

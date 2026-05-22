@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 
 from nina.movements.model import (
     STEP_BACKWARD,
+    STEP_BRAKE,
     STEP_FORWARD,
     STEP_TURN_LEFT,
     STEP_TURN_RIGHT,
@@ -239,6 +240,7 @@ class MovementsScreen(QWidget):
             ("+ Turn left", self._add_turn_left),
             ("+ Turn right", self._add_turn_right),
             ("+ U-turn", self._add_uturn),
+            ("+ Brake", self._add_brake),
         ):
             btn = QPushButton(label)
             btn.setObjectName("secondaryButton")
@@ -320,6 +322,9 @@ class MovementsScreen(QWidget):
         if deg is None:
             return
         self._append_step(MovementStep(kind=STEP_TURN_RIGHT, degrees=deg))
+
+    def _add_brake(self) -> None:
+        self._append_step(MovementStep(kind=STEP_BRAKE))
 
     def _add_uturn(self) -> None:
         from PyQt5.QtWidgets import QInputDialog

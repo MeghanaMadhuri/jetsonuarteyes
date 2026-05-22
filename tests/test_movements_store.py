@@ -4,10 +4,13 @@ import json
 from pathlib import Path
 
 from nina.movements.model import (
+    STEP_BRAKE,
     STEP_FORWARD,
     STEP_TURN_RIGHT,
     MovementStep,
     SavedMovement,
+    step_from_dict,
+    step_to_dict,
 )
 from nina.movements.store import MovementStore
 
@@ -34,3 +37,11 @@ def test_movement_store_roundtrip(tmp_path: Path) -> None:
     assert "movements" in raw
     assert store.delete(mv.movement_id)
     assert store.load_all() == []
+
+
+def test_brake_step_roundtrip() -> None:
+    step = MovementStep(kind=STEP_BRAKE)
+    assert step.summary() == "Brake (hold pose)"
+    raw = step_to_dict(step)
+    loaded = step_from_dict(raw)
+    assert loaded.kind == STEP_BRAKE

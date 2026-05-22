@@ -57,7 +57,8 @@ private data class StepDraft(
             "backward" -> "Backward ${seconds}s"
             "turn_left" -> "Turn left ${degrees.toInt()}°"
             "turn_right" -> "Turn right ${degrees.toInt()}°"
-            "uturn" -> "U-turn 360° ($uturnDirection)"
+            "uturn" -> "U-turn 180° ($uturnDirection)"
+            "brake" -> "Brake (hold pose)"
             else -> kind
         }
 
@@ -276,7 +277,7 @@ fun SirenaMovementsScreen(
                                     editSteps +
                                         StepDraft(
                                             "uturn",
-                                            degrees = 360.0,
+                                            degrees = 180.0,
                                             uturnDirection =
                                                 if (dialogUturnRight) "right" else "left",
                                         )
@@ -452,7 +453,7 @@ fun SirenaMovementsScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "Forward/back use seconds; turns use IMU degrees (same as kiosk).",
+                            "Forward/back use seconds; turns use IMU degrees; Brake stops and holds pose (same as kiosk).",
                             color = SirenaColors.muted,
                         )
                         OutlinedTextField(
@@ -492,11 +493,16 @@ fun SirenaMovementsScreen(
                                 "+ Left" to "turn_left",
                                 "+ Right" to "turn_right",
                                 "+ U-turn" to "uturn",
+                                "+ Brake" to "brake",
                             ).forEach { (label, kind) ->
                                 SirenaSecondaryButton(
                                     text = label,
                                     enabled = !busy,
                                     onClick = {
+                                        if (kind == "brake") {
+                                            editSteps = editSteps + StepDraft("brake")
+                                            return@forEach
+                                        }
                                         dialogKind = kind
                                         dialogValue =
                                             when (kind) {

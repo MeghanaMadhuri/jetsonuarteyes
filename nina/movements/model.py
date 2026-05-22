@@ -12,6 +12,7 @@ STEP_BACKWARD = "backward"
 STEP_TURN_LEFT = "turn_left"
 STEP_TURN_RIGHT = "turn_right"
 STEP_UTURN = "uturn"
+STEP_BRAKE = "brake"
 
 VALID_STEP_KINDS = frozenset(
     {
@@ -20,6 +21,7 @@ VALID_STEP_KINDS = frozenset(
         STEP_TURN_LEFT,
         STEP_TURN_RIGHT,
         STEP_UTURN,
+        STEP_BRAKE,
     }
 )
 
@@ -46,6 +48,8 @@ class MovementStep:
         if k == STEP_UTURN:
             d = "left" if self.uturn_direction == "left" else "right"
             return f"U-turn 180° ({d})"
+        if k == STEP_BRAKE:
+            return "Brake (hold pose)"
         return k
 
 
