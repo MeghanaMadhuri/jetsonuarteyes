@@ -648,6 +648,48 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         return client.robotDriveTurn(url, bearer, which)
     }
 
+    suspend fun fetchMovements(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.movementsList(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun runMovement(movementId: String): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.movementRun(url, bearer, movementId)
+    }
+
+    suspend fun deleteMovement(movementId: String): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.movementDelete(url, bearer, movementId)
+    }
+
+    suspend fun fetchMovementRunStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.movementRunStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchMovement(movementId: String): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.movementGet(url, movementId)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun upsertMovement(body: JSONObject): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.movementUpsert(url, bearer, body)
+    }
+
     suspend fun robotDriveReverse(on: Boolean): JSONObject {
         NinaLog.tap("Drive", "reverse", if (on) "on" else "off")
         val url = prefs.baseUrl.first()
@@ -1341,13 +1383,10 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Warm Dynamixel + hoverboard stack while the Drive screen is open (reduces first D-pad delay). */
+    /** One status read when Drive opens — avoids six GETs competing with D-pad POSTs on Wi‑Fi. */
     suspend fun prefetchRobotDriveStatus() {
         if (prefs.baseUrl.first().isBlank()) return
-        repeat(6) {
-            fetchRobotDriveStatus()
-            delay(100L)
-        }
+        fetchRobotDriveStatus()
     }
 
     suspend fun saveSlamMapPgm(filename: String): JSONObject? =

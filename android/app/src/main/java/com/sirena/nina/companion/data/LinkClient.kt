@@ -32,21 +32,18 @@ class LinkClient {
             .addInterceptor(IdempotentRetryInterceptor(maxRetries = 2, backoffStartMs = 140L))
             .build()
 
-    /** Stop / status / E-stop — Jetson urgent queue, no long prime. */
+    /** D-pad hold/stop/turn/E-stop — low-latency client (Jetson urgent command plane). */
     private val driveFastClient =
         OkHttpClient.Builder()
-            .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
+            .connectionPool(ConnectionPool(8, 2, TimeUnit.MINUTES))
             .protocols(listOf(Protocol.HTTP_1_1))
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
-            .writeTimeout(6, TimeUnit.SECONDS)
+            .connectTimeout(2, TimeUnit.SECONDS)
+            .readTimeout(2, TimeUnit.SECONDS)
+            .writeTimeout(2, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 
-    /**
-     * Hold start, brake release, straight, turn — short prime when hardware is warm
-     * (Drive screen prefetch + gateway bootstrap).
-     */
+    /** Straight bench + brake release (may prime hardware — slightly longer read). */
     private val driveCommandClient =
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
@@ -211,7 +208,7 @@ class LinkClient {
         direction: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            postDriveCommand(
+            postDrive(
                 "$baseUrl/v1/robot/drive/hold",
                 bearer,
                 JSONObject().put("direction", direction).toString(),
@@ -230,7 +227,7 @@ class LinkClient {
         which: String,
     ): JSONObject =
         withContext(Dispatchers.IO) {
-            postDriveCommand(
+            postDrive(
                 "$baseUrl/v1/robot/drive/turn",
                 bearer,
                 JSONObject().put("which", which).toString(),
@@ -315,6 +312,64 @@ class LinkClient {
         withContext(Dispatchers.IO) {
             postDrive("$baseUrl/v1/robot/drive/straight/stop", bearer, "{}")
         }
+
+    suspend fun movementsList(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/movements")
+        }
+
+    suspend fun movementGet(baseUrl: String, movementId: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/movements/$movementId")
+        }
+
+    suspend fun movementUpsert(
+        baseUrl: String,
+        bearer: String?,
+        body: JSONObject,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            put("$baseUrl/v1/movements", bearer, body.toString())
+        }
+
+    suspend fun movementDelete(
+        baseUrl: String,
+        bearer: String?,
+        movementId: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            delete("$baseUrl/v1/movements/$movementId", bearer)
+        }
+
+    suspend fun movementRun(
+        baseUrl: String,
+        bearer: String?,
+        movementId: String,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            postDrive(
+                "$baseUrl/v1/movements/$movementId/run",
+                bearer,
+                "{}",
+            )
+        }
+
+    suspend fun movementRunStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/movements/run/status")
+        }
+
+    private fun put(url: String, bearer: String?, jsonBody: String): JSONObject {
+        val req =
+            Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .apply { if (!bearer.isNullOrBlank()) header("Authorization", "Bearer $bearer") }
+                .put(jsonBody.toRequestBody(jsonMedia))
+                .build()
+        return execute(req)
+    }
 
     suspend fun robotDriveCalibrationGet(baseUrl: String): JSONObject =
         withContext(Dispatchers.IO) {

@@ -31,6 +31,15 @@ from nina.jetson_net import session_claim
 from nina.jetson_net.state import LinkCoordinator, UserMode
 from nina.jetson_net.nm import NMError
 from sirena_ui.android_gateway.command_plane import QtCommandPlane
+from sirena_ui.android_gateway.movements_http import (
+    movement_delete,
+    movement_get,
+    movement_run,
+    movement_run_status,
+    movement_upsert,
+    movements_list,
+    wire_movement_run_signals,
+)
 from sirena_ui.android_gateway.drive_http import (
     drive_hold_start,
     drive_hold_stop,
@@ -334,6 +343,17 @@ class RobotDisplayNameBody(BaseModel):
     display_name: str = Field(default="", max_length=128)
 
 
+class MovementUpsertBody(BaseModel):
+    """Saved drive sequence (same JSON as ``nina/movements`` on disk)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: Optional[str] = Field(default=None, max_length=32)
+    movement_id: Optional[str] = Field(default=None, max_length=32)
+    name: str = Field(..., min_length=1, max_length=120)
+    steps: list = Field(default_factory=list)
+
+
 @dataclass
 class TabletGateway:
     service: NinaService
@@ -348,6 +368,7 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
     app = FastAPI(title="Sirena Tablet Gateway", version="1.0.0")
     cfg = gw.cfg
     coordinator = gw.coordinator
+    wire_movement_run_signals(gw.service)
 
     app.add_middleware(
         CORSMiddleware,
@@ -724,6 +745,9 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             "drive_hold_stop_endpoint": "/v1/robot/drive/hold/stop",
             "drive_turn_endpoint": "/v1/robot/drive/turn",
             "drive_reverse_endpoint": "/v1/robot/drive/reverse",
+            "movements_endpoint": "/v1/movements",
+            "movements_run_endpoint": "/v1/movements/{movement_id}/run",
+            "movements_run_status_endpoint": "/v1/movements/run/status",
             "manual_drive_speed_pct": int(drive_controller_mod.FIXED_MANUAL_DRIVE_SPEED_PCT),
             "drive_invert_endpoint": "/v1/robot/drive/invert",
             "actions_endpoint": "/v1/actions",
@@ -836,15 +860,15 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             else cfg.robot_drive_speed_percent
         )
         duration_ms = body.duration_ms or cfg.robot_drive_default_duration_ms
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: momentary_drive(
                 gw.service,
                 direction=direction,
                 duration_ms=duration_ms,
                 speed_percent=speed,
             ),
-            timeout=30.0,
-            urgent=direction == "stop",
+            urgent=True,
+            log_label="drive",
         )
 
     @app.post("/v1/robot/drive/brake")
@@ -859,11 +883,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1",
             )
-        return gw.plane.submit(
-            lambda: robot_set_brake(gw.service, on=body.on),
-            timeout=30.0,
-            urgent=bool(body.on),
-        )
+        fn = lambda: robot_set_brake(gw.service, on=body.on)
+        if body.on:
+            return gw.plane.submit(fn, timeout=30.0, urgent=True)
+        return gw.plane.submit_fire_and_forget(fn, urgent=True, log_label="brake-off")
 
     @app.post("/v1/robot/drive/hold")
     def robot_drive_hold_http(
@@ -880,9 +903,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 status.HTTP_400_BAD_REQUEST,
                 detail="direction must be forward, back, left, or right",
             )
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: drive_hold_start(gw.service, direction=direction),
-            timeout=30.0,
+            urgent=True,
+            log_label="hold",
         )
 
     @app.post("/v1/robot/drive/hold/stop")
@@ -893,10 +917,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         auth_mutate(authorization, request)
         if not cfg.enable_robot_bridge:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: drive_hold_stop(gw.service),
-            timeout=30.0,
             urgent=True,
+            log_label="hold-stop",
         )
 
     @app.post("/v1/robot/drive/turn")
@@ -914,9 +938,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 status.HTTP_400_BAD_REQUEST,
                 detail="which must be left or right",
             )
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: drive_turn(gw.service, which=which),
-            timeout=60.0,
+            urgent=True,
+            log_label="turn",
         )
 
     @app.post("/v1/robot/drive/reverse")
@@ -928,9 +953,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         auth_mutate(authorization, request)
         if not cfg.enable_robot_bridge:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: set_drive_reverse(gw.service, on=body.on),
-            timeout=30.0,
+            urgent=True,
+            log_label="reverse",
         )
 
     @app.post("/v1/robot/emergency-stop")
@@ -941,9 +967,8 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
         auth_mutate(authorization, request)
         if not cfg.enable_robot_bridge:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Robot bridge disabled")
-        return gw.plane.submit(
+        return gw.plane.submit_fire_and_forget(
             lambda: emergency_stop(gw.service),
-            timeout=30.0,
             urgent=True,
         )
 
@@ -2109,5 +2134,86 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 "message": "NINA_LINK_SESSION_SCRIPT not set — nothing to release.",
             }
         return session_claim.invoke_script(cfg.session_script, "release")
+
+    @app.get("/v1/movements")
+    def movements_list_http() -> Dict[str, Any]:
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        return movements_list(gw.service)
+
+    @app.get("/v1/movements/{movement_id}")
+    def movement_get_http(movement_id: str) -> Dict[str, Any]:
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        return movement_get(gw.service, movement_id)
+
+    @app.put("/v1/movements")
+    def movement_upsert_http(
+        body: MovementUpsertBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        payload = body.model_dump()
+        out = movement_upsert(gw.service, payload)
+        if not out.get("ok"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail={"message": out.get("error") or "Invalid movement"},
+            )
+        return out
+
+    @app.delete("/v1/movements/{movement_id}")
+    def movement_delete_http(
+        movement_id: str,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        out = movement_delete(gw.service, movement_id)
+        if not out.get("ok"):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail={"message": out.get("error") or "Not found"},
+            )
+        return out
+
+    @app.post("/v1/movements/{movement_id}/run")
+    def movement_run_http(
+        movement_id: str,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        return gw.plane.submit_fire_and_forget(
+            lambda: movement_run(gw.service, movement_id),
+            urgent=True,
+            log_label="movement-run",
+        )
+
+    @app.get("/v1/movements/run/status")
+    def movement_run_status_http() -> Dict[str, Any]:
+        return movement_run_status()
 
     return app

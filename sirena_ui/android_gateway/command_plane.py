@@ -9,7 +9,7 @@ import logging
 import queue
 import threading
 from concurrent.futures import Future
-from typing import Callable, TypeVar
+from typing import Any, Callable, Dict, TypeVar
 
 from PyQt5.QtCore import QObject, Qt, pyqtSlot
 
@@ -19,7 +19,7 @@ T = TypeVar("T")
 
 # Process at most this many HTTP→GUI jobs per event-loop tick so a burst of
 # tablet polls cannot freeze taps for multiple seconds.
-_MAX_DRAIN_PER_TICK = 2
+_MAX_DRAIN_PER_TICK = 16
 
 
 class QtCommandPlane(QObject):
@@ -37,6 +37,28 @@ class QtCommandPlane(QObject):
         target.put((fut, fn))  # type: ignore[arg-type]
         self._schedule_drain()
         return fut.result(timeout=timeout)  # type: ignore[no-any-return]
+
+    def submit_fire_and_forget(
+        self,
+        fn: Callable[[], Any],
+        *,
+        urgent: bool = True,
+        log_label: str = "drive",
+    ) -> Dict[str, Any]:
+        """Queue ``fn`` on the Qt thread and return immediately (tablet D-pad latency)."""
+        fut: Future = Future()
+        target = self._urgent if urgent else self._pending
+        target.put((fut, fn))  # type: ignore[arg-type]
+        self._schedule_drain()
+
+        def _log_outcome() -> None:
+            try:
+                fut.result(timeout=45.0)
+            except Exception as exc:
+                log.warning("%s async command failed: %s", log_label, exc)
+
+        threading.Thread(target=_log_outcome, name=f"plane-{log_label}", daemon=True).start()
+        return {"ok": True, "accepted": True}
 
     def _schedule_drain(self) -> None:
         from PyQt5.QtCore import QMetaObject

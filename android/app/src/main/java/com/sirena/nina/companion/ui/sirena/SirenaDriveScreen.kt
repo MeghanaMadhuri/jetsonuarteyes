@@ -49,6 +49,8 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -671,15 +673,13 @@ fun SirenaDriveScreen(
                                     activePadDir = dir
                                     driveHoldJob?.cancel()
                                     driveHoldJob =
-                                        scope.launch {
+                                        scope.launch(Dispatchers.IO) {
                                             try {
-                                                val j = vm.robotDriveHold(dir)
-                                                val err = j.driveCommandErrorOrNull()
-                                                if (err != null) actionErr = err
+                                                vm.robotDriveHold(dir)
                                             } catch (e: CancellationException) {
                                                 throw e
-                                            } catch (e: Exception) {
-                                                actionErr = driveHttpError(e)
+                                            } catch (_: Exception) {
+                                                // Jetson accepted async; errors surface on status poll.
                                             }
                                         }
                                 }
@@ -689,14 +689,8 @@ fun SirenaDriveScreen(
                             activePadDir = null
                             driveHoldJob?.cancel()
                             driveHoldJob = null
-                            scope.launch {
-                                try {
-                                    val j = vm.robotDriveHoldStop()
-                                    val err = j.driveCommandErrorOrNull()
-                                    if (err != null) actionErr = err
-                                } catch (e: Exception) {
-                                    actionErr = driveHttpError(e)
-                                }
+                            scope.launch(Dispatchers.IO) {
+                                runCatching { vm.robotDriveHoldStop() }
                             }
                         },
                         onDriveStopWithBrake = {
@@ -800,41 +794,27 @@ fun SirenaDriveScreen(
                             }
                         },
                         onTurnLeft = {
-                            scope.launch {
-                                when {
-                                    !bridgeOn -> actionErr = "Drive bridge off."
-                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
-                                    straightRunning -> actionErr = "Wait for straight test to finish."
-                                    else -> {
-                                        actionErr = null
-                                        try {
-                                            val j = vm.robotDriveTurn("left")
-                                            actionErr = j.driveCommandErrorOrNull()
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            actionErr = driveHttpError(e)
-                                        }
+                            when {
+                                !bridgeOn -> actionErr = "Drive bridge off."
+                                brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                straightRunning -> actionErr = "Wait for straight test to finish."
+                                else -> {
+                                    actionErr = null
+                                    scope.launch(Dispatchers.IO) {
+                                        runCatching { vm.robotDriveTurn("left") }
                                     }
                                 }
                             }
                         },
                         onTurnRight = {
-                            scope.launch {
-                                when {
-                                    !bridgeOn -> actionErr = "Drive bridge off."
-                                    brakeOn -> actionErr = "Release brake (Brake: OFF) first."
-                                    straightRunning -> actionErr = "Wait for straight test to finish."
-                                    else -> {
-                                        actionErr = null
-                                        try {
-                                            val j = vm.robotDriveTurn("right")
-                                            actionErr = j.driveCommandErrorOrNull()
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            actionErr = driveHttpError(e)
-                                        }
+                            when {
+                                !bridgeOn -> actionErr = "Drive bridge off."
+                                brakeOn -> actionErr = "Release brake (Brake: OFF) first."
+                                straightRunning -> actionErr = "Wait for straight test to finish."
+                                else -> {
+                                    actionErr = null
+                                    scope.launch(Dispatchers.IO) {
+                                        runCatching { vm.robotDriveTurn("right") }
                                     }
                                 }
                             }

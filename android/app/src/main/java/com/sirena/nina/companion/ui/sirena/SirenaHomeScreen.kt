@@ -70,6 +70,7 @@ val SIRENA_QUICK_ACTIONS: List<SirenaQuickAction> =
         SirenaQuickAction("actions:record", "Record", "\u25CF", "Capture a new pose"),
         SirenaQuickAction("actions:audio", "Audio", "\u266B", "Voice clips"),
         SirenaQuickAction("drive", "Drive", "\u2B95", "Manual control"),
+        SirenaQuickAction("movements", "Movements", "\u21BB", "Saved drive sequences"),
         SirenaQuickAction("vision", "Vision", "\u25CE", "Camera & faces"),
         SirenaQuickAction("map", "Map", "\u25A6", "SLAM & dock"),
         SirenaQuickAction("health", "Health", "\u2665", "System checks"),

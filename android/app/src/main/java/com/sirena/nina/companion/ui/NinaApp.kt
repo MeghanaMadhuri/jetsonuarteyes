@@ -67,6 +67,7 @@ import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactSmallestWidthD
 import com.sirena.nina.companion.ui.sirena.SirenaBreakpointCompactWidth
 import com.sirena.nina.companion.ui.sirena.SirenaDaemonConnectButton
 import com.sirena.nina.companion.ui.sirena.SirenaDriveScreen
+import com.sirena.nina.companion.ui.sirena.SirenaMovementsScreen
 import com.sirena.nina.companion.ui.sirena.SirenaHealthScreen
 import com.sirena.nina.companion.ui.sirena.NavEntry
 import com.sirena.nina.companion.ui.sirena.SirenaHomeScreen
@@ -400,6 +401,11 @@ fun NinaApp(
                                 state = state,
                                 jetsonOnline = jetsonLink.isOnline,
                                 onNavigate = navigateQuick,
+                                shellCompact = shellCompact,
+                            )
+                        "movements" ->
+                            SirenaMovementsScreen(
+                                vm = vm,
                                 shellCompact = shellCompact,
                             )
                         "actions" ->
