@@ -27,7 +27,7 @@ from typing import Dict, Optional
 
 log = logging.getLogger("sirena_ui.main_window")
 
-from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, QRect, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
     QApplication,
@@ -109,12 +109,9 @@ class MainWindow(QMainWindow):
         # then races against that placement, leaving the kiosk shifted
         # right of the panel with the desktop visible underneath.
         if self._kiosk:
-            primary = QGuiApplication.primaryScreen()
-            if primary is not None:
-                # availableGeometry excludes WM panels; geometry() can be
-                # wider than the visible panel and leaves the UI shifted/cropped.
-                pg = primary.availableGeometry()
-                self.resize(pg.width(), pg.height())
+            rect = self._kiosk_target_rect()
+            if rect is not None:
+                self.setGeometry(rect)
             else:
                 self.resize(1024, 600)
             self.setMinimumSize(640, 360)
@@ -306,6 +303,41 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._apply_kiosk_geometry)
         QTimer.singleShot(250, self._apply_kiosk_geometry)
 
+    def _kiosk_target_rect(self) -> Optional[QRect]:
+        """Visible kiosk rect: never wider than the physical screen.
+
+        Misconfigured ``xrandr`` desktops sometimes report an
+        ``availableGeometry`` wider than the panel; that sizes the window
+        past the right edge and clips the Drive manual column. Clamp to
+        ``geometry()`` and optional ``NINA_UI_PANEL_WIDTH`` /
+        ``NINA_UI_PANEL_HEIGHT`` (default 1024×600).
+        """
+        primary = QGuiApplication.primaryScreen()
+        if primary is None:
+            return None
+        avail = primary.availableGeometry()
+        full = primary.geometry()
+        w = min(avail.width(), full.width())
+        h = min(avail.height(), full.height())
+        raw_w = (os.environ.get("NINA_UI_PANEL_WIDTH") or "").strip()
+        raw_h = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "").strip()
+        try:
+            if raw_w:
+                w = min(w, max(640, int(raw_w)))
+        except ValueError:
+            pass
+        try:
+            if raw_h:
+                h = min(h, max(360, int(raw_h)))
+        except ValueError:
+            pass
+        if not raw_w and not raw_h and w > 1024:
+            # Common 10.1" panel — cap when the WM reports an oversized desktop.
+            w = min(w, 1024)
+        if not raw_w and not raw_h and h > 600:
+            h = min(h, 600)
+        return QRect(avail.x(), avail.y(), w, h)
+
     def _apply_kiosk_geometry(self) -> None:
         """Force the kiosk window to fill the primary screen exactly.
 
@@ -329,7 +361,9 @@ class MainWindow(QMainWindow):
         if self.isFullScreen() or self.isMaximized():
             self.showNormal()
 
-        target = primary.availableGeometry()
+        target = self._kiosk_target_rect()
+        if target is None:
+            return
         if (self.x(), self.y(), self.width(), self.height()) != (
             target.x(), target.y(), target.width(), target.height()
         ):

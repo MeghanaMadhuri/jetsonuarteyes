@@ -113,6 +113,12 @@ Environment=NINA_BATTERY_REMINDER_SEC=90
 Environment=NINA_BATTERY_STARTUP_DEBOUNCE=1
 Environment=NINA_BATTERY_LATCH_PERSIST=1
 
+# 10.1" panel layout — clamp window and free width for Drive manual controls.
+Environment=NINA_UI_PANEL_WIDTH=1024
+Environment=NINA_UI_PANEL_HEIGHT=600
+Environment=NINA_UI_SIDEBAR_WIDTH=136
+Environment=NINA_DRIVE_CAMERA_COL_MAX_W=288
+
 # Capacitive touch AT42QT2120 @ 0x1c (same bus 7, pins 3/5).
 Environment=NINA_TOUCH_AT42QT2120_ENABLE=1
 Environment=NINA_TOUCH_I2C_BUS=7

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -41,10 +42,13 @@ class Sidebar(QFrame):
     def __init__(self, version_label: str = "v0.4", host_label: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("sidebar")
-        # 160 px (was 200) - the nav rows ("  ⌂   Home") fit cleanly at
-        # 14 px font with the 17 px left padding, and we get 40 px back
-        # for screen content. Critical at 1024 wide.
-        self.setFixedWidth(160)
+        # 136–160 px — narrower sidebar frees horizontal space on 1024×600.
+        raw = (os.environ.get("NINA_UI_SIDEBAR_WIDTH") or "136").strip()
+        try:
+            width = max(120, min(200, int(raw)))
+        except ValueError:
+            width = 136
+        self.setFixedWidth(width)
         self._buttons: Dict[str, QPushButton] = {}
 
         v = QVBoxLayout(self)

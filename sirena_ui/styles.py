@@ -360,9 +360,9 @@ QPushButton#dpadButton {{
     border-radius: 12px;
     font-size: 14px;
     font-weight: 600;
-    /* 54 x 54 — fits 1024-wide kiosk with sidebar + manual column. */
-    min-width: 54px;
-    min-height: 54px;
+    /* 48 x 48 — manual column on 1024×600 (sidebar 136 + camera ~288). */
+    min-width: 48px;
+    min-height: 48px;
 }}
 QPushButton#dpadButton:hover {{
     background-color: {BRAND_RED_TINT};
@@ -382,12 +382,12 @@ QPushButton#dpadStop {{
     color: {BRAND_WHITE};
     border: none;
     /* radius half of min-size keeps the circular look */
-    border-radius: 27px;
-    font-size: 12px;
+    border-radius: 24px;
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: 1px;
-    min-width: 54px;
-    min-height: 54px;
+    min-width: 48px;
+    min-height: 48px;
 }}
 QPushButton#dpadStop:hover {{
     background-color: {BRAND_RED_HOVER};

@@ -42,6 +42,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -97,6 +98,10 @@ _DRIVE_FACE_GREET = os.environ.get("NINA_DRIVE_FACE_GREET", "0").strip().lower()
     "on",
 )
 _DRIVE_CAM_MAX_W = max(160, int(os.environ.get("NINA_DRIVE_CAM_MAX_W", "480")))
+# Cap the camera *column* width so the manual-control column keeps ~500+ px at 1024.
+_DRIVE_CAMERA_COL_MAX_W = max(
+    220, min(400, int(os.environ.get("NINA_DRIVE_CAMERA_COL_MAX_W", "288")))
+)
 _DRIVE_DEFER_HEAVY_MS = max(0, int(os.environ.get("NINA_DRIVE_DEFER_HEAVY_MS", "50")))
 _STATE_RENDER_COALESCE_MS = max(16, int(os.environ.get("NINA_DRIVE_STATE_COALESCE_MS", "50")))
 
@@ -212,8 +217,8 @@ class DriveScreen(QWidget):
             pass
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(6, 6, 6, 6)
-        outer.setSpacing(6)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(4)
 
         top = QVBoxLayout()
         top.setSpacing(4)
@@ -233,12 +238,17 @@ class DriveScreen(QWidget):
         outer.addLayout(top)
 
         body = QHBoxLayout()
-        body.setSpacing(8)
+        body.setSpacing(6)
         outer.addLayout(body, stretch=1)
 
-        # Favor manual controls (~52%) so Turn/E-STOP are not clipped at 864 px.
-        body.addWidget(self._build_camera_card(), stretch=48)
+        # Fixed-width camera column — percent splits let the HUD row force a wide
+        # minimum and clip Turn / E-STOP on the right at 1024×600.
+        _camera = self._build_camera_card()
+        _camera.setMaximumWidth(_DRIVE_CAMERA_COL_MAX_W)
+        _camera.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Expanding)
+        body.addWidget(_camera, stretch=0)
         _control = self._build_control_card()
+        _control.setMinimumWidth(0)
         # Scroll so Manual controls (straight test + 90° turns) stay
         # reachable on 1024×600; the stack also caches this screen on
         # first open—restart the app after deploy to pick up UI changes.
@@ -249,8 +259,9 @@ class DriveScreen(QWidget):
         _ctrl_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         _control.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         _ctrl_scroll.setWidget(_control)
-        _ctrl_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        body.addWidget(_ctrl_scroll, stretch=52)
+        _ctrl_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _ctrl_scroll.setMinimumWidth(0)
+        body.addWidget(_ctrl_scroll, stretch=1)
 
         # Push initial state into the HUD / pills.
         self._queue_render_state(self._drive.state())
@@ -295,7 +306,7 @@ class DriveScreen(QWidget):
         card.add_layout(header)
         header.addWidget(CardTitle("Front camera"))
         header.addStretch(1)
-        self._cam_pill = Pill("Preview \u2014 camera not connected", Pill.KIND_NEUTRAL)
+        self._cam_pill = Pill("No camera", Pill.KIND_NEUTRAL)
         header.addWidget(self._cam_pill)
 
         # The camera viewport now hosts the LIVE VisionWorker feed.
@@ -359,30 +370,36 @@ class DriveScreen(QWidget):
 
         card.add(viewport, stretch=1)
 
-        # HUD row beneath the viewport with the live drive state.
-        hud = QHBoxLayout()
-        hud.setSpacing(8)
-        card.add_layout(hud)
-        self._hud_speed = self._make_hud("Speed", "0%")
-        self._hud_heading = self._make_hud("Heading", "0\u00b0")
-        self._hud_distance = self._make_hud("Distance", "0.0 m")
-        self._hud_battery = self._make_hud("Battery", "n/a")
-        self._hud_imu = self._make_hud("IMU drift", "\u2014")
-        for w in (
-            self._hud_speed,
-            self._hud_heading,
-            self._hud_distance,
-            self._hud_battery,
-            self._hud_imu,
+        # HUD tiles in a 3+2 grid — one row of five forced ~500 px min width and
+        # clipped the manual column on the right.
+        hud_host = QWidget()
+        hud = QGridLayout(hud_host)
+        hud.setContentsMargins(0, 0, 0, 0)
+        hud.setHorizontalSpacing(6)
+        hud.setVerticalSpacing(6)
+        self._hud_speed = self._make_hud("Spd", "0%")
+        self._hud_heading = self._make_hud("Hdg", "0\u00b0")
+        self._hud_battery = self._make_hud("Batt", "n/a")
+        self._hud_distance = self._make_hud("Dist", "0.0 m")
+        self._hud_imu = self._make_hud("Drift", "\u2014")
+        for col, w in enumerate(
+            (self._hud_speed, self._hud_heading, self._hud_battery)
         ):
-            hud.addWidget(w, stretch=1)
+            w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            hud.addWidget(w, 0, col)
+        self._hud_distance.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._hud_imu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        hud.addWidget(self._hud_distance, 1, 0)
+        hud.addWidget(self._hud_imu, 1, 1, 1, 2)
+        card.add(hud_host)
 
         return card
 
     def _make_hud(self, label: str, value: str) -> Card:
         # Tight HUD tile - was padding=12, spacing=4. At 1024 x 600 we
         # need every px the camera viewport can borrow.
-        box = Card(padding=6, spacing=2, subtle=True)
+        box = Card(padding=4, spacing=2, subtle=True)
+        box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         box.add(SectionLabel(label))
         v = QLabel(value)
         v.setStyleSheet(
@@ -516,7 +533,7 @@ class DriveScreen(QWidget):
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(6)
         card.add_layout(bottom_row)
-        self._brake_btn = QPushButton("Brake: ON")
+        self._brake_btn = QPushButton("Brake ON")
         self._brake_btn.setObjectName("togglePill")
         self._brake_btn.setCheckable(True)
         self._brake_btn.setChecked(True)
@@ -530,7 +547,7 @@ class DriveScreen(QWidget):
         self._brake_btn.clicked.connect(self._on_brake_toggle)
         bottom_row.addWidget(self._brake_btn)
 
-        self._reverse_btn = QPushButton("Reverse: OFF")
+        self._reverse_btn = QPushButton("Rev OFF")
         self._reverse_btn.setObjectName("togglePill")
         self._reverse_btn.setCheckable(True)
         self._reverse_btn.setFocusPolicy(Qt.NoFocus)
@@ -543,7 +560,7 @@ class DriveScreen(QWidget):
         # Big red panic button - shrunk from the default `stopButton`
         # styling (16/24 padding, 18 px font) which was ~50 px tall and
         # pushed the kb hint off-screen on the 10.1" panel.
-        self._estop_btn = QPushButton("\u26A0  E-STOP")
+        self._estop_btn = QPushButton("E-STOP")
         self._estop_btn.setObjectName("stopButton")
         self._estop_btn.setCursor(Qt.PointingHandCursor)
         self._estop_btn.setFocusPolicy(Qt.NoFocus)
@@ -574,12 +591,12 @@ class DriveScreen(QWidget):
     def _on_brake_toggle(self, checked: bool) -> None:
         if checked and self._straight_test_timer.isActive():
             self._finish_straight_test()
-        self._brake_btn.setText(f"Brake: {'ON' if checked else 'OFF'}")
+        self._brake_btn.setText(f"Brake {'ON' if checked else 'OFF'}")
         self._drive.set_brake(checked)
         self.setFocus()
 
     def _on_reverse_toggle(self, checked: bool) -> None:
-        self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
+        self._reverse_btn.setText(f"Rev {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
         self.setFocus()
 
@@ -590,7 +607,7 @@ class DriveScreen(QWidget):
         # hardware; this just makes the UI agree).
         self._brake_btn.blockSignals(True)
         self._brake_btn.setChecked(True)
-        self._brake_btn.setText("Brake: ON")
+        self._brake_btn.setText("Brake ON")
         self._brake_btn.blockSignals(False)
         self._restore_after_straight_test()
         # Return focus to the screen so a follow-up Esc / Space still
@@ -1097,7 +1114,7 @@ class DriveScreen(QWidget):
         br = bool(state.get("brake", True))
         self._brake_btn.blockSignals(True)
         self._brake_btn.setChecked(br)
-        self._brake_btn.setText(f"Brake: {'ON' if br else 'OFF'}")
+        self._brake_btn.setText(f"Brake {'ON' if br else 'OFF'}")
         self._brake_btn.blockSignals(False)
 
         self._hud_speed._value_label.setText(f"{state['speed_pct']}%")
