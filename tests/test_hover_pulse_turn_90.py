@@ -49,6 +49,7 @@ from nina.config.settings import HoverboardAxisSettings
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
+    hover_computed_turn_pivot_goals,
     _imu_turn_max_steps,
     _imu_turn_post_settle_sec,
     _imu_turn_pre_settle_sec,
@@ -176,36 +177,16 @@ def _fast_turn_env(**extras: str) -> dict[str, str]:
     return env
 
 
-def _step_ticks_for_blend(blend: int = 20) -> tuple[int, int]:
-    """Per-step goals produced by ``_goals_for_wheels`` at ``blend``%%.
-
-    With the test axis the pivot pipeline picks the *computed* pivot
-    goals (no per-corner overrides in ``_axis()``):
-    ``hover_computed_turn_pivot_goals(turn_left=True)`` returns
-    ``(1900, 2200)`` for an L=FWD R=BACK micro-step (left-pivot
-    geometry); the mirror returns ``(2200, 1900)``. At ``u=blend/100``:
-    left = brake + (target − brake) * u.
-
-    Returns ``(pivot_left_goal, pivot_right_goal)`` for the LEFT servo.
-    The right servo mirrors it around brake.
-    """
-    # Hard-coded for blend=20 to match the assertion arithmetic in the
-    # IMU correction tests: brake=2048, target=1900/2200, u=0.2 →
-    # 2048 + (-148*0.2) = 2018; 2048 + (152*0.2) = 2078.
-    assert blend == 20, "helper currently only computes the 20% blend goals"
-    return 2018, 2078
+def _pivot_left_goals_full() -> dict[int, int]:
+    """Full-pivot goals for L=FWD, R=BACK (yaw left) on the test axis."""
+    l, r = hover_computed_turn_pivot_goals(_axis(), turn_left=True)
+    return {12: l, 13: r}
 
 
-def _pivot_left_goals_20pct() -> dict[int, int]:
-    """L=FWD, R=BACK at 20% blend → L=2018, R=2078 (yaw left)."""
-    lg, rg = _step_ticks_for_blend(20)
-    return {12: lg, 13: rg}
-
-
-def _pivot_right_goals_20pct() -> dict[int, int]:
-    """L=BACK, R=FWD at 20% blend → L=2078, R=2018 (yaw right)."""
-    lg, rg = _step_ticks_for_blend(20)
-    return {12: rg, 13: lg}
+def _pivot_right_goals_full() -> dict[int, int]:
+    """Full-pivot goals for L=BACK, R=FWD (yaw right) on the test axis."""
+    l, r = hover_computed_turn_pivot_goals(_axis(), turn_left=False)
+    return {12: l, 13: r}
 
 
 def _make_drive(yaw_fn=None, begin_fn=None, end_fn=None) -> HoverboardAxisDrive:
@@ -334,7 +315,7 @@ def test_right_turn_first_step_uses_pivot_right_geometry(
     with patch.dict(os.environ, _fast_turn_env(), clear=False):
         drv.pulse_turn_90("right")
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_right_goals_20pct(), (
+    assert pivot == _pivot_right_goals_full(), (
         f"first micro-step for right turn must use L=BACK/R=FWD geometry; "
         f"saw {pivot}"
     )
@@ -352,7 +333,7 @@ def test_left_turn_first_step_uses_pivot_left_geometry(
     with patch.dict(os.environ, _fast_turn_env(), clear=False):
         drv.pulse_turn_90("left")
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_left_goals_20pct(), (
+    assert pivot == _pivot_left_goals_full(), (
         f"first micro-step for left turn must use L=FWD/R=BACK geometry; "
         f"saw {pivot}"
     )
@@ -481,7 +462,7 @@ def test_turn_respects_invert_sign_env(
     ):
         ok = drv.pulse_turn_90("right")
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_right_goals_20pct(), (
+    assert pivot == _pivot_right_goals_full(), (
         f"first step under invert=1 must still use right-pivot geometry "
         f"in the chassis frame; saw {pivot}"
     )
@@ -735,10 +716,8 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
     assert _imu_turn_target_deg() == 90.0
     assert _imu_turn_max_steps() == 40
-    # The two reuse-from-forward getters: defaults match the forward
-    # IMU correction defaults (30 dps / 20 % blend).
     assert _imu_turn_step_rate_deg_per_sec() == 30.0
-    assert _imu_turn_step_blend_pct() == 20
+    assert _imu_turn_step_blend_pct() == 100
     assert _imu_turn_pre_settle_sec() == 0.20
     assert _imu_turn_post_settle_sec() == 0.30
     assert _imu_turn_progress_check_steps() == 6
@@ -763,10 +742,7 @@ def test_turn_env_overrides_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NINA_HOVER_TURN_MAX_STEPS", "9999")
     assert _imu_turn_max_steps() == 200
 
-    monkeypatch.setenv("NINA_HOVER_TURN_STEP_BLEND_PCT", "999")
     assert _imu_turn_step_blend_pct() == 100
-    monkeypatch.setenv("NINA_HOVER_TURN_STEP_BLEND_PCT", "0")
-    assert _imu_turn_step_blend_pct() == 1
 
 
 # ----------------------------------------------------------------------
@@ -819,7 +795,7 @@ def test_right_turn_under_swap_uses_pivot_left_geometry(
         drv.pulse_turn_90("right")
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
     # Under swap=1, "right" applies the LEFT geometry.
-    assert pivot == _pivot_left_goals_20pct(), (
+    assert pivot == _pivot_left_goals_full(), (
         f"first step for 'right' under swap=1 must use the L=FWD/R=BACK "
         f"geometry (the inverted label mapping); saw {pivot}"
     )
@@ -843,23 +819,15 @@ def test_left_turn_under_swap_uses_pivot_right_geometry(
     ):
         drv.pulse_turn_90("left")
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_right_goals_20pct(), (
+    assert pivot == _pivot_right_goals_full(), (
         f"first step for 'left' under swap=1 must use the L=BACK/R=FWD "
         f"geometry (the inverted label mapping); saw {pivot}"
     )
 
 
 def _timed_turn_env(**extras: str) -> dict[str, str]:
-    """Env for the timed turn_left / turn_right tests.
-
-    Forces the timed-pivot blend to 20% so the recorded Dynamixel
-    goals match the ``_pivot_*_goals_20pct()`` helpers. The
-    timed-turn path defaults to 17% via ``NINA_DRIVE_TURN_PIVOT_DEG=15``
-    (15° of nominal 90°); ``18`` degrees lands exactly on 20%.
-    """
-    env = {
-        "NINA_DRIVE_TURN_PIVOT_DEG": "18",
-    }
+    """Env for the timed turn_left / turn_right tests."""
+    env: dict[str, str] = {}
     env.update(extras)
     return env
 
@@ -883,7 +851,7 @@ def test_timed_turn_left_honours_swap_pivot_dir(
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
     # Under swap=1, "turn_left" must mechanically rotate the
     # swapped chassis LEFT — that's the L=BACK, R=FWD geometry.
-    assert pivot == _pivot_right_goals_20pct(), (
+    assert pivot == _pivot_right_goals_full(), (
         f"timed turn_left under swap=1 must use the L=BACK/R=FWD "
         f"geometry; saw {pivot}"
     )
@@ -905,7 +873,7 @@ def test_timed_turn_right_honours_swap_pivot_dir(
     ):
         drv.turn_right(duration=0.0)
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_left_goals_20pct(), (
+    assert pivot == _pivot_left_goals_full(), (
         f"timed turn_right under swap=1 must use the L=FWD/R=BACK "
         f"geometry; saw {pivot}"
     )
@@ -927,7 +895,7 @@ def test_timed_turn_left_swap_zero_uses_conventional_geometry(
     ):
         drv.turn_left(duration=0.0)
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_left_goals_20pct()
+    assert pivot == _pivot_left_goals_full()
 
 
 # ----------------------------------------------------------------------

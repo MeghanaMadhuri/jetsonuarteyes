@@ -20,8 +20,7 @@ into the back stroke without slowing down.
 
 **Pivot / turn:** lean ID ``id_left`` (often 12) and ``id_right`` (often 13) use
 opposite forward/back goals. **Turn left** = left forward lean + right backward
-lean. **Timed** ``turn_left`` / ``turn_right`` use a partial pivot blend (default
-~15° of nominal 90° via ``NINA_DRIVE_TURN_PIVOT_DEG`` / ``NINA_HOVER_TURN_PIVOT_BLEND_PCT``).
+lean. **Timed** ``turn_left`` / ``turn_right`` use full pivot goals (100% blend).
 **Held** D-pad pivots use ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer
 ``speed_percent`` when the UI applies asymmetric duties. **Turn right** is the mirror.
 
@@ -77,7 +76,7 @@ hoverboard chassis; lower them only if the realign is over-shooting):
   ``NINA_HOVER_IMU_CORR_ENABLE``                default 1
   ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``         default 4.0   (only fire when drift gets noticeable)
   ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``          default 1.5   (stop realign when drift returns inside this)
-  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       default 20    (per-MICRO-STEP blend)
+  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       (ignored — always 100% full pivot)
   ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``         default 0.18  (per-MICRO-STEP duration CAP;
                                                                 actual duration is proportional
                                                                 to remaining drift, never longer
@@ -466,6 +465,10 @@ def _straight_back_right_ticks_offset() -> int:
 # can land on brake and wipe blended timed-turn motion for that axis.
 _TURN_PIVOT_GOAL_OFFSET_TICKS = 100
 
+# All pivot micro-steps (closed-loop turns, IMU drift correction, standstill
+# correction, timed turn_left/right) use full calibrated pivot goals.
+_PIVOT_MICROSTEP_BLEND_PCT = 100
+
 
 def hover_computed_turn_pivot_goals(
     axis: HoverboardAxisSettings,
@@ -576,19 +579,8 @@ def _imu_corr_deadband_deg() -> float:
 
 
 def _imu_corr_pivot_blend_pct() -> int:
-    """**Per-micro-step** pivot blend %. Each correction is a CHAIN of small
-    decisive pivots; this controls the *individual* step's lean strength,
-    not a one-shot pivot. 20 is the default — strong enough that each step
-    visibly turns the chassis (the previous 12 % moved the MX-28 servos so
-    briefly that the bot didn't budge).
-    """
-    try:
-        return max(
-            1,
-            min(100, int(float(os.environ.get("NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT", "20")))),
-        )
-    except ValueError:
-        return 20
+    """Per-micro-step pivot blend % — always full pivot (:data:`_PIVOT_MICROSTEP_BLEND_PCT`)."""
+    return _PIVOT_MICROSTEP_BLEND_PCT
 
 
 def _imu_corr_pivot_max_sec() -> float:
@@ -1158,41 +1150,8 @@ def _straight_settle_poll_sec() -> float:
 
 
 def _straight_corr_blend_pct() -> int:
-    """Pivot lean blend (%) used by the drift-correction micro-steps.
-
-    The legacy in-motion :meth:`HoverboardAxisDrive._perform_pivot_correction`
-    used ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT`` (default **20**) — a
-    gentle nudge that the chassis often couldn't translate into actual
-    rotation because static friction wins at a ~6–8 tick lean offset.
-    Initial deployment of the new standstill correction used 100%
-    (full calibrated pivot) on the assumption we'd need that much
-    torque to break stiction from a stopped state.
-
-    Field data revealed the opposite problem: at 100% blend + ≥0.030 s
-    kick the chassis releases far more rotation than the steady-state
-    rate suggests (observed multipliers of 2–6× for cycles with
-    high pre-correction drift), causing single-step overshoot of
-    4–6° on small drifts and one cycle of 26° of unwanted rotation
-    when the chassis had built-up momentum from the prior forward
-    leg. Default lowered to **60** to dial the per-kick energy down
-    while still being well above the stiction-defeat threshold (a
-    60-of-the-way-to-full pivot offset is still a substantial lean,
-    not a 20%-tick-offset whisper).
-
-    Dial down further (e.g. ``50``) if the chassis still over-rotates
-    per step; bump up (``80``, ``100``) if a step occasionally fails
-    to budge the bot. Clamped to ``[1, 100]``.
-    """
-    try:
-        return max(
-            1,
-            min(
-                100,
-                int(os.environ.get("NINA_HOVER_STRAIGHT_CORR_BLEND_PCT", "60")),
-            ),
-        )
-    except ValueError:
-        return 60
+    """Standstill drift-correction micro-step blend % — always full pivot."""
+    return _PIVOT_MICROSTEP_BLEND_PCT
 
 
 def _straight_corr_step_dur_cap_sec() -> float:
@@ -1550,25 +1509,8 @@ def _drive_turn_micro_step_deg() -> float:
 
 
 def _timed_turn_pivot_blend_pct() -> int:
-    """How far timed Turn left/right lean toward full pivot (1–100).
-
-    Default ~15° of nominal 90°: ``NINA_DRIVE_TURN_PIVOT_DEG=15`` → 17%% blend.
-    Override directly with ``NINA_HOVER_TURN_PIVOT_BLEND_PCT``.
-    """
-    deg_raw = (os.environ.get("NINA_DRIVE_TURN_PIVOT_DEG") or "15").strip()
-    if deg_raw:
-        try:
-            deg = max(1.0, min(90.0, float(deg_raw)))
-            return max(1, min(100, int(round(deg / 90.0 * 100.0))))
-        except ValueError:
-            pass
-    try:
-        return max(
-            1,
-            min(100, int(os.environ.get("NINA_HOVER_TURN_PIVOT_BLEND_PCT", "17"))),
-        )
-    except ValueError:
-        return 17
+    """Timed ``turn_left`` / ``turn_right`` blend % — always full pivot."""
+    return _PIVOT_MICROSTEP_BLEND_PCT
 
 
 # ----------------------------------------------------------------------
@@ -1648,21 +1590,8 @@ def _imu_turn_step_rate_deg_per_sec() -> float:
 
 
 def _imu_turn_step_blend_pct() -> int:
-    """Per-micro-step pivot blend %% for the closed-loop turn.
-
-    Defaults to the forward IMU correction blend
-    (``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``, 20). Override with
-    ``NINA_HOVER_TURN_STEP_BLEND_PCT`` to lean harder on each step
-    (faster turn, more risk of overshoot) or softer (smoother, more
-    steps).
-    """
-    raw = (os.environ.get("NINA_HOVER_TURN_STEP_BLEND_PCT") or "").strip()
-    if raw:
-        try:
-            return max(1, min(100, int(float(raw))))
-        except ValueError:
-            pass
-    return _imu_corr_pivot_blend_pct()
+    """Closed-loop 90° turn micro-step blend % — always full pivot."""
+    return _PIVOT_MICROSTEP_BLEND_PCT
 
 
 def _imu_turn_pre_settle_sec() -> float:
@@ -3973,10 +3902,10 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: partial pivot lean (~15° default), hold, then brake.
+        """Timed yaw: full pivot lean, hold, then brake.
 
-        Blend toward calibrated pivot goals via ``_timed_turn_pivot_blend_pct``
-        (not full 90° lean). Held D-pad pivots use asymmetric duties separately.
+        Uses full calibrated pivot goals on every micro-step. Held D-pad
+        pivots use asymmetric duties separately.
 
         Honours :func:`_imu_turn_swap_pivot_dir`: under the swapped
         mapping (the reference-chassis default) a "turn left" request
@@ -4009,7 +3938,7 @@ class HoverboardAxisDrive:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """Timed yaw: partial pivot lean; mirror of :meth:`turn_left`.
+        """Timed yaw: full pivot lean; mirror of :meth:`turn_left`.
 
         Honours :func:`_imu_turn_swap_pivot_dir`: under the swapped
         mapping (the reference-chassis default) a "turn right" request

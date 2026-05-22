@@ -125,10 +125,7 @@ def _axis_pulse_fast() -> HoverboardAxisSettings:
 def _fast_straight_env() -> dict[str, str]:
     """Snappy timings + IMU correction tuning for unit tests.
 
-    Pins ``NINA_HOVER_STRAIGHT_CORR_BLEND_PCT`` to 20 so the pivot
-    goals match ``_goals_for_wheels(..., 20, ..., 20)`` in the
-    direction-of-pivot assertions below. The production default
-    (full calibrated pivot at 100) is exercised by a dedicated test.
+    Pivot micro-steps always use full calibrated goals (100% blend).
     The deadband override (1.5°) is tighter than the new production
     default (2.5°) so the existing ``drift=0.5`` / ``drift=10``
     fixtures keep mapping to skip / correct as the assertions expect.
@@ -141,7 +138,6 @@ def _fast_straight_env() -> dict[str, str]:
         "NINA_HOVER_STRAIGHT_BACK_LEG_SEC": "0.05",
         "NINA_HOVER_STRAIGHT_BRAKE_SETTLE_SEC": "0.02",
         "NINA_HOVER_STRAIGHT_PRIME_SEC": "0.01",
-        "NINA_HOVER_STRAIGHT_CORR_BLEND_PCT": "20",
         "NINA_HOVER_STRAIGHT_CORR_STEP_DUR_CAP_SEC": "0.05",
         "NINA_HOVER_STRAIGHT_CORR_STEP_MIN_SEC": "0.005",
         "NINA_HOVER_STRAIGHT_CORR_STEP_RATE_DPS": "60",
@@ -167,7 +163,6 @@ def _fast_straight_env() -> dict[str, str]:
         # backward pulse and the 90° turn closed loop). Pinned so the
         # backward + turn tests in other modules stay stable.
         "NINA_HOVER_IMU_CORR_DEADBAND_DEG": "1.5",
-        "NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT": "20",
         "NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC": "0.05",
         "NINA_HOVER_IMU_CORR_STEP_MIN_SEC": "0.005",
         "NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC": "0.005",
@@ -194,8 +189,15 @@ def _make_hb(
 
 
 def _expected_forward_goals() -> dict[int, int]:
-    fl = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
-    fr = _nudge_goal_from_brake(2100, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    from nina.controllers.hoverboard_axis_drive import (
+        _straight_fwd_left_ticks_offset,
+        _straight_fwd_right_ticks_offset,
+    )
+
+    fl_cal = 2100 + _straight_fwd_left_ticks_offset()
+    fr_cal = 2100 + _straight_fwd_right_ticks_offset()
+    fl = _nudge_goal_from_brake(fl_cal, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(fr_cal, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
     return {12: fl, 13: fr}
 
 
@@ -252,7 +254,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_back_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.30
         assert _straight_abort_drift_deg() == 90.0
-        assert _straight_corr_blend_pct() == 60
+        assert _straight_corr_blend_pct() == 100
         assert _straight_corr_step_dur_cap_sec() == 0.030
         assert _straight_corr_step_min_sec() == 0.030
         # Backward-specific step duration defaults: softer than forward
@@ -649,7 +651,7 @@ def test_straight_env_getter_overrides() -> None:
         assert _straight_leg_sec() == 0.5
         assert _straight_brake_settle_sec() == 0.1
         assert _straight_abort_drift_deg() == 45.0
-        assert _straight_corr_blend_pct() == 60
+        assert _straight_corr_blend_pct() == 100
         assert _straight_corr_step_dur_cap_sec() == 0.18
         assert _straight_corr_step_min_sec() == 0.04
         assert _straight_corr_step_rate_dps() == 90.0
@@ -811,12 +813,12 @@ def test_forward_loop_cumulative_drift_compounds_across_legs() -> None:
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     pivot_steps = sum(
         1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
@@ -863,12 +865,11 @@ def test_forward_loop_positive_drift_pivots_left() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    # Expected pivot-left goals: left=FWD@20%, right=BACK@20%.
     pivot_left = hb._goals_for_wheels(
         left_dir=hb.DIR_FORWARD,
-        left_speed=20,
+        left_speed=100,
         right_dir=hb.DIR_BACKWARD,
-        right_speed=20,
+        right_speed=100,
     )
     assert any(g == pivot_left for g in dxl.goal_writes), (
         f"expected pivot-left goals {pivot_left} not found in {dxl.goal_writes}"
@@ -889,9 +890,9 @@ def test_forward_loop_negative_drift_pivots_right() -> None:
 
     pivot_right = hb._goals_for_wheels(
         left_dir=hb.DIR_BACKWARD,
-        left_speed=20,
+        left_speed=100,
         right_dir=hb.DIR_FORWARD,
-        right_speed=20,
+        right_speed=100,
     )
     assert any(g == pivot_right for g in dxl.goal_writes), (
         f"expected pivot-right goals {pivot_right} not found"
@@ -916,12 +917,12 @@ def test_forward_loop_swap_pivot_dir_inverts_goals() -> None:
     _wait_until_idle(hb)
 
     swapped_pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     legacy_pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     assert any(g == swapped_pivot_left for g in dxl.goal_writes), (
         f"with swap=1, positive-drift pivot_left decision must apply "
@@ -947,9 +948,9 @@ def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
 
     pivot_right = hb._goals_for_wheels(
         left_dir=hb.DIR_BACKWARD,
-        left_speed=20,
+        left_speed=100,
         right_dir=hb.DIR_FORWARD,
-        right_speed=20,
+        right_speed=100,
     )
     assert any(g == pivot_right for g in dxl.goal_writes), (
         "with INVERT_SIGN=1, positive drift should produce a right pivot"
@@ -963,8 +964,7 @@ def test_forward_loop_correction_default_uses_meaningful_pivot_blend() -> None:
     centre — not the legacy 20% blended nudge that chassis
     stiction defeated.
 
-    The current default is 60% blend (tuned down from 100% to dial
-    in less per-kick rotation); this test asserts the structural
+    Blend is always 100%; this test asserts the structural
     properties of the write rather than the exact tick values, so
     future blend-tuning doesn't churn the test.
     """
@@ -1123,12 +1123,12 @@ def test_active_settle_timeout_skips_correction_but_still_checks_abort() -> None
     # But correction must NOT fire — no pivot writes despite the 5°
     # drift being above the deadband.
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     assert all(g != pivot_l and g != pivot_r for g in dxl.goal_writes), (
         "active-settle timeout must skip the standstill micro-step "
@@ -1156,12 +1156,12 @@ def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps <= 2, (
@@ -1197,12 +1197,12 @@ def test_forward_loop_correction_continues_past_deadband_until_residual() -> Non
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps >= 2, (
@@ -1236,12 +1236,12 @@ def test_forward_loop_correction_exits_at_residual_not_deadband() -> None:
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     # First correction window should be exactly one step (5.0 → 1.4,
     # exits because 1.4 ≤ residual=1.5). Subsequent legs may add more
@@ -1274,12 +1274,12 @@ def test_forward_loop_residual_clamped_below_deadband() -> None:
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps >= 1, (
@@ -1306,15 +1306,15 @@ def test_forward_loop_drift_within_deadband_skips_correction() -> None:
     brk = {12: 2048, 13: 2048}
     pivot_l = hb._goals_for_wheels(
         left_dir=hb.DIR_FORWARD,
-        left_speed=20,
+        left_speed=100,
         right_dir=hb.DIR_BACKWARD,
-        right_speed=20,
+        right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
         left_dir=hb.DIR_BACKWARD,
-        left_speed=20,
+        left_speed=100,
         right_dir=hb.DIR_FORWARD,
-        right_speed=20,
+        right_speed=100,
     )
     for g in dxl.goal_writes:
         assert g != pivot_l and g != pivot_r, (
@@ -1561,12 +1561,12 @@ def test_backward_loop_cumulative_drift_compounds_across_legs() -> None:
     _wait_until_idle(hb)
 
     pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=20,
-        right_dir=hb.DIR_BACKWARD, right_speed=20,
+        left_dir=hb.DIR_FORWARD, left_speed=100,
+        right_dir=hb.DIR_BACKWARD, right_speed=100,
     )
     pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=20,
-        right_dir=hb.DIR_FORWARD, right_speed=20,
+        left_dir=hb.DIR_BACKWARD, left_speed=100,
+        right_dir=hb.DIR_FORWARD, right_speed=100,
     )
     pivot_steps = sum(
         1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
