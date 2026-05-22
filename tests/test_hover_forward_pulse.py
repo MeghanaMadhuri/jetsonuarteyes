@@ -20,9 +20,14 @@ from unittest.mock import patch
 import pytest
 
 from nina.config.settings import HoverboardAxisSettings
+from tests.test_hover_pulse_turn_90 import (
+    _pivot_left_goals_at_blend,
+    _pivot_right_goals_at_blend,
+)
 from nina.controllers.dynamixel_manager import REG_PRESENT_POS
 from nina.controllers.hoverboard_axis_drive import (
     HoverboardAxisDrive,
+    _held_dpad_pivot_blend_pct,
     _STRAIGHT_BACK_LEFT_TICKS_OFFSET,
     _STRAIGHT_BACK_RIGHT_TICKS_OFFSET,
     _STRAIGHT_FWD_EXTRA_TICKS,
@@ -76,6 +81,15 @@ class FakeDxl:
         if addr == REG_PRESENT_POS[0] and size == REG_PRESENT_POS[1]:
             return self._present.get(int(sid), 2048)
         return None
+
+
+def _drift_corr_pivot_goal_pair() -> tuple[dict[int, int], dict[int, int]]:
+    """Held-D-pad blend goals used by standstill drift correction."""
+    blend = _held_dpad_pivot_blend_pct()
+    return (
+        _pivot_left_goals_at_blend(blend),
+        _pivot_right_goals_at_blend(blend),
+    )
 
 
 def _axis_pulse_fast() -> HoverboardAxisSettings:
@@ -812,14 +826,7 @@ def test_forward_loop_cumulative_drift_compounds_across_legs() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(
         1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
     )
@@ -852,7 +859,7 @@ class _DriftSequence:
 
 
 def test_forward_loop_positive_drift_pivots_left() -> None:
-    """Drift > 0 (drifted right) → first pivot step is L=FWD, R=BACK."""
+    """Drift > 0 → counter-yaw step matches held D-pad left (30% blend)."""
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
     # Big initial drift, then drift returns to 0 after one pivot step.
@@ -865,19 +872,14 @@ def test_forward_loop_positive_drift_pivots_left() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD,
-        left_speed=100,
-        right_dir=hb.DIR_BACKWARD,
-        right_speed=100,
-    )
+    pivot_left = _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct())
     assert any(g == pivot_left for g in dxl.goal_writes), (
-        f"expected pivot-left goals {pivot_left} not found in {dxl.goal_writes}"
+        f"expected held-left counter-drift goals {pivot_left} not found in {dxl.goal_writes}"
     )
 
 
 def test_forward_loop_negative_drift_pivots_right() -> None:
-    """Drift < 0 (drifted left) → first pivot step is L=BACK, R=FWD."""
+    """Drift < 0 → counter-yaw step matches held D-pad right (30% blend)."""
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([-10.0, 0.0]))
@@ -888,14 +890,9 @@ def test_forward_loop_negative_drift_pivots_right() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_right = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD,
-        left_speed=100,
-        right_dir=hb.DIR_FORWARD,
-        right_speed=100,
-    )
+    pivot_right = _pivot_right_goals_at_blend(_held_dpad_pivot_blend_pct())
     assert any(g == pivot_right for g in dxl.goal_writes), (
-        f"expected pivot-right goals {pivot_right} not found"
+        f"expected held-right counter-drift goals {pivot_right} not found"
     )
 
 
@@ -916,14 +913,9 @@ def test_forward_loop_swap_pivot_dir_inverts_goals() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    swapped_pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
-    legacy_pivot_left = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
+    blend = _held_dpad_pivot_blend_pct()
+    swapped_pivot_left = _pivot_right_goals_at_blend(blend)
+    legacy_pivot_left = _pivot_left_goals_at_blend(blend)
     assert any(g == swapped_pivot_left for g in dxl.goal_writes), (
         f"with swap=1, positive-drift pivot_left decision must apply "
         f"{swapped_pivot_left}; goal_writes={dxl.goal_writes}"
@@ -946,12 +938,7 @@ def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_right = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD,
-        left_speed=100,
-        right_dir=hb.DIR_FORWARD,
-        right_speed=100,
-    )
+    pivot_right = _pivot_right_goals_at_blend(_held_dpad_pivot_blend_pct())
     assert any(g == pivot_right for g in dxl.goal_writes), (
         "with INVERT_SIGN=1, positive drift should produce a right pivot"
     )
@@ -1122,14 +1109,7 @@ def test_active_settle_timeout_skips_correction_but_still_checks_abort() -> None
     )
     # But correction must NOT fire — no pivot writes despite the 5°
     # drift being above the deadband.
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     assert all(g != pivot_l and g != pivot_r for g in dxl.goal_writes), (
         "active-settle timeout must skip the standstill micro-step "
         "correction even though drift exceeds deadband — chassis is "
@@ -1155,14 +1135,7 @@ def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps <= 2, (
         f"loop must bail after the first wrong-direction step within a "
@@ -1196,14 +1169,7 @@ def test_forward_loop_correction_continues_past_deadband_until_residual() -> Non
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps >= 2, (
         f"hysteresis: correction must continue past deadband (2.0°) until "
@@ -1235,14 +1201,7 @@ def test_forward_loop_correction_exits_at_residual_not_deadband() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     # First correction window should be exactly one step (5.0 → 1.4,
     # exits because 1.4 ≤ residual=1.5). Subsequent legs may add more
     # pivots if drift exceeds deadband again, but the FIRST correction
@@ -1273,14 +1232,7 @@ def test_forward_loop_residual_clamped_below_deadband() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
     assert pivot_steps >= 1, (
         f"correction must still fire & take at least one step even when "
@@ -1560,14 +1512,7 @@ def test_backward_loop_cumulative_drift_compounds_across_legs() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_l = hb._goals_for_wheels(
-        left_dir=hb.DIR_FORWARD, left_speed=100,
-        right_dir=hb.DIR_BACKWARD, right_speed=100,
-    )
-    pivot_r = hb._goals_for_wheels(
-        left_dir=hb.DIR_BACKWARD, left_speed=100,
-        right_dir=hb.DIR_FORWARD, right_speed=100,
-    )
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(
         1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r
     )

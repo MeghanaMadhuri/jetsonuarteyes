@@ -113,10 +113,9 @@ hoverboard chassis; lower them only if the realign is over-shooting):
                                                                 back-to-back)
   ``NINA_HOVER_IMU_CORR_POLL_HZ``               default 5     (drift sample rate inside pulse holds)
   ``NINA_HOVER_IMU_CORR_INVERT_SIGN``           default 0     (flip drift sign interpretation)
-  ``NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR``        default 1     (swap pivot-label→goals so in-motion
-                                                                realign rotates **against** drift on the
-                                                                reference chassis; set 0 if corrections
-                                                                run with drift instead of opposing it)
+  ``NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR``        deprecated — yaw correction uses
+                                                                ``NINA_HOVER_TURN_SWAP_PIVOT_DIR`` (same
+                                                                as held D-pad / closed-loop turns)
 
 Backward-direction overrides (THRESHOLD and STEP_RATE ship with their own
 backward-optimised defaults baked in after field testing; COOLDOWN still
@@ -1030,50 +1029,39 @@ def _straight_brake_settle_sec() -> float:
 
 
 def _imu_corr_swap_pivot_dir() -> bool:
-    """Swap pivot-label→goals for in-motion yaw realign (forward/back pulse).
+    """Deprecated alias for :func:`_imu_turn_swap_pivot_dir`.
 
-    Positive drift means the chassis drifted right; the correction must
-    rotate left. On the reference chassis, naive ``L=FWD, R=BACK`` (label
-    "pivot LEFT") actually yaws **right**, so the mapping is inverted by
-    default (``NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR=1``).
-
-    When True, a "counter drift left" decision applies ``L=BACK, R=FWD``
-    goals and vice versa. Independent of ``NINA_HOVER_TURN_SWAP_PIVOT_DIR``
-    (D-pad turns) and ``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR``
-    (standstill correction).
+    Yaw correction (standstill and in-motion) picks pivot goals with the
+    same ``remaining``-sign rule as held D-pad L/R. Prefer
+    ``NINA_HOVER_TURN_SWAP_PIVOT_DIR``; this env var is ignored unless set
+    explicitly for backward compatibility on older deploys.
     """
-    val = os.environ.get("NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR", "1")
+    if "NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR" not in os.environ:
+        return _imu_turn_swap_pivot_dir()
+    val = os.environ["NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR"]
     return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 
+def _explicit_yaw_corr_swap_pivot() -> Optional[bool]:
+    """Legacy per-path swap overrides; ``None`` → use turn swap default."""
+    if "NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR" in os.environ:
+        return _straight_corr_swap_pivot_dir()
+    if "NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR" in os.environ:
+        return _imu_corr_swap_pivot_dir()
+    return None
+
+
 def _straight_corr_swap_pivot_dir() -> bool:
-    """Swap the pivot-direction-to-goals mapping in standstill correction.
+    """Deprecated alias for :func:`_imu_turn_swap_pivot_dir`.
 
-    Field-observed on the reference chassis: commanding what the code
-    labels "pivot LEFT" (L=FWD, R=BACK at the dynamixel-lean level)
-    physically rotates the chassis to the **RIGHT** (CW), not the left
-    as the label suggests. With an at-standstill correction (and the
-    yaw-rate active settle confirming the chassis is genuinely
-    stopped before the pivot fires), the mapping is the only
-    remaining unknown — so we hardcode the swap as the default.
-
-    When True, a "pivot_left" decision uses ``L=BACK, R=FWD`` goals and
-    a "pivot_right" decision uses ``L=FWD, R=BACK`` goals — i.e. the
-    label-to-goals mapping is inverted relative to the conventional
-    convention. Default **off** after the fleet hall FWD/REV swap in
-    ``settings.py``; set ``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR=1``
-    if standstill correction still pivots the wrong way. Affects ONLY
-    the at-standstill
-    drift correction; the closed-loop 90° turn and the backward
-    in-motion correction are unchanged.
-
-    Unrelated to ``NINA_HOVER_IMU_CORR_INVERT_SIGN`` — that knob
-    flips the **drift sign interpretation** (whether positive drift
-    means CCW or CW). This knob flips the **pivot command mapping**
-    (whether a "pivot LEFT" decision uses one set of goals or the
-    other). On chassis with both inversions you'd set both.
+    Standstill drift correction uses the same pivot-goal rule as held
+    D-pad L/R. Prefer ``NINA_HOVER_TURN_SWAP_PIVOT_DIR``; this env var is
+    only honoured when set explicitly (remove ``=1`` from older deploys
+    that added it while debugging wrong-way correction).
     """
-    val = os.environ.get("NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR", "0")
+    if "NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR" not in os.environ:
+        return _imu_turn_swap_pivot_dir()
+    val = os.environ["NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR"]
     return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 
@@ -2429,27 +2417,14 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-            # Counter drift: +drift → rotate left; swap maps label→goals on this chassis.
+            # Counter drift using the same remaining-sign → goals rule as held D-pad L/R.
             effective = -last_yaw if invert else last_yaw
-            pivot_left_decision = effective > 0.0
-            swap_pivot = _imu_corr_swap_pivot_dir()
-            apply_left_goals = (
-                not pivot_left_decision if swap_pivot else pivot_left_decision
+            remaining = -effective
+            step_goals = self._pivot_step_goals_for_remaining(
+                remaining,
+                step_blend,
+                swap_pivot=_explicit_yaw_corr_swap_pivot(),
             )
-            if apply_left_goals:
-                step_goals = self._goals_for_wheels(
-                    left_dir=self.DIR_FORWARD,
-                    left_speed=step_blend,
-                    right_dir=self.DIR_BACKWARD,
-                    right_speed=step_blend,
-                )
-            else:
-                step_goals = self._goals_for_wheels(
-                    left_dir=self.DIR_BACKWARD,
-                    left_speed=step_blend,
-                    right_dir=self.DIR_FORWARD,
-                    right_speed=step_blend,
-                )
             # Proportional step duration: target rotating ``|last_yaw|`` deg
             # at the calibrated ``step_rate_dps`` rotation rate, clamped to
             # [step_min_sec, step_dur_cap]. Small drifts get short pulses
@@ -3216,8 +3191,7 @@ class HoverboardAxisDrive:
         if residual >= deadband:
             residual = max(0.1, deadband * 0.5)
         invert = _imu_corr_invert_sign()
-        swap_pivot = _straight_corr_swap_pivot_dir()
-        step_blend = _straight_corr_blend_pct()
+        step_blend = _held_dpad_pivot_blend_pct()
         # Step duration cap + floor diverge between forward and backward:
         # the same 0.030 s kick that produces ~2.5° clean rotation when
         # correcting after a forward leg over-pushes (5–8°) when
@@ -3239,17 +3213,19 @@ class HoverboardAxisDrive:
         yaw_fn = self._imu_yaw_drift_fn
 
         current = initial_drift
+        corr_swap = _explicit_yaw_corr_swap_pivot()
         log.info(
             "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
-            "residual=%.2f deg invert=%s swap_pivot=%s step_blend=%d%% "
-            "step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
+            "residual=%.2f deg invert=%s turn_swap=%s corr_swap_override=%s "
+            "step_blend=%d%% step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
             "step_settle=%.2fs max_steps=%d",
             direction_label,
             current,
             deadband,
             residual,
             invert,
-            swap_pivot,
+            _imu_turn_swap_pivot_dir(),
+            corr_swap,
             step_blend,
             step_rate,
             step_dur_cap,
@@ -3274,33 +3250,15 @@ class HoverboardAxisDrive:
                 )
                 return
 
-            # Pivot direction: positive drift = drifted right → pivot left
-            # to correct (and vice versa). ``invert`` flips the drift sign
-            # interpretation for chassis with the opposite IMU mount
-            # convention. ``swap_pivot`` flips the pivot-label-to-goals
-            # mapping for chassis where the conventional
-            # "L=FWD,R=BACK → rotate LEFT" doesn't hold (field-observed
-            # default on the reference chassis is the swapped mapping;
-            # see :func:`_straight_corr_swap_pivot_dir`).
+            # Same remaining-sign → goals mapping as held D-pad L/R
+            # (positive drift → negative remaining → left-step geometry).
             effective = -current if invert else current
-            pivot_left_decision = effective > 0.0
-            apply_left_goals = (
-                not pivot_left_decision if swap_pivot else pivot_left_decision
+            remaining = -effective
+            step_goals = self._pivot_step_goals_for_remaining(
+                remaining,
+                step_blend,
+                swap_pivot=_explicit_yaw_corr_swap_pivot(),
             )
-            if apply_left_goals:
-                step_goals = self._goals_for_wheels(
-                    left_dir=self.DIR_FORWARD,
-                    left_speed=step_blend,
-                    right_dir=self.DIR_BACKWARD,
-                    right_speed=step_blend,
-                )
-            else:
-                step_goals = self._goals_for_wheels(
-                    left_dir=self.DIR_BACKWARD,
-                    left_speed=step_blend,
-                    right_dir=self.DIR_FORWARD,
-                    right_speed=step_blend,
-                )
 
             # Proportional duration: aim to land at **zero** drift. The
             # old "land at ½ deadband short of zero" target weakens the
@@ -3359,12 +3317,12 @@ class HoverboardAxisDrive:
                 )
                 continue
             log.info(
-                "hover %s drift-correct: step %d — decision=pivot %s "
-                "applied=%s_goals this_dur=%.3fs drift was %+.2f → %+.2f deg",
+                "hover %s drift-correct: step %d — remaining=%+.2f deg "
+                "blend=%d%% this_dur=%.3fs drift was %+.2f → %+.2f deg",
                 direction_label,
                 step + 1,
-                "LEFT" if pivot_left_decision else "RIGHT",
-                "LEFT" if apply_left_goals else "RIGHT",
+                remaining,
+                step_blend,
                 this_step_dur,
                 current,
                 sample,
@@ -4112,6 +4070,39 @@ class HoverboardAxisDrive:
             self._hold_turn_session_dir = None
             self._hold_turn_yaw_current = 0.0
 
+    def _pivot_step_goals_for_remaining(
+        self,
+        remaining_deg: float,
+        step_blend: int,
+        *,
+        swap_pivot: Optional[bool] = None,
+    ) -> Dict[int, int]:
+        """Pivot lean goals from signed yaw budget (same rule as held D-pad L/R).
+
+        Positive *remaining_deg* → turn right in the intent frame; negative
+        → turn left. Drift correction passes ``remaining = -effective_drift``
+        so a rightward drift uses the same geometry as a held **left** step.
+        """
+        if swap_pivot is None:
+            swap_pivot = _imu_turn_swap_pivot_dir()
+        pivot_right_decision = remaining_deg > 0.0
+        apply_right_goals = (
+            not pivot_right_decision if swap_pivot else pivot_right_decision
+        )
+        if apply_right_goals:
+            return self._goals_for_wheels(
+                left_dir=self.DIR_BACKWARD,
+                left_speed=step_blend,
+                right_dir=self.DIR_FORWARD,
+                right_speed=step_blend,
+            )
+        return self._goals_for_wheels(
+            left_dir=self.DIR_FORWARD,
+            left_speed=step_blend,
+            right_dir=self.DIR_BACKWARD,
+            right_speed=step_blend,
+        )
+
     def _imu_turn_run_one_step(
         self,
         direction: str,
@@ -4125,28 +4116,12 @@ class HoverboardAxisDrive:
         step_dur_cap = _turn_step_dur_cap_sec()
         step_min = _turn_step_min_sec()
         step_settle = _turn_step_settle_sec()
-        swap_pivot = _imu_turn_swap_pivot_dir()
         brake_goals = self._hold_turn_brake_goals()
         turn_halt = threading.Event()
 
-        pivot_right_decision = remaining_deg > 0.0
-        apply_right_goals = (
-            not pivot_right_decision if swap_pivot else pivot_right_decision
+        step_goals = self._pivot_step_goals_for_remaining(
+            remaining_deg, step_blend,
         )
-        if apply_right_goals:
-            step_goals = self._goals_for_wheels(
-                left_dir=self.DIR_BACKWARD,
-                left_speed=step_blend,
-                right_dir=self.DIR_FORWARD,
-                right_speed=step_blend,
-            )
-        else:
-            step_goals = self._goals_for_wheels(
-                left_dir=self.DIR_FORWARD,
-                left_speed=step_blend,
-                right_dir=self.DIR_BACKWARD,
-                right_speed=step_blend,
-            )
 
         rotation_target = max(0.5, abs(remaining_deg))
         this_step_dur = max(
