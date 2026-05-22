@@ -1639,7 +1639,7 @@ def _straight_corr_max_drift_correct_deg() -> float:
     """Skip standstill micro-pivots during saved sequences when |drift| exceeds this.
 
     After a bad turn the cumulative heading error can be tens or hundreds of
-    degrees; iterative 5° correction pivots every 0.5 s leg will overload the
+    degrees; iterative correction pivots every 0.5 s leg will overload the
     BLDC motors. During :meth:`HoverboardAxisDrive.begin_saved_sequence` the
     straight loop logs a warning and skips correction until the next leg.
 
@@ -1752,8 +1752,8 @@ def _straight_corr_step_deg() -> float:
     Lean goals still match held L/R at 30% blend; only hold duration scales with
     this angle via :func:`_hold_turn_step_duration_sec`.
 
-    Default **5.0°** (vs 15° operator turn micro-step). Override
-    ``NINA_HOVER_STRAIGHT_CORR_STEP_DEG``.
+    Default **2.5°** (half the prior 5° default; vs 15° operator turn micro-step).
+    Override ``NINA_HOVER_STRAIGHT_CORR_STEP_DEG``.
     """
     raw = (os.environ.get("NINA_HOVER_STRAIGHT_CORR_STEP_DEG") or "").strip()
     if raw:
@@ -1761,7 +1761,7 @@ def _straight_corr_step_deg() -> float:
             return max(1.0, min(15.0, float(raw)))
         except ValueError:
             pass
-    return 5.0
+    return 2.5
 
 
 def _hold_turn_step_duration_sec(rotation_deg: Optional[float] = None) -> float:
@@ -1769,7 +1769,7 @@ def _hold_turn_step_duration_sec(rotation_deg: Optional[float] = None) -> float:
 
     Held L/R and Turn micro-steps pass ``NINA_DRIVE_TURN_PIVOT_DEG`` (default 15°).
     Straight FWD/BACK drift correction passes :func:`_straight_corr_step_deg`
-    (default 5°) so each correction rotates less per step than operator turns.
+    (default 2.5°) so each correction rotates less per step than operator turns.
     """
     if rotation_deg is None:
         rotation_deg = _drive_turn_micro_step_deg()

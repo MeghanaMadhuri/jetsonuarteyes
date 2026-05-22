@@ -280,7 +280,7 @@ def test_straight_env_getter_defaults() -> None:
         assert _straight_corr_back_step_min_sec() == 0.015
         assert _straight_corr_step_rate_dps() == 84.0
         assert _straight_corr_deadband_deg() == 3.0
-        assert _straight_corr_step_deg() == 5.0
+        assert _straight_corr_step_deg() == 2.5
         assert _straight_corr_residual_deg() == 1.0
         assert _straight_settle_rate_dps() == 3.0
         assert _straight_settle_stable_sec() == 0.10
@@ -517,7 +517,7 @@ def test_drift_correction_uses_smaller_step_deg_than_hold_turn(
         "NINA_HOVER_IMU_CORR_MAX_STEPS": "1",
         "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.01",
         "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.001",
-        "NINA_HOVER_STRAIGHT_CORR_STEP_DEG": "5",
+        "NINA_HOVER_STRAIGHT_CORR_STEP_DEG": "2.5",
     }
     with patch.dict(os.environ, env, clear=False):
         hb._correct_drift_at_standstill(
