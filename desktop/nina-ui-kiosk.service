@@ -144,6 +144,8 @@ Environment=NINA_ESP32_TRIGGER_ACTION=namaste
 
 # HDMI/DP audio: tegra HDA (see /etc/nina-link/navigation.env from
 # scripts/setup-hdmi-audio.sh, run by install-nina-ui-kiosk.sh).
+# NINA_AUDIO_PERSISTENT_PIPE=1 (default) holds one aplay stream with idle
+# silence so the HDMI sink stays clocked and idle hiss stays low.
 # Stop PipeWire/Pulse so plughw:CARD=HDA,DEV=3 is not "Device or resource busy".
 ExecStartPre=/bin/sh -c 'systemctl --user stop pipewire pipewire-pulse wireplumber 2>/dev/null; pulseaudio -k 2>/dev/null; true'
 

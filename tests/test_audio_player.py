@@ -12,6 +12,23 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _disable_persistent_audio_pipe_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit tests must not hold a real aplay stream open."""
+    monkeypatch.setenv("NINA_AUDIO_PERSISTENT_PIPE", "0")
+
+
+def test_persistent_pipe_enabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NINA_AUDIO_PERSISTENT_PIPE", raising=False)
+    from nina.services.audio_player import _persistent_pipe_enabled
+
+    assert _persistent_pipe_enabled() is True
+
+
 def test_pcm_output_rate_defaults_to_gtts_nominal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

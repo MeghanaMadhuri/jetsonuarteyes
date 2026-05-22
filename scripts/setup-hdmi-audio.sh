@@ -4,7 +4,8 @@
 # Desktop Ubuntu often runs PipeWire/Pulse on the HDMI sink. Opening
 # plughw:CARD=HDA,DEV=3 exclusively then fails with "Device or resource busy".
 # This script prefers the shared ALSA name "default" (routes through Pulse)
-# and disables I2S-only keepalive flags (persistent pipe / silence loop).
+# when direct HDA is busy. Persistent pipe (idle silence on one open aplay
+# stream) is enabled to suppress HDMI idle hiss.
 #
 # Usage:
 #   ./scripts/setup-hdmi-audio.sh
@@ -164,17 +165,18 @@ sed -i -E \
 
 cat >> "${TMP_FILE}" <<EOF
 
-# HDMI/DP audio (written by setup-hdmi-audio.sh) — use default with Pulse; not I2S keepalive.
+# HDMI/DP audio (written by setup-hdmi-audio.sh) — persistent aplay silence anti-hiss.
 NINA_GREET_APLAY_DEVICE=${DEVICE}
 NINA_AUDIO_MPG123_DEVICE=${DEVICE}
 NINA_AUDIO_MP3_VIA_APLAY=0
 NINA_AUDIO_APLAY_STEREO_MODE=none
 NINA_AUDIO_OUTPUT_RATE=${RATE}
-NINA_AUDIO_OUTPUT_WARMUP_MS=100
+NINA_AUDIO_OUTPUT_WARMUP_MS=0
 NINA_AUDIO_PREROLL_MS=0
 NINA_AUDIO_MUTE_PREROLL_SEC=0
-NINA_AUDIO_PERSISTENT_PIPE=0
+NINA_AUDIO_PERSISTENT_PIPE=1
 NINA_AUDIO_SILENCE_KEEPALIVE=0
+NINA_AUDIO_EDGE_SILENCE_MS=80
 EOF
 
 sudo mkdir -p "$(dirname "${ENV_FILE}")"

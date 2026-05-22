@@ -38,6 +38,11 @@ Use **48000** if your sink only accepts 48 kHz PCM from mpg123, **44100** for
 CD-rate music MP3s, or **auto** for decoder-native rate (no ``-r``) with a
 **24000 Hz** preroll so warmup still matches typical greetings.
 
+**Idle silence (anti-hiss):** by default Nina keeps a single raw ``aplay`` pipe
+open (``NINA_AUDIO_PERSISTENT_PIPE=1``, the default). A background writer feeds
+~20 ms stereo silence when nothing is playing; MP3/WAV clips are decoded to PCM
+and written on the same stream. Disable with ``NINA_AUDIO_PERSISTENT_PIPE=0``.
+
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
 """
@@ -127,7 +132,12 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
 
 
 def _persistent_pipe_enabled() -> bool:
-    return _env_bool("NINA_AUDIO_PERSISTENT_PIPE", False)
+    """Keep one ``aplay`` stream open; idle = digital silence, clips = injected PCM.
+
+    Default **on** so HDMI/I2S DACs stay clocked and idle hiss stays low. Set
+    ``NINA_AUDIO_PERSISTENT_PIPE=0`` to use one-shot ``mpg123``/``aplay`` per clip.
+    """
+    return _env_bool("NINA_AUDIO_PERSISTENT_PIPE", True)
 
 
 def _silence_keepalive_enabled() -> bool:
