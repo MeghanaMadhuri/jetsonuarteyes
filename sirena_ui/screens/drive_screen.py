@@ -482,10 +482,10 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed yaw (~0.3 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
+            "Timed yaw (~0.45 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend from brake; "
             "left (e.g. ID 12) toward FWD, right (e.g. 13) toward REV. "
-            "Held D-pad left repeats this timed step (~15° / 0.3 s) until release. "
+            "Held D-pad left repeats micro-steps (~15° / ~0.5 s each, 0.52 s pause) until release. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
@@ -496,9 +496,9 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "Timed yaw (~0.3 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
+            "Timed yaw (~0.45 s hold, ~15° lean: NINA_NAV_TURN_SEC / NINA_DRIVE_TURN_PIVOT_DEG): "
             "no straight-line prime—partial pivot blend; right toward FWD, left toward REV. "
-            "Held D-pad right repeats this timed step (~15° / 0.3 s) until release. "
+            "Held D-pad right repeats micro-steps (~15° / ~0.5 s each, 0.52 s pause) until release. "
             "NINA_HOVER_SWAP_TURN_LR / TURN_PUSH_TICKS still apply."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))

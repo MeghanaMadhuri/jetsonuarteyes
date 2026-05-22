@@ -22,7 +22,7 @@ into the back stroke without slowing down.
 opposite forward/back goals. **Turn left** = left forward lean + right backward
 lean. **Timed** ``turn_left`` / ``turn_right`` use full pivot goals (100% blend).
 **Held** D-pad L/R use ``pulse_turn_micro_step`` at :data:`_HELD_DPAD_PIVOT_BLEND_PCT`
-(50% of full pivot by default). Legacy unequal-duty path uses
+(30% of full pivot by default). Legacy unequal-duty path uses
 ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer ``speed_percent``. **Turn right** mirrors left.
 
 **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
@@ -469,9 +469,9 @@ _TURN_PIVOT_GOAL_OFFSET_TICKS = 100
 # IMU drift correction + closed-loop 90° turns: full calibrated pivot goals.
 _PIVOT_MICROSTEP_BLEND_PCT = 100
 
-# Held D-pad left/right (``pulse_turn_micro_step``): softer lean to reduce
-# mechanical shock vs full pivot.
-_HELD_DPAD_PIVOT_BLEND_PCT = 50
+# Held D-pad left/right (``pulse_turn_micro_step``) and timed turn_* fallback:
+# 30% = 70% reduction from full pivot (mechanical shock).
+_HELD_DPAD_PIVOT_BLEND_PCT = 30
 
 
 def hover_computed_turn_pivot_goals(
@@ -1573,16 +1573,10 @@ def _imu_turn_max_steps() -> int:
 
 
 def _imu_turn_step_rate_deg_per_sec() -> float:
-    """Empirical chassis rotation rate (deg/s) for the closed-loop turn.
+    """Empirical chassis rotation rate (deg/s) for closed-loop turns.
 
-    Defaults to the same value as the forward IMU correction step rate
-    (``NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC``, 30 dps) — the
-    operator-tuned forward number is the most rigorous data we have on
-    how this chassis rotates per unit of commanded lean × time. Override
-    with ``NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC`` if in-place pivots
-    end up empirically faster (turns drive both wheels actively in
-    opposite directions, whereas forward straight-leg correction
-    micro-pivots against forward chassis momentum).
+    Default **22 dps** (gentler than in-motion IMU correction's 30 dps).
+    Override with ``NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC``.
     """
     raw = (os.environ.get("NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC") or "").strip()
     if raw:
@@ -1590,7 +1584,44 @@ def _imu_turn_step_rate_deg_per_sec() -> float:
             return max(1.0, min(360.0, float(raw)))
         except ValueError:
             pass
-    return _imu_corr_step_rate_deg_per_sec()
+    return 22.0
+
+
+def _turn_step_dur_cap_sec() -> float:
+    """Per-micro-step lean hold cap for D-pad / Turn closed-loop pivots.
+
+    Default **0.26 s** (vs ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC`` 0.18 s for
+    in-motion correction). Override ``NINA_HOVER_TURN_STEP_DUR_CAP_SEC``.
+    """
+    try:
+        return max(
+            0.02,
+            min(3.0, float(os.environ.get("NINA_HOVER_TURN_STEP_DUR_CAP_SEC", "0.26"))),
+        )
+    except ValueError:
+        return 0.26
+
+
+def _turn_step_min_sec() -> float:
+    """Floor on per-step lean hold for closed-loop turns. Default **0.10 s**."""
+    try:
+        return max(
+            0.01,
+            min(1.0, float(os.environ.get("NINA_HOVER_TURN_STEP_MIN_SEC", "0.10"))),
+        )
+    except ValueError:
+        return 0.10
+
+
+def _turn_step_settle_sec() -> float:
+    """Brake dwell between closed-loop turn micro-steps. Default **0.12 s**."""
+    try:
+        return max(
+            0.0,
+            min(1.0, float(os.environ.get("NINA_HOVER_TURN_STEP_SETTLE_SEC", "0.12"))),
+        )
+    except ValueError:
+        return 0.12
 
 
 def _imu_turn_step_blend_pct() -> int:
@@ -1608,16 +1639,16 @@ def _imu_turn_pre_settle_sec() -> float:
 
     Lets any forward / backward pulse leg we just halted bleed off
     chassis momentum so the integrator anchors a stable zero. Default
-    0.20 s — long enough for the MX-28 to land on brake, short enough
-    that the operator doesn't perceive the turn as laggy.
+    0.28 s — long enough for the MX-28 to land on brake before the first
+    lean step without feeling sluggish on held D-pad turns.
     """
     try:
         return max(
             0.0,
-            min(2.0, float(os.environ.get("NINA_HOVER_TURN_PRE_SETTLE_SEC", "0.20"))),
+            min(2.0, float(os.environ.get("NINA_HOVER_TURN_PRE_SETTLE_SEC", "0.28"))),
         )
     except ValueError:
-        return 0.20
+        return 0.28
 
 
 def _imu_turn_post_settle_sec() -> float:
@@ -1626,15 +1657,15 @@ def _imu_turn_post_settle_sec() -> float:
     Holds the bot stationary after reaching the target so the chassis
     doesn't keep rotating from residual lean momentum (the lean servos
     are commanded to brake but the wheels coast a touch). Default
-    0.30 s.
+    0.40 s.
     """
     try:
         return max(
             0.0,
-            min(2.0, float(os.environ.get("NINA_HOVER_TURN_POST_SETTLE_SEC", "0.30"))),
+            min(2.0, float(os.environ.get("NINA_HOVER_TURN_POST_SETTLE_SEC", "0.40"))),
         )
     except ValueError:
-        return 0.30
+        return 0.40
 
 
 def _imu_turn_progress_check_steps() -> int:
@@ -3922,7 +3953,7 @@ class HoverboardAxisDrive:
         rotates the swapped chassis to the left.
         """
         _ = speed_percent  # reserved; excursion is angle blend, not duty
-        blend = _timed_turn_pivot_blend_pct()
+        blend = _held_dpad_pivot_blend_pct()
         dur = float(
             duration
             if duration is not None
@@ -3932,12 +3963,19 @@ class HoverboardAxisDrive:
             left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
         else:
             left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
-        self.set_wheels(
+        goals = self._goals_for_wheels(
             left_dir=left_dir,
             left_speed=blend,
             right_dir=right_dir,
             right_speed=blend,
         )
+        log.info(
+            "hover timed turn_left: blend=%d%% goals L=%d R=%d (full pivot L/R via hover_computed_turn_pivot_goals)",
+            blend,
+            goals.get(self._left_id),
+            goals.get(self._right_id),
+        )
+        self._apply_goals(goals)
         if dur > 0.0:
             time.sleep(dur)
         self.stop(settle=False)
@@ -3955,7 +3993,7 @@ class HoverboardAxisDrive:
         rotates the swapped chassis to the right.
         """
         _ = speed_percent
-        blend = _timed_turn_pivot_blend_pct()
+        blend = _held_dpad_pivot_blend_pct()
         dur = float(
             duration
             if duration is not None
@@ -3965,12 +4003,19 @@ class HoverboardAxisDrive:
             left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
         else:
             left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
-        self.set_wheels(
+        goals = self._goals_for_wheels(
             left_dir=left_dir,
             left_speed=blend,
             right_dir=right_dir,
             right_speed=blend,
         )
+        log.info(
+            "hover timed turn_right: blend=%d%% goals L=%d R=%d",
+            blend,
+            goals.get(self._left_id),
+            goals.get(self._right_id),
+        )
+        self._apply_goals(goals)
         if dur > 0.0:
             time.sleep(dur)
         self.stop(settle=False)
@@ -4070,9 +4115,9 @@ class HoverboardAxisDrive:
         """One closed-loop pivot step; returns updated yaw in intent frame."""
         step_blend = _held_dpad_pivot_blend_pct()
         step_rate = _imu_turn_step_rate_deg_per_sec()
-        step_dur_cap = _imu_corr_pivot_max_sec()
-        step_min = _imu_corr_step_min_sec()
-        step_settle = _imu_corr_step_settle_sec()
+        step_dur_cap = _turn_step_dur_cap_sec()
+        step_min = _turn_step_min_sec()
+        step_settle = _turn_step_settle_sec()
         swap_pivot = _imu_turn_swap_pivot_dir()
         brake_goals = self._hold_turn_brake_goals()
         turn_halt = threading.Event()
@@ -4103,6 +4148,14 @@ class HoverboardAxisDrive:
         )
         try:
             self._apply_goals(step_goals)
+            log.info(
+                "hover hold turn (%s): step %d blend=%d%% goals L=%d R=%d",
+                direction,
+                step_index,
+                step_blend,
+                step_goals.get(self._left_id),
+                step_goals.get(self._right_id),
+            )
         except Exception:
             log.debug(
                 "hover hold turn (%s): step apply failed",
@@ -4305,9 +4358,9 @@ class HoverboardAxisDrive:
             max_steps = max(5, min(200, int(round(base_steps * target_deg / 90.0))))
             step_blend = _imu_turn_step_blend_pct()
             step_rate = _imu_turn_step_rate_deg_per_sec()
-            step_dur_cap = _imu_corr_pivot_max_sec()
-            step_min = _imu_corr_step_min_sec()
-            step_settle = _imu_corr_step_settle_sec()
+            step_dur_cap = _turn_step_dur_cap_sec()
+            step_min = _turn_step_min_sec()
+            step_settle = _turn_step_settle_sec()
             deadband = _imu_corr_deadband_deg()
             invert = _imu_corr_invert_sign()
             swap_pivot = _imu_turn_swap_pivot_dir()

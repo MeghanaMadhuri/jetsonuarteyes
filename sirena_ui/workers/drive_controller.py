@@ -151,7 +151,7 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
     Does **not** use ``NavigationSettings.turn_duration_sec``
     on ``nav.config`` (that value was forcing long holds). Env only:
 
-    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.3** s).
+    ``NINA_DRIVE_TURN_90_SEC`` → else ``NINA_NAV_TURN_SEC`` (default **0.45** s).
     """
     _ = nav
     raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
@@ -161,9 +161,9 @@ def _drive_turn_90_duration_sec(nav: Optional[object] = None) -> float:
         except ValueError:
             pass
     try:
-        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.3"))))
+        return max(0.0, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "0.45"))))
     except ValueError:
-        return 0.3
+        return 0.45
 
 
 def _left_fwd_extra_pp() -> int:
@@ -190,7 +190,7 @@ def _hold_turn_interval_sec() -> float:
             return max(0.08, min(2.0, float(raw)))
         except ValueError:
             pass
-    return 0.35
+    return 0.52
 
 
 def _drive_turn_90_speed_pct() -> int:
@@ -1164,8 +1164,9 @@ class DriveController(QObject):
             return
         speed = _drive_turn_90_speed_pct()
         duration = _drive_turn_90_duration_sec(self._nav)
-        log.info(
-            "turn micro-step(%s): timed fallback %.3fs",
+        log.warning(
+            "turn micro-step(%s): IMU hold-turn unavailable — timed pivot fallback "
+            "%.3fs (check NINA_IMU_MPU9250_ENABLE and hover hold-turn logs)",
             which,
             duration,
         )

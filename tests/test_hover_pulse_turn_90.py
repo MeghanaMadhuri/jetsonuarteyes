@@ -53,6 +53,9 @@ from nina.controllers.hoverboard_axis_drive import (
     _imu_turn_max_steps,
     _imu_turn_post_settle_sec,
     _imu_turn_pre_settle_sec,
+    _turn_step_dur_cap_sec,
+    _turn_step_min_sec,
+    _turn_step_settle_sec,
     _imu_turn_progress_check_steps,
     _imu_turn_progress_min_deg,
     _held_dpad_pivot_blend_pct,
@@ -193,6 +196,17 @@ def _pivot_right_goals_full() -> dict[int, int]:
 def _pivot_left_goals_at_blend(blend_pct: int) -> dict[int, int]:
     """Interpolated pivot goals for L=FWD, R=BACK at *blend_pct* on the test axis."""
     full = _pivot_left_goals_full()
+    brk = {12: 2048, 13: 2048}
+    u = blend_pct / 100.0
+    return {
+        12: int(round(brk[12] + (full[12] - brk[12]) * u)),
+        13: int(round(brk[13] + (full[13] - brk[13]) * u)),
+    }
+
+
+def _pivot_right_goals_at_blend(blend_pct: int) -> dict[int, int]:
+    """Interpolated pivot goals for L=BACK, R=FWD at *blend_pct* on the test axis."""
+    full = _pivot_right_goals_full()
     brk = {12: 2048, 13: 2048}
     u = blend_pct / 100.0
     return {
@@ -728,12 +742,15 @@ def test_turn_env_getters_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
     assert _imu_turn_target_deg() == 90.0
     assert _imu_turn_max_steps() == 40
-    assert _imu_turn_step_rate_deg_per_sec() == 30.0
+    assert _imu_turn_step_rate_deg_per_sec() == 22.0
     assert _imu_turn_step_blend_pct() == 100
-    assert _held_dpad_pivot_blend_pct() == 50
-    assert _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct()) == _pivot_left_goals_at_blend(50)
-    assert _imu_turn_pre_settle_sec() == 0.20
-    assert _imu_turn_post_settle_sec() == 0.30
+    assert _held_dpad_pivot_blend_pct() == 30
+    assert _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct()) == _pivot_left_goals_at_blend(30)
+    assert _turn_step_dur_cap_sec() == 0.26
+    assert _turn_step_min_sec() == 0.10
+    assert _turn_step_settle_sec() == 0.12
+    assert _imu_turn_pre_settle_sec() == 0.28
+    assert _imu_turn_post_settle_sec() == 0.40
     assert _imu_turn_progress_check_steps() == 6
     assert _imu_turn_progress_min_deg() == 3.0
     # Swap defaults to False after the fleet hall FWD/REV swap.
@@ -865,9 +882,9 @@ def test_timed_turn_left_honours_swap_pivot_dir(
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
     # Under swap=1, "turn_left" must mechanically rotate the
     # swapped chassis LEFT — that's the L=BACK, R=FWD geometry.
-    assert pivot == _pivot_right_goals_full(), (
+    assert pivot == _pivot_right_goals_at_blend(_held_dpad_pivot_blend_pct()), (
         f"timed turn_left under swap=1 must use the L=BACK/R=FWD "
-        f"geometry; saw {pivot}"
+        f"geometry at held-D-pad blend; saw {pivot}"
     )
 
 
@@ -887,9 +904,9 @@ def test_timed_turn_right_honours_swap_pivot_dir(
     ):
         drv.turn_right(duration=0.0)
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_left_goals_full(), (
+    assert pivot == _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct()), (
         f"timed turn_right under swap=1 must use the L=FWD/R=BACK "
-        f"geometry; saw {pivot}"
+        f"geometry at held-D-pad blend; saw {pivot}"
     )
 
 
@@ -909,7 +926,7 @@ def test_timed_turn_left_swap_zero_uses_conventional_geometry(
     ):
         drv.turn_left(duration=0.0)
     pivot = _first_pivot_goal(drv._dxl.goal_writes)
-    assert pivot == _pivot_left_goals_full()
+    assert pivot == _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct())
 
 
 # ----------------------------------------------------------------------
@@ -964,9 +981,9 @@ def test_turn_step_duration_aims_at_zero_not_half_deadband_short(
     env = _fast_turn_env(
         NINA_HOVER_TURN_TARGET_DEG="24.0",
         NINA_HOVER_IMU_CORR_DEADBAND_DEG="10.0",
-        NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC="10.0",
-        NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC="10.0",
-        NINA_HOVER_IMU_CORR_STEP_MIN_SEC="0.001",
+        NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC="10.0",
+        NINA_HOVER_TURN_STEP_DUR_CAP_SEC="10.0",
+        NINA_HOVER_TURN_STEP_MIN_SEC="0.001",
         NINA_HOVER_TURN_MAX_STEPS="1",
     )
     with patch.dict(os.environ, env, clear=False):
