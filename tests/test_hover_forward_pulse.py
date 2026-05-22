@@ -485,93 +485,32 @@ def test_drift_correct_loop_backward_uses_backward_leg_getter_only(
     )
 
 
-def test_drift_correction_forward_uses_forward_step_getters_only(
+def test_drift_correction_uses_hold_turn_step_duration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Forward-leg correction must call the **forward** step-duration
-    getters and never the backward getters. This locks the
-    "forward path is bit-identical" contract that the backward fix
-    must not violate.
-    """
+    """Straight FWD/BACK correction must hold the pivot as long as D-pad L/R."""
+    from nina.controllers.hoverboard_axis_drive import _hold_turn_step_duration_sec
+
     axis = _axis_pulse_fast()
     hb, _dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=lambda: 5.0, yaw_rate_fn=lambda: 0.0)
 
-    calls = {"fwd_cap": 0, "fwd_min": 0, "back_cap": 0, "back_min": 0}
+    calls: list[float | None] = []
+
+    def fake_hold_dur(rotation_deg=None):
+        calls.append(rotation_deg)
+        return 0.42
+
     monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_step_dur_cap_sec",
-        lambda: (calls.__setitem__("fwd_cap", calls["fwd_cap"] + 1) or 0.05),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_step_min_sec",
-        lambda: (calls.__setitem__("fwd_min", calls["fwd_min"] + 1) or 0.005),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_back_step_dur_cap_sec",
-        lambda: (calls.__setitem__("back_cap", calls["back_cap"] + 1) or 0.02),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_back_step_min_sec",
-        lambda: (calls.__setitem__("back_min", calls["back_min"] + 1) or 0.015),
+        "nina.controllers.hoverboard_axis_drive._hold_turn_step_duration_sec",
+        fake_hold_dur,
     )
 
-    env = _fast_straight_env() | {"NINA_HOVER_IMU_CORR_MAX_STEPS": "1"}
-    with patch.dict(os.environ, env, clear=False):
-        hb._correct_drift_at_standstill(
-            initial_drift=5.0,
-            brake_goals={12: 2048, 13: 2048},
-            halt=threading.Event(),
-            direction_label="forward",
-        )
-
-    assert calls["fwd_cap"] == 1, (
-        f"forward path must call forward step_dur_cap getter once; "
-        f"saw {calls}"
-    )
-    assert calls["fwd_min"] == 1, (
-        f"forward path must call forward step_min getter once; "
-        f"saw {calls}"
-    )
-    assert calls["back_cap"] == 0, (
-        f"forward path must NOT touch backward step_dur_cap getter "
-        f"(forward = bit-identical to before this change); saw {calls}"
-    )
-    assert calls["back_min"] == 0, (
-        f"forward path must NOT touch backward step_min getter "
-        f"(forward = bit-identical to before this change); saw {calls}"
-    )
-
-
-def test_drift_correction_backward_uses_backward_step_getters_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Backward-leg correction must call the **backward** step-duration
-    getters and never the forward ones — that's the whole point of
-    the backward-specific tuning knobs.
-    """
-    axis = _axis_pulse_fast()
-    hb, _dxl = _make_hb(axis)
-    hb.set_imu_hooks(yaw_drift_fn=lambda: 5.0, yaw_rate_fn=lambda: 0.0)
-
-    calls = {"fwd_cap": 0, "fwd_min": 0, "back_cap": 0, "back_min": 0}
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_step_dur_cap_sec",
-        lambda: (calls.__setitem__("fwd_cap", calls["fwd_cap"] + 1) or 0.05),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_step_min_sec",
-        lambda: (calls.__setitem__("fwd_min", calls["fwd_min"] + 1) or 0.005),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_back_step_dur_cap_sec",
-        lambda: (calls.__setitem__("back_cap", calls["back_cap"] + 1) or 0.02),
-    )
-    monkeypatch.setattr(
-        "nina.controllers.hoverboard_axis_drive._straight_corr_back_step_min_sec",
-        lambda: (calls.__setitem__("back_min", calls["back_min"] + 1) or 0.015),
-    )
-
-    env = _fast_straight_env() | {"NINA_HOVER_IMU_CORR_MAX_STEPS": "1"}
+    env = _fast_straight_env() | {
+        "NINA_HOVER_IMU_CORR_MAX_STEPS": "1",
+        "NINA_HOVER_STRAIGHT_SETTLE_MAX_SEC": "0.01",
+        "NINA_HOVER_STRAIGHT_SETTLE_STABLE_SEC": "0.001",
+    }
     with patch.dict(os.environ, env, clear=False):
         hb._correct_drift_at_standstill(
             initial_drift=5.0,
@@ -580,21 +519,9 @@ def test_drift_correction_backward_uses_backward_step_getters_only(
             direction_label="backward",
         )
 
-    assert calls["back_cap"] == 1, (
-        f"backward path must call backward step_dur_cap getter once; "
-        f"saw {calls}"
-    )
-    assert calls["back_min"] == 1, (
-        f"backward path must call backward step_min getter once; "
-        f"saw {calls}"
-    )
-    assert calls["fwd_cap"] == 0, (
-        f"backward path must NOT touch forward step_dur_cap getter "
-        f"(otherwise forward tuning bleeds into backward); saw {calls}"
-    )
-    assert calls["fwd_min"] == 0, (
-        f"backward path must NOT touch forward step_min getter; "
-        f"saw {calls}"
+    assert len(calls) >= 1, "correction must resolve duration via hold-turn helper"
+    assert _hold_turn_step_duration_sec() > 0.20, (
+        "hold-turn duration should be >> legacy 0.030s straight-correction kicks"
     )
 
 
@@ -1180,7 +1107,9 @@ def test_forward_loop_correction_continues_past_deadband_until_residual() -> Non
     }
     with patch.dict(os.environ, env, clear=False):
         hb.start_pulse_straight_forward(50)
-        time.sleep(0.30)
+        # Hold-turn step duration (~0.26 s) needs more wall time than the
+        # legacy 0.05 s correction kicks this test was written for.
+        time.sleep(0.70)
         hb.stop()
     _wait_until_idle(hb)
 

@@ -1635,6 +1635,23 @@ def _held_dpad_pivot_blend_pct() -> int:
     return _HELD_DPAD_PIVOT_BLEND_PCT
 
 
+def _hold_turn_step_duration_sec(rotation_deg: Optional[float] = None) -> float:
+    """Lean-hold duration for one held L/R micro-step (and straight drift correction).
+
+    Uses the same cap, floor, and rate as :meth:`HoverboardAxisDrive._imu_turn_run_one_step`
+    with ``NINA_DRIVE_TURN_PIVOT_DEG`` as the default rotation budget. Straight FWD/BACK
+    correction reuses this so the servos hold the pivot long enough to rotate the chassis,
+    not the legacy 0.030 s straight-correction kicks that shared tick goals but barely moved.
+    """
+    if rotation_deg is None:
+        rotation_deg = _drive_turn_micro_step_deg()
+    target = max(0.5, abs(float(rotation_deg)))
+    rate = _imu_turn_step_rate_deg_per_sec()
+    cap = _turn_step_dur_cap_sec()
+    floor = _turn_step_min_sec()
+    return max(floor, min(cap, target / rate))
+
+
 def _imu_turn_pre_settle_sec() -> float:
     """Brake dwell BEFORE the first micro-step fires.
 
@@ -3190,22 +3207,7 @@ class HoverboardAxisDrive:
             residual = max(0.1, deadband * 0.5)
         invert = _imu_corr_invert_sign()
         step_blend = _held_dpad_pivot_blend_pct()  # logged; goals via hold-turn helper
-        # Step duration cap + floor diverge between forward and backward:
-        # the same 0.030 s kick that produces ~2.5° clean rotation when
-        # correcting after a forward leg over-pushes (5–8°) when
-        # correcting after a backward leg on the reference chassis
-        # (chassis-asymmetric pre-pivot momentum profile). Backward gets
-        # softer defaults (0.020 s cap / 0.015 s floor) so the
-        # proportional formula actually shrinks per-step rotation for
-        # small drifts. Forward path is bit-identical to before — its
-        # branch resolves the same two getters it always did.
-        if direction_label == "backward":
-            step_dur_cap = _straight_corr_back_step_dur_cap_sec()
-            step_min = _straight_corr_back_step_min_sec()
-        else:
-            step_dur_cap = _straight_corr_step_dur_cap_sec()
-            step_min = _straight_corr_step_min_sec()
-        step_rate = _straight_corr_step_rate_dps()
+        hold_step_dur = _hold_turn_step_duration_sec()
         step_settle = _imu_corr_step_settle_sec()
         max_steps = _imu_corr_max_steps()
         yaw_fn = self._imu_yaw_drift_fn
@@ -3214,8 +3216,7 @@ class HoverboardAxisDrive:
         log.info(
             "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
             "residual=%.2f deg invert=%s turn_swap=%s hold_turn_blend=%d%% "
-            "step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
-            "step_settle=%.2fs max_steps=%d",
+            "hold_step_dur=%.3fs (same as D-pad L/R) step_settle=%.2fs max_steps=%d",
             direction_label,
             current,
             deadband,
@@ -3223,9 +3224,7 @@ class HoverboardAxisDrive:
             invert,
             _imu_turn_swap_pivot_dir(),
             step_blend,
-            step_rate,
-            step_dur_cap,
-            step_min,
+            hold_step_dur,
             step_settle,
             max_steps,
         )
@@ -3252,20 +3251,7 @@ class HoverboardAxisDrive:
             if turn_dir is None:
                 return
             step_goals = self._pivot_goals_for_hold_turn_step(turn_dir)
-
-            # Proportional duration: aim to land at **zero** drift. The
-            # old "land at ½ deadband short of zero" target weakens the
-            # per-step kick for drifts just past the deadband edge — a
-            # 3.6° drift with a 3.5° deadband targets only 1.85° of
-            # rotation, hits the 0.015 s step floor, and gets defeated
-            # by chassis stiction (the user-observed "bot doesn't seem
-            # to correct" pattern). Aiming for zero gives the step a
-            # full deadband-worth more torque budget; if it overshoots,
-            # the next leg's sample exits via the deadband.
-            target_rotation = max(0.5, abs(current))
-            this_step_dur = max(
-                step_min, min(step_dur_cap, target_rotation / step_rate)
-            )
+            this_step_dur = hold_step_dur
 
             try:
                 self._apply_goals(step_goals)
@@ -4116,20 +4102,12 @@ class HoverboardAxisDrive:
     ) -> Optional[float]:
         """One closed-loop pivot step; returns updated yaw in intent frame."""
         step_blend = _held_dpad_pivot_blend_pct()
-        step_rate = _imu_turn_step_rate_deg_per_sec()
-        step_dur_cap = _turn_step_dur_cap_sec()
-        step_min = _turn_step_min_sec()
         step_settle = _turn_step_settle_sec()
         brake_goals = self._hold_turn_brake_goals()
         turn_halt = threading.Event()
 
         step_goals = self._pivot_goals_for_hold_turn_step(direction)
-
-        rotation_target = max(0.5, abs(remaining_deg))
-        this_step_dur = max(
-            step_min,
-            min(step_dur_cap, rotation_target / step_rate),
-        )
+        this_step_dur = _hold_turn_step_duration_sec(abs(remaining_deg))
         try:
             self._apply_goals(step_goals)
             log.info(
