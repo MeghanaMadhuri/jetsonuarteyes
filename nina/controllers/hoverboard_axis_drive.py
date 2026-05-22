@@ -77,19 +77,17 @@ hoverboard chassis; lower them only if the realign is over-shooting):
   ``NINA_HOVER_IMU_CORR_ENABLE``                default 1
   ``NINA_HOVER_IMU_CORR_THRESHOLD_DEG``         default 4.0   (only fire when drift gets noticeable)
   ``NINA_HOVER_IMU_CORR_DEADBAND_DEG``          default 1.5   (stop realign when drift returns inside this)
-  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       (ignored — always 100% full pivot)
-  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``         default 0.18  (per-MICRO-STEP duration CAP;
-                                                                actual duration is proportional
-                                                                to remaining drift, never longer
-                                                                than this)
-  ``NINA_HOVER_IMU_CORR_STEP_MIN_SEC``          default 0.05  (per-MICRO-STEP duration FLOOR;
-                                                                MX-28 needs ~50 ms to slew)
-  ``NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC`` default 30    (calibrated rotation rate at the
-                                                                configured blend; the proportional
-                                                                step duration is computed as
-                                                                ``|drift| / rate`` clamped to
-                                                                ``[STEP_MIN_SEC, PIVOT_MAX_SEC]``)
-  ``NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC``       default 0.08  (brake dwell between micro-steps)
+  ``NINA_HOVER_IMU_CORR_PIVOT_BLEND_PCT``       (legacy; in-motion pivots use held-D-pad blend)
+  ``NINA_HOVER_IMU_CORR_PIVOT_MAX_SEC``         (legacy; in-motion uses ``NINA_HOVER_TURN_STEP_*``)
+  ``NINA_HOVER_IMU_CORR_STEP_MIN_SEC``          (legacy; in-motion uses ``NINA_HOVER_TURN_STEP_*``)
+  ``NINA_HOVER_IMU_CORR_STEP_RATE_DEG_PER_SEC`` (legacy; in-motion uses ``NINA_HOVER_TURN_STEP_RATE``)
+  ``NINA_HOVER_IMU_CORR_STEP_SETTLE_SEC``       (legacy; standstill drift-correct only)
+
+  In-motion left/right yaw realign during forward/back pulse holds uses the **same**
+  lean pacing as held D-pad L/R (``NINA_HOVER_TURN_STEP_DUR_CAP_SEC`` default 0.26 s,
+  ``NINA_HOVER_TURN_STEP_MIN_SEC`` 0.10 s, ``NINA_HOVER_TURN_STEP_SETTLE_SEC`` 0.12 s,
+  ``NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC`` 22 dps, 30% pivot blend,
+  ``NINA_HOVER_TURN_PRE_SETTLE_SEC`` / ``NINA_HOVER_TURN_POST_SETTLE_SEC``).
   ``NINA_HOVER_IMU_CORR_MAX_STEPS``             default 15    (hard cap on micro-step iterations;
                                                                 with proportional sizing typical
                                                                 events terminate in 1-3 steps)
@@ -2260,21 +2258,14 @@ class HoverboardAxisDrive:
         }
         invert = bool(self._imu_corr_invert_sign)
         deadband = self._imu_corr_deadband_deg
-        step_blend = max(1, min(100, int(self._imu_corr_pivot_blend_pct)))
-        step_dur_cap = max(0.02, float(self._imu_corr_pivot_max_sec))
-        step_min_sec = max(0.01, float(self._imu_corr_step_min_sec))
-        # Direction-aware step rate: backward leg may use a different
-        # calibration (NINA_HOVER_IMU_CORR_BACK_STEP_RATE_DEG_PER_SEC).
-        # Falls back to the forward value when the override is unset.
-        step_rate_dps = max(
-            1.0,
-            float(
-                self._imu_corr_step_rate_dps
-                if is_forward
-                else self._imu_corr_back_step_rate_dps
-            ),
-        )
-        step_settle = max(0.0, float(self._imu_corr_step_settle_sec))
+        # Same lean pacing as held D-pad L/R / closed-loop turns.
+        step_blend = _held_dpad_pivot_blend_pct()
+        step_dur_cap = _turn_step_dur_cap_sec()
+        step_min_sec = _turn_step_min_sec()
+        step_rate_dps = _imu_turn_step_rate_deg_per_sec()
+        step_settle = _turn_step_settle_sec()
+        pre_settle = _imu_turn_pre_settle_sec()
+        post_settle = _imu_turn_post_settle_sec()
         max_steps = max(1, int(self._imu_corr_max_steps))
 
         warmup_steps = max(0, int(self._imu_corr_bail_warmup_steps))
@@ -2316,7 +2307,7 @@ class HoverboardAxisDrive:
             self._apply_goals(brake_goals)
         except Exception:
             pass
-        if halt.wait(timeout=self._imu_corr_settle_sec):
+        if halt.wait(timeout=pre_settle):
             return True
 
         # 2. Iterative micro-step realign. The direction is re-decided every
@@ -2423,10 +2414,7 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-            # Decide direction from the *latest* sample so micro-overshoots
-            # self-correct on the next iteration. Reuses the same geometry
-            # pipeline as the timed Turn left/right buttons, so calibrated
-            # pivot goals and NINA_HOVER_SWAP_TURN_LR are honoured.
+            # Same blend / step timing as held D-pad; drift sign picks direction.
             effective = -last_yaw if invert else last_yaw
             pivot_left = effective > 0.0
             if pivot_left:
@@ -2494,7 +2482,7 @@ class HoverboardAxisDrive:
             self._apply_goals(brake_goals)
         except Exception:
             pass
-        if halt.wait(timeout=self._imu_corr_settle_sec):
+        if halt.wait(timeout=post_settle):
             return True
 
         # 4. Re-prime the lean stack at neutral so the next primed forward /
