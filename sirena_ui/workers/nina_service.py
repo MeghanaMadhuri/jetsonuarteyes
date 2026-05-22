@@ -345,8 +345,15 @@ class NinaService:
                 "(set NINA_BATTERY_ADS1115_ENABLE=1 for UI pack voltage)"
             )
             return
-        if self._battery_monitor is not None:
+        mon = self._battery_monitor
+        if mon is not None and mon.is_running():
             return
+        if mon is not None:
+            try:
+                mon.stop()
+            except Exception:
+                pass
+            self._battery_monitor = None
         try:
             mon = BatteryAds1115Monitor(self)
             mon.start()

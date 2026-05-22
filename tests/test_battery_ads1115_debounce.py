@@ -9,9 +9,10 @@ from nina.config.settings import load_settings
 from nina.sensors import ads1115 as ads1115_consts
 from nina.sensors.battery_ads1115_monitor import (
     DEFAULT_REPEAT_STEP_V,
-    _env_repeat_step_v,
     battery_low_debounce_step,
+    decide_low_battery_reminder,
     decide_low_battery_repeat,
+    update_pack_min_v,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -107,20 +108,10 @@ class LowBatteryRepeatDecisionTests(unittest.TestCase):
         """The operator-locked baseline step is 0.2 V."""
         self.assertAlmostEqual(DEFAULT_REPEAT_STEP_V, 0.2, places=3)
 
-    def test_env_override_clamps_to_safe_range(self) -> None:
+    def test_settings_repeat_step_from_env(self) -> None:
         with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "0.5"}, clear=False):
-            self.assertAlmostEqual(_env_repeat_step_v(), 0.5, places=3)
-        # Negative -> clamped to 0 (disables the repeat).
-        with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "-1"}, clear=False):
-            self.assertEqual(_env_repeat_step_v(), 0.0)
-        # Absurdly large -> clamped to 5 V upper bound.
-        with patch.dict(os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "999"}, clear=False):
-            self.assertEqual(_env_repeat_step_v(), 5.0)
-        # Invalid -> falls back to default.
-        with patch.dict(
-            os.environ, {"NINA_BATTERY_REPEAT_STEP_V": "bogus"}, clear=False
-        ):
-            self.assertAlmostEqual(_env_repeat_step_v(), 0.2, places=3)
+            settings = load_settings(REPO_ROOT)
+        self.assertAlmostEqual(settings.battery_ads1115.repeat_step_v, 0.5, places=3)
 
     def test_first_call_anchors_without_speaking(self) -> None:
         """First call (``last_announced_v=None``) just sets the anchor.
@@ -186,6 +177,43 @@ class LowBatteryRepeatDecisionTests(unittest.TestCase):
         )
         self.assertTrue(should_speak_3)
         self.assertAlmostEqual(anchor_3, 23.8, places=3)
+
+    def test_pack_min_tracks_floor_for_slow_drain(self) -> None:
+        """Repeat warnings use the minimum pack V since latch, not bounce peaks."""
+        floor = update_pack_min_v(25.5, 25.6)
+        self.assertAlmostEqual(floor, 25.5, places=3)
+        floor2 = update_pack_min_v(floor, 25.29)
+        self.assertAlmostEqual(floor2, 25.29, places=3)
+        should_speak, anchor = decide_low_battery_repeat(
+            floor2, last_announced_v=25.5, step_v=0.2
+        )
+        self.assertTrue(should_speak)
+        self.assertAlmostEqual(anchor, 25.29, places=3)
+
+    def test_reminder_fires_after_interval(self) -> None:
+        self.assertFalse(
+            decide_low_battery_reminder(
+                now_mono=100.0,
+                last_reminder_mono=50.0,
+                reminder_interval_sec=90.0,
+            )
+        )
+        self.assertTrue(
+            decide_low_battery_reminder(
+                now_mono=141.0,
+                last_reminder_mono=50.0,
+                reminder_interval_sec=90.0,
+            )
+        )
+
+    def test_reminder_disabled_when_interval_zero(self) -> None:
+        self.assertFalse(
+            decide_low_battery_reminder(
+                now_mono=1000.0,
+                last_reminder_mono=0.0,
+                reminder_interval_sec=0.0,
+            )
+        )
 
     def test_step_zero_disables_repeat_entirely(self) -> None:
         """``step_v=0`` is the operator opt-out: no repeats ever fire, anchor

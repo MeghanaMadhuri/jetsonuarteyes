@@ -106,9 +106,12 @@ Environment=NINA_IMU_I2C_ADDR=0x68
 Environment=NINA_BATTERY_ADS1115_ENABLE=1
 Environment=NINA_BATTERY_I2C_BUS=7
 Environment=NINA_BATTERY_CAL_SCALE=1.082
-# TEMP: lower low-battery latch for bench/testing (revert to 25.5 / 26.1 when done).
-Environment=NINA_BATTERY_LOW_VOLTAGE_V=24
-Environment=NINA_BATTERY_CLEAR_VOLTAGE_V=24.6
+Environment=NINA_BATTERY_LOW_VOLTAGE_V=25.5
+Environment=NINA_BATTERY_CLEAR_VOLTAGE_V=26.1
+Environment=NINA_BATTERY_REPEAT_STEP_V=0.2
+Environment=NINA_BATTERY_REMINDER_SEC=90
+Environment=NINA_BATTERY_STARTUP_DEBOUNCE=1
+Environment=NINA_BATTERY_LATCH_PERSIST=1
 
 # Capacitive touch AT42QT2120 @ 0x1c (same bus 7, pins 3/5).
 Environment=NINA_TOUCH_AT42QT2120_ENABLE=1

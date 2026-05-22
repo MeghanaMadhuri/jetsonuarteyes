@@ -283,8 +283,11 @@ class BatteryAds1115Settings:
     low_voltage_v: float
     clear_voltage_v: float
     debounce_reads: int
+    startup_debounce_reads: int
     cooldown_sec: float
     poll_interval_sec: float
+    repeat_step_v: float
+    reminder_interval_sec: float
     tts_text: str
     lean_goal: int
 
@@ -883,8 +886,15 @@ def load_settings(repo_root: Path) -> NinaSettings:
         low_voltage_v=low_v,
         clear_voltage_v=clear_v,
         debounce_reads=max(1, min(30, _env_int("NINA_BATTERY_DEBOUNCE", 3))),
+        startup_debounce_reads=max(
+            1, min(30, _env_int("NINA_BATTERY_STARTUP_DEBOUNCE", 1))
+        ),
         cooldown_sec=max(0.0, _env_float("NINA_BATTERY_COOLDOWN_SEC", 300.0)),
         poll_interval_sec=max(0.25, _env_float("NINA_BATTERY_POLL_SEC", 2.0)),
+        repeat_step_v=max(0.0, min(5.0, _env_float("NINA_BATTERY_REPEAT_STEP_V", 0.2))),
+        reminder_interval_sec=max(
+            0.0, _env_float("NINA_BATTERY_REMINDER_SEC", 90.0)
+        ),
         tts_text=(
             (os.environ.get("NINA_BATTERY_TTS") or "").strip()
             or "I am low on battery , Please put me on charge"
