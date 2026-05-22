@@ -154,6 +154,16 @@ def activate_text_input(widget: QWidget) -> None:
         osk.activate_text_input(widget)
 
 
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, min(hi, int(raw)))
+    except ValueError:
+        return default
+
+
 def _kiosk_panel_height_px() -> int:
     raw = (os.environ.get("NINA_UI_PANEL_HEIGHT") or "600").strip()
     try:
@@ -177,6 +187,9 @@ def _resolve_osk_binary(name: str) -> Optional[str]:
         if os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def _split_args(raw: Optional[str]) -> Tuple[str, ...]:
     """Split a shell-style arg string into argv pieces. Empty / None
     -> no extra args. Used for NINA_UI_OSK_ARGS so the operator can
     pass `--theme=Nightshade --not-show-in-launcher` etc."""
