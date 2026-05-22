@@ -2815,8 +2815,12 @@ class HoverboardAxisDrive:
         elif status == "settled":
             log.debug("sequence post-turn: settled in %.3fs", elapsed)
 
-    def _in_saved_sequence(self) -> bool:
+    def is_saved_sequence_active(self) -> bool:
+        """True while :meth:`execute_saved_movement` is running a saved sequence."""
         return self._saved_sequence_depth > 0
+
+    def _in_saved_sequence(self) -> bool:
+        return self.is_saved_sequence_active()
 
     def _sample_yaw_rate_dps(self) -> Optional[float]:
         fn = self._imu_yaw_rate_fn

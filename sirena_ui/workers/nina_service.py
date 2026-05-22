@@ -87,6 +87,7 @@ class NinaService:
         self._battery_monitor: Optional[BatteryAds1115Monitor] = None
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._esp32_trigger_monitor: Optional[Esp32TriggerMonitor] = None
+        self._esp32_trigger_start_detail: Optional[str] = None
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
         self._movement_store: Optional[MovementStore] = None
 
@@ -271,11 +272,56 @@ class NinaService:
             mon = Esp32TriggerMonitor(self)
             mon.start()
             self._esp32_trigger_monitor = mon
+            self._esp32_trigger_start_detail = None
             return True
         except Exception as exc:
             self._esp32_trigger_monitor = None
+            self._esp32_trigger_start_detail = str(exc)
             log.warning("ESP32 trigger monitor did not start: %s", exc)
             return False
+
+    def esp32_trigger_status(self) -> Dict[str, Any]:
+        """Status for the ESP32 GPIO trigger monitor."""
+        s = self.settings.esp32_trigger
+        if not s.enabled:
+            return {
+                "enabled": False,
+                "running": False,
+                "gpio_bcm": int(s.gpio_bcm),
+                "line_high": None,
+                "armed": False,
+                "action_name": str(s.action_name),
+                "fire_count": 0,
+                "detail": "ESP32 trigger disabled",
+            }
+        mon = self._esp32_trigger_monitor
+        if mon is None:
+            detail = self._esp32_trigger_start_detail or "ESP32 trigger monitor not started"
+            return {
+                "enabled": True,
+                "running": False,
+                "gpio_bcm": int(s.gpio_bcm),
+                "line_high": None,
+                "armed": False,
+                "action_name": str(s.action_name),
+                "fire_count": 0,
+                "detail": detail,
+            }
+        try:
+            st = mon.status()
+        except Exception as exc:
+            return {
+                "enabled": True,
+                "running": False,
+                "gpio_bcm": int(s.gpio_bcm),
+                "line_high": None,
+                "armed": False,
+                "action_name": str(s.action_name),
+                "fire_count": 0,
+                "detail": f"ESP32 status failed: {exc}",
+            }
+        st["enabled"] = True
+        return st
 
     def run_esp32_trigger_reaction(self, action_name: str) -> None:
         """Stop drive and play a named gesture (with manifest audio if configured)."""
@@ -298,6 +344,7 @@ class NinaService:
             return
 
         if not self._bus_ready:
+            log.info("ESP32 trigger: Dynamixel bus not ready — initializing")
             try:
                 self.ensure_bus()
             except Exception:
@@ -330,6 +377,7 @@ class NinaService:
                     max_speed=1023,
                     speed=1.0,
                 )
+                log.info("ESP32 trigger: action '%s' finished", action_name)
         except Exception:
             log.exception("ESP32 trigger: action '%s' failed", action_name)
         finally:

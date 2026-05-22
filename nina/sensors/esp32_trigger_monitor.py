@@ -7,7 +7,9 @@ When the line goes high (debounced rising edge), runs a named arm action on
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
 import threading
 import time
 from typing import TYPE_CHECKING, Optional
@@ -61,6 +63,10 @@ class Esp32GpioInput:
         self._gpio = None
 
     def open(self) -> None:
+        os.environ.setdefault(
+            "JETSON_MODEL_NAME",
+            os.environ.get("NINA_JETSON_MODEL", "JETSON_ORIN_NANO"),
+        )
         try:
             import Jetson.GPIO as GPIO  # type: ignore
         except ImportError as exc:
@@ -70,7 +76,16 @@ class Esp32GpioInput:
             ) from exc
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
-        GPIO.setup(self._pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        try:
+            GPIO.setup(self._pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        except OSError as exc:
+            if getattr(exc, "errno", None) == errno.EBUSY:
+                raise RuntimeError(
+                    f"GPIO BCM {self._pin} is busy (Errno 16). Stop other "
+                    "processes using the 40-pin header "
+                    "(systemctl --user stop nina-ui-kiosk) or reboot."
+                ) from exc
+            raise
         self._gpio = GPIO
         log.info("ESP32 trigger GPIO BCM %s configured as INPUT (PUD_DOWN)", self._pin)
 
@@ -104,6 +119,13 @@ class Esp32TriggerMonitor:
         self._release_hits = 0
         self._last_fire_mono = -1e30
         self._reaction_lock = threading.Lock()
+        self._debug = os.environ.get("NINA_ESP32_TRIGGER_DEBUG", "").strip() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self._last_high: Optional[bool] = None
+        self._fire_count = 0
 
     def start(self) -> None:
         self._gpio.open()
@@ -148,6 +170,31 @@ class Esp32TriggerMonitor:
         t = self._thread
         return t is not None and t.is_alive()
 
+    def status(self) -> dict:
+        """Small UI-facing status snapshot for Health/Home indicators."""
+        thread = self._thread
+        running = bool(thread is not None and thread.is_alive())
+        s = self._svc.settings.esp32_trigger
+        high = self._last_high
+        if not running:
+            detail = "monitor stopped"
+        elif high is None:
+            detail = f"ready, BCM {s.gpio_bcm} (no sample yet)"
+        elif high:
+            detail = f"line HIGH on BCM {s.gpio_bcm} (armed={self._armed})"
+        else:
+            detail = f"line LOW on BCM {s.gpio_bcm} (armed={self._armed})"
+        return {
+            "running": running,
+            "gpio_bcm": int(s.gpio_bcm),
+            "line_high": high,
+            "armed": bool(self._armed),
+            "active_high": bool(s.active_high),
+            "action_name": str(self._action_name),
+            "fire_count": int(self._fire_count),
+            "detail": detail,
+        }
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -156,8 +203,19 @@ class Esp32TriggerMonitor:
                 log.debug("ESP32 GPIO read failed", exc_info=True)
                 self._hits = 0
                 self._prev_high = False
+                self._last_high = None
                 time.sleep(max(self._poll_sec, 0.1))
                 continue
+
+            if self._debug and high != self._last_high:
+                log.info(
+                    "ESP32 GPIO BCM %s logical %s (armed=%s hits=%d)",
+                    self._svc.settings.esp32_trigger.gpio_bcm,
+                    "HIGH" if high else "LOW",
+                    self._armed,
+                    self._hits,
+                )
+            self._last_high = high
 
             now = time.monotonic()
             fire, self._hits = esp32_rising_edge_step(
@@ -174,8 +232,10 @@ class Esp32TriggerMonitor:
                         self._last_fire_mono = now
                         self._armed = False
                         self._release_hits = 0
+                        self._fire_count += 1
                         log.info(
-                            "ESP32 trigger fired — playing action '%s'",
+                            "ESP32 trigger fired (#%d) — playing action '%s'",
+                            self._fire_count,
                             self._action_name,
                         )
                         try:

@@ -47,6 +47,21 @@ class DriveControllerInMotionTests(unittest.TestCase):
         dc._injected_nav = None
         self.assertTrue(dc.is_in_motion())
 
+    def test_saved_sequence_counts_as_motion_while_direction_idle(self) -> None:
+        dc = DriveController.__new__(DriveController)
+        dc._lock = __import__("threading").RLock()
+        dc._state = {
+            "brake": False,
+            "direction": "idle",
+        }
+        dc._active_drive = None
+        nav = MagicMock()
+        nav.is_straight_pulse_series_active.return_value = False
+        nav.is_saved_sequence_active.return_value = True
+        dc._nav = nav
+        dc._injected_nav = None
+        self.assertTrue(dc.is_in_motion())
+
 
 if __name__ == "__main__":
     unittest.main()

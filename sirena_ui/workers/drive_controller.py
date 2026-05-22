@@ -492,6 +492,19 @@ class DriveController(QObject):
 
     def is_in_motion(self) -> bool:
         """True when wheels are commanded away from idle/brake neutral."""
+        nav = self._nav if self._nav is not None else self._injected_nav
+        if nav is not None:
+            for attr in (
+                "is_straight_pulse_series_active",
+                "is_saved_sequence_active",
+            ):
+                fn = getattr(nav, attr, None)
+                if callable(fn):
+                    try:
+                        if fn():
+                            return True
+                    except Exception:
+                        pass
         with self._lock:
             if self._state.get("brake", True):
                 return False
@@ -503,13 +516,6 @@ class DriveController(QObject):
             _, ls, _, rs = active
             if ls > 0 or rs > 0:
                 return True
-        nav = self._nav if self._nav is not None else self._injected_nav
-        if nav is not None and hasattr(nav, "is_straight_pulse_series_active"):
-            try:
-                if nav.is_straight_pulse_series_active():
-                    return True
-            except Exception:
-                pass
         return False
 
     def nav_manager(self) -> Optional[NavigationManagerLike]:

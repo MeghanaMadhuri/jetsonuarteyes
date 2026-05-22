@@ -106,6 +106,9 @@ def collect(service: NinaService) -> List[HealthRow]:
     # 5) IR cliff sensor (driven by AutonomyController) ----------------
     rows.append(_ir_row(service))
 
+    # 5b) ESP32 GPIO trigger -------------------------------------------
+    rows.append(_esp32_row(service))
+
     # 6) Ultrasonic ring (driven by AutonomyController) ----------------
     rows.append(_ultrasonic_row(service))
 
@@ -315,6 +318,40 @@ def _ir_row(service: NinaService) -> HealthRow:
     return HealthRow(
         "ir", "IR obstacle stop", "\u25A6",
         msg or ("ready" if running else "not started"),
+        status,
+    )
+
+
+def _esp32_row(service: NinaService) -> HealthRow:
+    try:
+        st = service.esp32_trigger_status()
+    except Exception as exc:
+        return HealthRow(
+            "esp32", "ESP32 GPIO trigger", "\u26A1",
+            f"status query failed: {exc}", STATUS_ERROR,
+        )
+    enabled = bool(st.get("enabled"))
+    running = bool(st.get("running"))
+    line_high = st.get("line_high")
+    msg = str(st.get("detail") or "")
+    action = str(st.get("action_name") or "namaste")
+    fires = int(st.get("fire_count") or 0)
+    if not enabled:
+        status = STATUS_PENDING
+    elif not running:
+        status = STATUS_ERROR
+    elif line_high is True:
+        status = STATUS_WARN
+    else:
+        status = STATUS_OK
+    suffix = f" → {action}" if action else ""
+    if fires:
+        msg = f"{msg} · fired {fires}x{suffix}"
+    elif suffix:
+        msg = f"{msg}{suffix}"
+    return HealthRow(
+        "esp32", "ESP32 GPIO trigger", "\u26A1",
+        msg or ("listening" if running else "not started"),
         status,
     )
 

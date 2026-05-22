@@ -342,11 +342,11 @@ class Esp32TriggerSettings:
 class IrObstacleStopSettings:
     """GP2Y0E02B forward IR on header I²C (pins 3/5 → ``/dev/i2c-7``, addr **0x40**).
 
-    Polls continuously by default so it also reacts when somebody/something
-    approaches Nina while she is idle. At or below ``threshold_mm`` (default
-    **400** = 40 cm) with a valid reading,
+    Polls only while the robot is in motion by default (``motion_gated``).
+    At or below ``threshold_mm`` (default **400** = 40 cm) with a valid reading,
     stops drive, parks lean brake, runs neutral pose, plays obstacle TTS.
     Enable with ``NINA_IR_OBSTACLE_STOP_ENABLE=1`` (default on).
+    Set ``NINA_IR_OBSTACLE_MOTION_GATED=0`` for always-on polling while idle.
     """
 
     enabled: bool
@@ -846,7 +846,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     ir_obstacle_stop = IrObstacleStopSettings(
         enabled=_env_bool("NINA_IR_OBSTACLE_STOP_ENABLE", True),
-        motion_gated=_env_bool("NINA_IR_OBSTACLE_MOTION_GATED", False),
+        motion_gated=_env_bool("NINA_IR_OBSTACLE_MOTION_GATED", True),
         i2c_bus=_env_int("NINA_IR_OBSTACLE_I2C_BUS", _env_int("NINA_IR_I2C_BUS", 7)),
         i2c_address=_env_int("NINA_IR_OBSTACLE_I2C_ADDR", _env_int("NINA_IR_I2C_ADDR", 0x40)),
         threshold_mm=max(
@@ -909,7 +909,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
             (os.environ.get("NINA_ESP32_TRIGGER_ACTION") or "").strip() or "namaste"
         ),
         active_high=not _env_bool("NINA_ESP32_TRIGGER_ACTIVE_LOW", False),
-        debounce_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_DEBOUNCE", 3))),
+        debounce_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_DEBOUNCE", 1))),
         release_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_RELEASE_READS", 2))),
         cooldown_sec=max(0.0, _env_float("NINA_ESP32_TRIGGER_COOLDOWN_SEC", 20.0)),
         poll_interval_sec=max(0.02, _env_float("NINA_ESP32_TRIGGER_POLL_SEC", 0.05)),
