@@ -6,8 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from nina.controllers.hoverboard_axis_drive import (
+    _hold_turn_dir_for_remaining,
     _sequence_turn_max_steps_for_deg,
+    _sequence_straight_abort_drift_deg,
+    _spin_abort_rate_dps,
     _straight_corr_max_drift_correct_deg,
+    _turn_overshoot_abort_margin_deg,
 )
 from nina.movements.executor import execute_saved_movement
 from nina.movements.model import STEP_FORWARD, STEP_UTURN, MovementStep, SavedMovement
@@ -21,6 +25,18 @@ def test_sequence_turn_max_steps_scales_with_corr_step_deg() -> None:
 
 def test_straight_corr_max_drift_default() -> None:
     assert _straight_corr_max_drift_correct_deg() == 45.0
+
+
+def test_hold_turn_dir_follows_remaining_sign() -> None:
+    """Sequence turns must pivot toward remaining, not a fixed L/R label."""
+    assert _hold_turn_dir_for_remaining(30.0) == "right"
+    assert _hold_turn_dir_for_remaining(-30.0) == "left"
+
+
+def test_sequence_spin_guard_defaults() -> None:
+    assert _turn_overshoot_abort_margin_deg(180.0, sequence=True) == 35.0
+    assert _spin_abort_rate_dps() == 45.0
+    assert _sequence_straight_abort_drift_deg() == 45.0
 
 
 def test_executor_uturn_requests_180_degrees() -> None:

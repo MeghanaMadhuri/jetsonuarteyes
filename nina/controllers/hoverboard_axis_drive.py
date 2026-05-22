@@ -1672,6 +1672,78 @@ def _sequence_turn_max_steps_for_deg(target_deg: float) -> int:
     return max(3, min(80, int(round(float(target_deg) / per_step)) + 2))
 
 
+def _hold_turn_dir_for_remaining(remaining_intent_deg: float) -> str:
+    """Map signed remaining yaw (intent frame) to ``'left'`` / ``'right'`` micro-step.
+
+    Must follow the sign of ``remaining``, not the operator's original turn
+    label — otherwise a saved U-turn that overshoots keeps applying the same
+    pivot direction and the chassis can spin in place at high speed.
+    """
+    swap = _imu_turn_swap_pivot_dir()
+    pivot_right = float(remaining_intent_deg) > 0.0
+    apply_right = not pivot_right if swap else pivot_right
+    return "right" if apply_right else "left"
+
+
+def _turn_overshoot_abort_margin_deg(target_deg: float, *, sequence: bool) -> float:
+    """Max |yaw| past the turn target before the spin guard fires.
+
+    Default: sequence **+35°** on top of target (180° → stop by 215° intent yaw);
+    manual turns **+50°**. Override ``NINA_HOVER_TURN_OVERSHOOT_ABORT_DEG`` or
+    ``NINA_HOVER_SEQUENCE_TURN_OVERSHOOT_ABORT_DEG``.
+    """
+    env_key = (
+        "NINA_HOVER_SEQUENCE_TURN_OVERSHOOT_ABORT_DEG"
+        if sequence
+        else "NINA_HOVER_TURN_OVERSHOOT_ABORT_DEG"
+    )
+    default = 35.0 if sequence else 50.0
+    try:
+        return max(10.0, min(120.0, float(os.environ.get(env_key, str(default)))))
+    except ValueError:
+        return default
+
+
+def _spin_abort_rate_dps() -> float:
+    """Abort closed-loop turns when |yaw rate| stays above this (deg/s).
+
+    Catches runaway in-place spins that outpace per-step settle. Default **45**.
+    Set ``0`` to disable. Override ``NINA_HOVER_SPIN_ABORT_RATE_DPS``.
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                200.0,
+                float(os.environ.get("NINA_HOVER_SPIN_ABORT_RATE_DPS", "45.0")),
+            ),
+        )
+    except ValueError:
+        return 45.0
+
+
+def _sequence_straight_abort_drift_deg() -> float:
+    """Straight-leg drift abort during saved sequences (tighter than kiosk default).
+
+    Default **45°** vs ``NINA_HOVER_STRAIGHT_ABORT_DRIFT_DEG`` 90° on Drive.
+    Override ``NINA_HOVER_SEQUENCE_STRAIGHT_ABORT_DRIFT_DEG``.
+    """
+    try:
+        return max(
+            0.0,
+            min(
+                180.0,
+                float(
+                    os.environ.get(
+                        "NINA_HOVER_SEQUENCE_STRAIGHT_ABORT_DRIFT_DEG", "45.0"
+                    )
+                ),
+            ),
+        )
+    except ValueError:
+        return 45.0
+
+
 def _straight_corr_step_deg() -> float:
     """Yaw budget per standstill drift-correction step (straight FWD/BACK only).
 
@@ -2746,6 +2818,77 @@ class HoverboardAxisDrive:
     def _in_saved_sequence(self) -> bool:
         return self._saved_sequence_depth > 0
 
+    def _sample_yaw_rate_dps(self) -> Optional[float]:
+        fn = self._imu_yaw_rate_fn
+        if fn is None:
+            return None
+        try:
+            raw = fn()
+            return None if raw is None else float(raw)
+        except Exception:
+            return None
+
+    def _halt_autonomous_spin(self, brake_goals: Dict[int, int], reason: str) -> None:
+        """Brake and alert — autonomous motion must never run away spinning."""
+        log.warning("hover spin guard: %s — braking and halting", reason)
+        try:
+            self._apply_goals(brake_goals)
+        except Exception:
+            pass
+        try:
+            self._halt_pulse_series(wait=False)
+        except Exception:
+            pass
+        if self._pulse_halt is not None:
+            self._pulse_halt.set()
+        try:
+            maybe_speak_cant_move_alert()
+        except Exception:
+            log.debug("spin guard: cant_move alert failed", exc_info=True)
+
+    def _turn_spin_guard_tripped(
+        self,
+        *,
+        current: float,
+        target_intent: float,
+        remaining: float,
+        target_deg: float,
+        sequence_mode: bool,
+        prev_remaining_abs: Optional[float],
+        brake_goals: Dict[int, int],
+    ) -> bool:
+        """Return True when a closed-loop turn must stop (runaway / overshoot)."""
+        margin = _turn_overshoot_abort_margin_deg(target_deg, sequence=sequence_mode)
+        if abs(current) > abs(target_intent) + margin:
+            self._halt_autonomous_spin(
+                brake_goals,
+                f"|yaw| {abs(current):.1f}° exceeded target "
+                f"{abs(target_intent):.1f}° + {margin:.1f}° margin",
+            )
+            return True
+
+        rate_thr = _spin_abort_rate_dps()
+        if rate_thr > 0.0:
+            rate = self._sample_yaw_rate_dps()
+            if rate is not None and abs(rate) >= rate_thr:
+                self._halt_autonomous_spin(
+                    brake_goals,
+                    f"yaw rate {rate:+.1f}°/s >= {rate_thr:.1f}°/s spin threshold",
+                )
+                return True
+
+        if prev_remaining_abs is not None:
+            slop = max(2.0, _imu_corr_deadband_deg())
+            if abs(remaining) > prev_remaining_abs + slop:
+                self._halt_autonomous_spin(
+                    brake_goals,
+                    f"|remaining| grew {prev_remaining_abs:.1f}° → "
+                    f"{abs(remaining):.1f}° (wrong pivot / overshoot)",
+                )
+                return True
+
+        return False
+
     def start_pulse_straight_forward(self, speed_percent: int) -> None:
         """Drift-corrected forward motion (Straight bench + D-pad forward).
 
@@ -3037,7 +3180,11 @@ class HoverboardAxisDrive:
             _straight_leg_sec() if is_forward else _straight_back_leg_sec()
         )
         brake_settle = _straight_brake_settle_sec()
-        abort_deg = _straight_abort_drift_deg()
+        abort_deg = (
+            _sequence_straight_abort_drift_deg()
+            if self._in_saved_sequence()
+            else _straight_abort_drift_deg()
+        )
         deadband = _straight_corr_deadband_deg()
         settle_rate = _straight_settle_rate_dps()
         settle_stable = _straight_settle_stable_sec()
@@ -4397,9 +4544,17 @@ class HoverboardAxisDrive:
 
         yaw_fn = self._imu_yaw_drift_fn
         if yaw_fn is None:
-            # No IMU hook wired (autonomy off, dev box, unit test
-            # without IMU fake) — fall back to the timed pivot so the
-            # button still does *something*.
+            if self._in_saved_sequence():
+                log.warning(
+                    "pulse_turn_degrees(%s): no IMU for saved sequence — "
+                    "refusing open-loop timed turn (spin risk)",
+                    direction,
+                )
+                try:
+                    self._apply_goals(brake_goals)
+                except Exception:
+                    pass
+                return False
             log.warning(
                 "pulse_turn_degrees(%s): no IMU yaw hook wired, falling back to timed turn",
                 direction,
@@ -4418,6 +4573,17 @@ class HoverboardAxisDrive:
             # blocking the Qt worker forever.
             initial = self._poll_yaw_until_ready(yaw_fn, timeout_sec=0.5)
             if initial is None:
+                if self._in_saved_sequence():
+                    log.warning(
+                        "pulse_turn_degrees(%s): IMU unavailable for saved "
+                        "sequence — refusing timed fallback",
+                        direction,
+                    )
+                    try:
+                        self._apply_goals(brake_goals)
+                    except Exception:
+                        pass
+                    return False
                 log.warning(
                     "pulse_turn_degrees(%s): IMU yaw sampler returned None for 0.5 s, "
                     "falling back to timed turn",
@@ -4481,10 +4647,23 @@ class HoverboardAxisDrive:
             )
 
             first_remaining_abs: Optional[float] = None
+            last_remaining_abs: Optional[float] = None
             steps_taken = 0
             exit_reason = "max-steps cap"
             for step in range(max_steps):
                 remaining = target_intent - current
+                if self._turn_spin_guard_tripped(
+                    current=current,
+                    target_intent=target_intent,
+                    remaining=remaining,
+                    target_deg=target_deg,
+                    sequence_mode=sequence_mode,
+                    prev_remaining_abs=last_remaining_abs,
+                    brake_goals=brake_goals,
+                ):
+                    exit_reason = "spin guard"
+                    break
+
                 if abs(remaining) <= deadband:
                     exit_reason = "deadband reached"
                     break
@@ -4516,14 +4695,16 @@ class HoverboardAxisDrive:
                         break
 
                 if sequence_mode:
-                    # Saved sequences: same D-pad hold-turn goals and step
-                    # duration as straight drift correction (30% blend, ~5°
-                    # per micro-step) — not the 100% blend Turn-button path.
+                    # Saved sequences: gentle hold-turn steps, but pivot
+                    # direction follows remaining yaw (not the original
+                    # left/right label) so overshoot cannot command an
+                    # endless same-direction spin.
                     step_budget = min(
                         abs(remaining), _straight_corr_step_deg(),
                     )
+                    step_dir = _hold_turn_dir_for_remaining(remaining)
                     sample = self._imu_turn_run_one_step(
-                        direction,
+                        step_dir,
                         step_budget,
                         step_index=step + 1,
                     )
@@ -4636,8 +4817,19 @@ class HoverboardAxisDrive:
                     target_intent - current,
                     this_step_dur,
                 )
+                last_remaining_abs = abs(target_intent - current)
 
             final_remaining = target_intent - current
+            if (
+                exit_reason == "max-steps cap"
+                and abs(final_remaining) > deadband * 3.0
+            ):
+                self._halt_autonomous_spin(
+                    brake_goals,
+                    f"turn hit max_steps with |remaining| "
+                    f"{abs(final_remaining):.1f}° still outstanding",
+                )
+                exit_reason = "spin guard"
             log.info(
                 "hover IMU turn (%s): complete after %d step%s "
                 "(final yaw=%+.2f deg, remaining=%+.2f deg, exited via %s)",
