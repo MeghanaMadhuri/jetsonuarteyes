@@ -20,7 +20,7 @@ set -euo pipefail
 
 ENV_FILE="${NINA_NAV_ENV_FILE:-/etc/nina-link/navigation.env}"
 DEVICE="${NINA_HDMI_ALSA_DEVICE:-}"
-RATE="${NINA_HDMI_AUDIO_RATE:-24000}"
+RATE="${NINA_HDMI_AUDIO_RATE:-48000}"
 RUN_TEST=1
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_MP3="${REPO_ROOT}/nina/audio/alerts/touch.mp3"
@@ -31,13 +31,14 @@ Usage:
   $0 [--device <alsa-pcm>] [--rate 24000] [--env-file PATH] [--no-test]
   $0 --list
 
-Writes HDMI-friendly Nina audio env (no APE/I2S route, no persistent aplay hold):
+Writes HDMI-friendly Nina audio env (persistent silence pipe + idle mute):
   NINA_GREET_APLAY_DEVICE=<pcm>
   NINA_AUDIO_MPG123_DEVICE=<pcm>
   NINA_AUDIO_MP3_VIA_APLAY=0
-  NINA_AUDIO_OUTPUT_RATE=24000
-  NINA_AUDIO_PERSISTENT_PIPE=0
-  NINA_AUDIO_SILENCE_KEEPALIVE=0
+  NINA_AUDIO_OUTPUT_RATE=48000
+  NINA_AUDIO_PERSISTENT_PIPE=1
+  NINA_AUDIO_IDLE_OUTPUT_MUTE=1
+  NINA_AUDIO_EDGE_SILENCE_MS=80
 
 Default device: plughw:CARD=HDA,DEV=3 (kiosk unit stops Pulse before start).
 Use "default" only if you keep PipeWire running (see --list).
@@ -63,22 +64,31 @@ pick_default_device() {
     if [[ -n "${DEVICE}" ]]; then
         return 0
     fi
-    # Fleet default: direct tegra-HDA (kiosk ExecStartPre stops Pulse first).
-    DEVICE="plughw:CARD=HDA,DEV=3"
     local wav="/usr/share/sounds/alsa/Front_Center.wav"
-    if [[ ! -f "${wav}" ]]; then
-        return 0
-    fi
-    if aplay -q -D "${DEVICE}" "${wav}" 2>/dev/null; then
-        echo "[hdmi-audio] using direct HDA PCM: ${DEVICE}"
-        return 0
-    fi
-    if aplay -q -D default "${wav}" 2>/dev/null; then
+    # Match kiosk: stop Pulse so direct tegra-HDA is not busy.
+    systemctl --user stop pipewire pipewire-pulse wireplumber 2>/dev/null || true
+    pulseaudio -k 2>/dev/null || true
+    sleep 0.3
+    for candidate in \
+        plughw:CARD=HDA,DEV=3 \
+        plughw:CARD=HDA,DEV=0 \
+        plughw:CARD=HDA,DEV=1 \
+        plughw:CARD=HDA,DEV=2
+    do
+        if [[ ! -f "${wav}" ]] || aplay -q -D "${candidate}" "${wav}" 2>/dev/null; then
+            DEVICE="${candidate}"
+            echo "[hdmi-audio] using direct HDA PCM: ${DEVICE}"
+            return 0
+        fi
+    done
+    if [[ -f "${wav}" ]] && aplay -q -D default "${wav}" 2>/dev/null; then
         DEVICE="default"
-        echo "[hdmi-audio] using ALSA device: ${DEVICE} (Pulse/shared)"
+        echo "[hdmi-audio] WARNING: using ALSA default (Pulse/shared); hiss may persist" >&2
+        echo "[hdmi-audio]   re-run after: systemctl --user stop pipewire pipewire-pulse wireplumber" >&2
         return 0
     fi
-    echo "[hdmi-audio] WARNING: could not probe HDA or default; still writing DEVICE=${DEVICE}" >&2
+    DEVICE="plughw:CARD=HDA,DEV=3"
+    echo "[hdmi-audio] WARNING: could not probe HDA; still writing DEVICE=${DEVICE}" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -150,6 +160,7 @@ sed -i -E \
     -e '/^NINA_AUDIO_SILENCE_KEEPALIVE=/d' \
     -e '/^NINA_AUDIO_SILENCE_KEEPALIVE_SEC=/d' \
     -e '/^NINA_AUDIO_EDGE_SILENCE_MS=/d' \
+    -e '/^NINA_AUDIO_IDLE_OUTPUT_MUTE=/d' \
     -e '/^NINA_AUDIO_MIXER_CARD=/d' \
     -e '/^NINA_AUDIO_APE_ROUTE=/d' \
     -e '/^NINA_AUDIO_APE_CARD=/d' \
@@ -176,6 +187,8 @@ NINA_AUDIO_PREROLL_MS=0
 NINA_AUDIO_MUTE_PREROLL_SEC=0
 NINA_AUDIO_PERSISTENT_PIPE=1
 NINA_AUDIO_SILENCE_KEEPALIVE=0
+NINA_AUDIO_IDLE_OUTPUT_MUTE=1
+NINA_AUDIO_MIXER_CARD=HDA
 NINA_AUDIO_EDGE_SILENCE_MS=80
 EOF
 

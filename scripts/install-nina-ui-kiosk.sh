@@ -130,7 +130,7 @@ if command -v loginctl >/dev/null 2>&1; then
         echo "[WARN] could not enable-linger; kiosk will only start once you log in" >&2
 fi
 
-# Fleet Jetson default: HDMI via tegra-HDA + no I2S keepalive (override with
+# Fleet Jetson default: HDMI via tegra-HDA + persistent silence pipe (override with
 # scripts/setup-max98357a-audio.sh on bots with a MAX98357A amp).
 HDMI_AUDIO_SCRIPT="${REPO_ROOT}/scripts/setup-hdmi-audio.sh"
 if [[ -x "${HDMI_AUDIO_SCRIPT}" ]]; then

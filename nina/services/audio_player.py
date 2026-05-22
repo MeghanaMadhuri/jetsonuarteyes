@@ -41,7 +41,9 @@ CD-rate music MP3s, or **auto** for decoder-native rate (no ``-r``) with a
 **Idle silence (anti-hiss):** by default Nina keeps a single raw ``aplay`` pipe
 open (``NINA_AUDIO_PERSISTENT_PIPE=1``, the default). A background writer feeds
 ~20 ms stereo silence when nothing is playing; MP3/WAV clips are decoded to PCM
-and written on the same stream. Disable with ``NINA_AUDIO_PERSISTENT_PIPE=0``.
+and written on the same stream. On HDMI (``CARD=HDA``), ``NINA_AUDIO_IDLE_OUTPUT_MUTE=1``
+(default) also soft-mutes the sink while idle so monitor amp hiss stays off.
+Disable with ``NINA_AUDIO_PERSISTENT_PIPE=0`` or ``NINA_AUDIO_IDLE_OUTPUT_MUTE=0``.
 
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
@@ -78,6 +80,8 @@ _SILENCE_KEEPALIVE_THREAD: Optional[threading.Thread] = None
 _SILENCE_KEEPALIVE_PROC: Optional[subprocess.Popen] = None
 _SILENCE_KEEPALIVE_REAL_AUDIO_USERS = 0
 _PERSISTENT_PIPE = None
+_IDLE_OUTPUT_MUTED = False
+_IDLE_OUTPUT_MUTE_LOCK = threading.Lock()
 
 
 def _repo_root() -> Path:
@@ -131,6 +135,34 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
         return default
 
 
+def _alsa_output_device_hint() -> str:
+    return (
+        os.environ.get("NINA_GREET_APLAY_DEVICE")
+        or os.environ.get("NINA_AUDIO_MPG123_DEVICE")
+        or ""
+    ).strip().lower()
+
+
+def _i2s_amp_audio_output() -> bool:
+    """True on MAX98357A / APE routes where ALSA idle mute is wrong or useless."""
+    dev = _alsa_output_device_hint()
+    if "max98357" in dev or ",card=ape" in dev or dev.startswith("hw:ape") or dev.startswith("plughw:ape"):
+        return True
+    if _amp_enable_gpio_pin() is not None:
+        return True
+    return _env_bool("NINA_AUDIO_APE_ROUTE", False)
+
+
+def _hdmi_audio_output() -> bool:
+    dev = _alsa_output_device_hint()
+    if "hda" in dev or "hdmi" in dev:
+        return True
+    # Fleet kiosks often fall back to ALSA "default" (HDMI monitor speakers).
+    if dev in ("default", "sysdefault", "sysdefault:"):
+        return not _i2s_amp_audio_output()
+    return False
+
+
 def _persistent_pipe_enabled() -> bool:
     """Keep one ``aplay`` stream open; idle = digital silence, clips = injected PCM.
 
@@ -138,6 +170,27 @@ def _persistent_pipe_enabled() -> bool:
     ``NINA_AUDIO_PERSISTENT_PIPE=0`` to use one-shot ``mpg123``/``aplay`` per clip.
     """
     return _env_bool("NINA_AUDIO_PERSISTENT_PIPE", True)
+
+
+def _idle_output_mute_enabled() -> bool:
+    """Soft-mute ALSA/Pulse while the persistent pipe plays idle silence."""
+    raw = (os.environ.get("NINA_AUDIO_IDLE_OUTPUT_MUTE") or "").strip()
+    if raw:
+        return _env_bool("NINA_AUDIO_IDLE_OUTPUT_MUTE", False)
+    if not _persistent_pipe_enabled():
+        return False
+    # Default on for HDMI/default monitor paths; off for I2S amp bots.
+    return not _i2s_amp_audio_output()
+
+
+def _persistent_pipe_sample_rate_hz() -> int:
+    """PCM rate for the always-open ``aplay`` pipe (HDMI prefers 48 kHz)."""
+    rate = _preroll_wav_sample_rate_hz()
+    if _i2s_amp_audio_output():
+        return rate
+    if _hdmi_audio_output() and rate < 48000:
+        return 48000
+    return rate
 
 
 def _silence_keepalive_enabled() -> bool:
@@ -396,10 +449,17 @@ def _silence_pcm_bytes(ms: int, sample_rate: int) -> bytes:
     return b"\x00\x00\x00\x00" * frames
 
 
-def _wav_to_stereo_pcm_bytes(path: Path, *, edge_ms: Optional[int] = None) -> Optional[bytes]:
+def _wav_to_stereo_pcm_bytes(
+    path: Path,
+    *,
+    edge_ms: Optional[int] = None,
+    sample_rate: Optional[int] = None,
+) -> Optional[bytes]:
     mode = _aplay_stereo_mode()
     gain = max(0.0, min(1.0, _digital_gain_pct() / 100.0))
-    expected_rate = _preroll_wav_sample_rate_hz()
+    expected_rate = (
+        sample_rate if sample_rate is not None else _preroll_wav_sample_rate_hz()
+    )
     try:
         with wave.open(str(path), "rb") as r:
             channels = r.getnchannels()
@@ -456,11 +516,18 @@ def _wav_to_stereo_pcm_bytes(path: Path, *, edge_ms: Optional[int] = None) -> Op
     return bytes(out)
 
 
-def _mp3_to_stereo_pcm_bytes(path: Path) -> Optional[bytes]:
+def _mp3_to_stereo_pcm_bytes(path: Path, *, sample_rate: Optional[int] = None) -> Optional[bytes]:
     mpg = shutil.which("mpg123")
     if not mpg:
         return None
-    rate = _preroll_wav_sample_rate_hz()
+    if sample_rate is None:
+        rate = (
+            _persistent_pipe_sample_rate_hz()
+            if _persistent_pipe_enabled()
+            else _preroll_wav_sample_rate_hz()
+        )
+    else:
+        rate = sample_rate
     tmp = tempfile.NamedTemporaryFile(prefix="nina-audio-pipe-", suffix=".wav", delete=False)
     tmp_path = Path(tmp.name)
     tmp.close()
@@ -475,7 +542,7 @@ def _mp3_to_stereo_pcm_bytes(path: Path) -> Optional[bytes]:
         )
         if r.returncode != 0:
             return None
-        return _wav_to_stereo_pcm_bytes(tmp_path)
+        return _wav_to_stereo_pcm_bytes(tmp_path, sample_rate=rate)
     except (OSError, subprocess.TimeoutExpired):
         return None
     finally:
@@ -513,13 +580,15 @@ class _PersistentAudioHandle:
 
 class _PersistentAudioPipe:
     def __init__(self) -> None:
-        self._rate = _preroll_wav_sample_rate_hz()
+        self._rate = _persistent_pipe_sample_rate_hz()
         self._aplay = shutil.which("aplay")
         self._proc: Optional[subprocess.Popen] = None
         self._queue: Deque[Tuple[bytes, _PersistentAudioHandle]] = deque()
         self._cv = threading.Condition()
         self._stop = False
         self._thread: Optional[threading.Thread] = None
+        self._logged_open = False
+        self._write_failures = 0
 
     def start(self) -> bool:
         if not _persistent_pipe_enabled() or not self._aplay:
@@ -555,6 +624,7 @@ class _PersistentAudioPipe:
                 self._proc.terminate()
             except Exception:
                 pass
+        _set_idle_output_muted(False)
 
     def _start_aplay(self) -> Optional[subprocess.Popen]:
         if not self._aplay:
@@ -576,7 +646,7 @@ class _PersistentAudioPipe:
             cmd.extend(["-D", dev])
         cmd.append("-")
         try:
-            return subprocess.Popen(
+            proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
@@ -585,6 +655,23 @@ class _PersistentAudioPipe:
         except Exception as exc:
             print(f"[audio] persistent pipe failed to start: {exc}")
             return None
+        if not self._logged_open:
+            dev = _aplay_device_flag() or "default"
+            idle_mute = "on" if _idle_output_mute_enabled() else "off"
+            print(
+                f"[audio] persistent pipe opened rate={self._rate}Hz "
+                f"device={dev} idle_mute={idle_mute}",
+                flush=True,
+            )
+            if dev in ("default", "sysdefault") and _hdmi_audio_output():
+                print(
+                    "[audio] WARNING: using ALSA 'default' for HDMI — hiss may "
+                    "persist; run: sudo ./scripts/setup-hdmi-audio.sh --list "
+                    "then --device plughw:CARD=HDA,DEV=N",
+                    flush=True,
+                )
+            self._logged_open = True
+        return proc
 
     def _write_all(self, data: bytes) -> bool:
         proc = self._proc
@@ -607,18 +694,30 @@ class _PersistentAudioPipe:
 
     def _writer(self) -> None:
         chunk = _silence_pcm_bytes(20, self._rate)
+        _set_idle_output_muted(True)
         while True:
             with self._cv:
                 if self._stop:
                     break
                 item = self._queue.popleft() if self._queue else None
             if item is None:
+                _set_idle_output_muted(True)
                 if not self._write_all(chunk):
+                    self._write_failures += 1
+                    if self._write_failures in (1, 25) or self._write_failures % 100 == 0:
+                        dev = _aplay_device_flag() or "default"
+                        print(
+                            f"[audio] persistent pipe idle write failed "
+                            f"({self._write_failures}x); device={dev}"
+                        )
                     time.sleep(0.2)
+                else:
+                    self._write_failures = 0
                 continue
             pcm, handle = item
             if handle.poll() is not None:
                 continue
+            _set_idle_output_muted(False)
             ok = self._write_all(pcm)
             handle._finish(0 if ok else 1)
         if self._proc is not None and self._proc.poll() is None:
@@ -635,7 +734,10 @@ def start_persistent_audio_pipe() -> bool:
         return False
     if _PERSISTENT_PIPE is None:
         _PERSISTENT_PIPE = _PersistentAudioPipe()
-    return _PERSISTENT_PIPE.start()
+    started = _PERSISTENT_PIPE.start()
+    if started and _idle_output_mute_enabled():
+        _set_idle_output_muted(True)
+    return started
 
 
 def _persistent_audio_pipe_play(path: Path) -> Optional[_PersistentAudioHandle]:
@@ -1030,13 +1132,30 @@ def _pulse_set_volume_pct(pct: int) -> bool:
         return False
 
 
-def _ensure_sinks_unmuted() -> None:
-    """Clear soft-mute on common paths (Pulse default sink, ALSA Master)."""
+def _alsa_mixer_controls_to_try() -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for name in (
+        _alsa_mixer_control(),
+        "PCM",
+        "IEC958 Default PCM",
+        "Headphone",
+        "Speaker",
+    ):
+        if name and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _set_sinks_muted(muted: bool) -> None:
+    """Soft-mute or unmute Pulse default sink and common ALSA controls."""
+    word = "mute" if muted else "unmute"
     pactl = shutil.which("pactl")
     if pactl:
         try:
             subprocess.run(
-                [pactl, "set-sink-mute", "@DEFAULT_SINK@", "0"],
+                [pactl, "set-sink-mute", "@DEFAULT_SINK@", "1" if muted else "0"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=3.0,
@@ -1047,17 +1166,41 @@ def _ensure_sinks_unmuted() -> None:
     base = _alsa_amixer_base()
     if not base:
         return
-    ctrl = _alsa_mixer_control()
-    try:
-        subprocess.run(
-            base + ["-q", "sset", ctrl, "unmute"],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=3.0,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    for ctrl in _alsa_mixer_controls_to_try():
+        try:
+            subprocess.run(
+                base + ["-q", "sset", ctrl, word],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=3.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _set_idle_output_muted(muted: bool) -> None:
+    global _IDLE_OUTPUT_MUTED
+    if not _idle_output_mute_enabled():
+        if not muted:
+            with _IDLE_OUTPUT_MUTE_LOCK:
+                if _IDLE_OUTPUT_MUTED:
+                    _set_sinks_muted(False)
+                    _IDLE_OUTPUT_MUTED = False
+        return
+    with _IDLE_OUTPUT_MUTE_LOCK:
+        if _IDLE_OUTPUT_MUTED == muted:
+            return
+        _set_sinks_muted(muted)
+        _IDLE_OUTPUT_MUTED = muted
+
+
+def _ensure_sinks_unmuted() -> None:
+    """Clear soft-mute on common paths (Pulse default sink, ALSA Master)."""
+    global _IDLE_OUTPUT_MUTED
+    _set_sinks_muted(False)
+    with _IDLE_OUTPUT_MUTE_LOCK:
+        _IDLE_OUTPUT_MUTED = False
 
 
 def _maybe_recover_alsa_master_from_zero() -> None:

@@ -231,6 +231,77 @@ _apply_audio_ape_route_for_sirena() {
     amixer -c "${card}" cset name="${i2s} FSYNC Width" "${fsync}" >/dev/null 2>&1 || echo "[audio] WARN: failed ${i2s} FSYNC Width=${fsync}" >&2
 }
 
+# Older setup-hdmi-audio.sh wrote PERSISTENT_PIPE=0 or ALSA "default".
+# Upgrade at runtime so git pull + restart fixes hiss without re-running setup.
+_resolve_direct_hda_device_for_sirena() {
+    command -v aplay >/dev/null 2>&1 || return 0
+    local wav="/usr/share/sounds/alsa/Front_Center.wav"
+    [[ -f "${wav}" ]] || return 0
+    local d
+    for d in \
+        plughw:CARD=HDA,DEV=3 \
+        plughw:CARD=HDA,DEV=0 \
+        plughw:CARD=HDA,DEV=1 \
+        plughw:CARD=HDA,DEV=2 \
+        hw:CARD=HDA,DEV=3 \
+        hw:CARD=HDA,DEV=0
+    do
+        if aplay -q -D "${d}" "${wav}" 2>/dev/null; then
+            export NINA_GREET_APLAY_DEVICE="${d}"
+            export NINA_AUDIO_MPG123_DEVICE="${d}"
+            export NINA_AUDIO_MIXER_CARD=HDA
+            echo "[audio] resolved direct HDMI PCM: ${d}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_upgrade_hdmi_audio_env_for_sirena() {
+    if [[ "${NINA_AUDIO_APE_ROUTE:-}" == "1" ]]; then
+        return 0
+    fi
+    case "${NINA_GREET_APLAY_DEVICE:-}${NINA_AUDIO_MPG123_DEVICE:-}" in
+        *max98357*|*MAX98357*|*APE*|*ape*)
+            return 0
+            ;;
+    esac
+
+    if [[ "${NINA_AUDIO_PERSISTENT_PIPE:-}" == "0" ]]; then
+        export NINA_AUDIO_PERSISTENT_PIPE=1
+        echo "[audio] upgraded NINA_AUDIO_PERSISTENT_PIPE=0 -> 1 (anti-hiss)"
+    fi
+    if [[ -z "${NINA_AUDIO_IDLE_OUTPUT_MUTE:-}" ]]; then
+        export NINA_AUDIO_IDLE_OUTPUT_MUTE=1
+    fi
+
+    local dev="${NINA_GREET_APLAY_DEVICE:-${NINA_AUDIO_MPG123_DEVICE:-default}}"
+    case "${dev}" in
+        default|sysdefault|sysdefault:*|"")
+            systemctl --user stop pipewire pipewire-pulse wireplumber 2>/dev/null || true
+            pulseaudio -k 2>/dev/null || true
+            sleep 0.3
+            if _resolve_direct_hda_device_for_sirena; then
+                dev="${NINA_GREET_APLAY_DEVICE}"
+            fi
+            ;;
+        *[Hh][Dd][Aa]*|*hdmi*|*HDMI*)
+            if [[ -z "${NINA_AUDIO_MIXER_CARD:-}" ]]; then
+                export NINA_AUDIO_MIXER_CARD=HDA
+            fi
+            ;;
+    esac
+
+    if [[ "${NINA_AUDIO_OUTPUT_RATE:-24000}" == "24000" ]]; then
+        export NINA_AUDIO_OUTPUT_RATE=48000
+        echo "[audio] HDMI: using NINA_AUDIO_OUTPUT_RATE=48000"
+    fi
+
+    echo "[audio] output device=${NINA_GREET_APLAY_DEVICE:-${NINA_AUDIO_MPG123_DEVICE:-unset}} "
+    echo "  persistent_pipe=${NINA_AUDIO_PERSISTENT_PIPE:-1} "
+    echo "  idle_mute=${NINA_AUDIO_IDLE_OUTPUT_MUTE:-1} rate=${NINA_AUDIO_OUTPUT_RATE:-48000}"
+}
+
 # Legacy Pi UART bridge vars — remove so GUI / children never inherit stale
 # NINA_NAV_MODE=remote from ~/.bashrc or old navigation.env (Jetson is GPIO-only).
 unset NINA_NAV_MODE NINA_NAV_REMOTE_PORT NINA_NAV_REMOTE_BAUD \
@@ -356,6 +427,7 @@ EXIT=0
     echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
     echo "PYTHONPATH=${PYTHONPATH}"
     _force_panel_resolution_1024x600
+    _upgrade_hdmi_audio_env_for_sirena
     _apply_audio_ape_route_for_sirena
     if [[ -z "${PYTHON_BIN}" ]]; then
         echo "FATAL: no python3 interpreter found on PATH" >&2

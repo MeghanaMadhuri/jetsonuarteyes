@@ -29,6 +29,49 @@ def test_persistent_pipe_enabled_by_default(
     assert _persistent_pipe_enabled() is True
 
 
+def test_idle_output_mute_defaults_on_for_hdmi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_PERSISTENT_PIPE", "1")
+    monkeypatch.delenv("NINA_AUDIO_IDLE_OUTPUT_MUTE", raising=False)
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=HDA,DEV=3")
+    from nina.services.audio_player import _idle_output_mute_enabled
+
+    assert _idle_output_mute_enabled() is True
+
+
+def test_idle_output_mute_defaults_on_for_alsa_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_PERSISTENT_PIPE", "1")
+    monkeypatch.delenv("NINA_AUDIO_IDLE_OUTPUT_MUTE", raising=False)
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "default")
+    from nina.services.audio_player import _idle_output_mute_enabled
+
+    assert _idle_output_mute_enabled() is True
+
+
+def test_persistent_pipe_rate_48k_for_hdmi_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "default")
+    monkeypatch.setenv("NINA_AUDIO_OUTPUT_RATE", "24000")
+    from nina.services.audio_player import _persistent_pipe_sample_rate_hz
+
+    assert _persistent_pipe_sample_rate_hz() == 48000
+
+
+def test_idle_output_mute_off_for_i2s_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NINA_AUDIO_PERSISTENT_PIPE", "1")
+    monkeypatch.delenv("NINA_AUDIO_IDLE_OUTPUT_MUTE", raising=False)
+    monkeypatch.setenv("NINA_GREET_APLAY_DEVICE", "plughw:CARD=max98357a,DEV=0")
+    from nina.services.audio_player import _idle_output_mute_enabled
+
+    assert _idle_output_mute_enabled() is False
+
+
 def test_pcm_output_rate_defaults_to_gtts_nominal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
