@@ -212,28 +212,32 @@ class DriveScreen(QWidget):
             pass
 
         outer = QVBoxLayout(self)
-        # Trim from 20 -> 10 on each side. At 1024 x 600 we cannot
-        # afford 40 wasted px in either direction.
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.setSpacing(8)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(6)
 
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(Breadcrumb("Nina", "Drive"))
-        top.addStretch(1)
-        self._auto_pill = Pill("Autonomous: OFF", Pill.KIND_NEUTRAL)
-        top.addWidget(self._auto_pill)
-        self._conn_pill = Pill("BLDC not connected", Pill.KIND_NEUTRAL)
-        top.addWidget(self._conn_pill)
+        top = QVBoxLayout()
+        top.setSpacing(4)
+        top_title = QHBoxLayout()
+        top_title.setSpacing(6)
+        top_title.addWidget(Breadcrumb("Nina", "Drive"))
+        top_title.addStretch(1)
+        top.addLayout(top_title)
+        top_pills = QHBoxLayout()
+        top_pills.setSpacing(6)
+        top_pills.addStretch(1)
+        self._auto_pill = Pill("Auto: OFF", Pill.KIND_NEUTRAL)
+        top_pills.addWidget(self._auto_pill)
+        self._conn_pill = Pill("BLDC …", Pill.KIND_NEUTRAL)
+        top_pills.addWidget(self._conn_pill)
+        top.addLayout(top_pills)
         outer.addLayout(top)
 
         body = QHBoxLayout()
-        body.setSpacing(10)
+        body.setSpacing(8)
         outer.addLayout(body, stretch=1)
 
-        # Slightly more weight to the control card now (was 58/42) so
-        # the D-pad isn't squeezed out at 1024 wide.
-        body.addWidget(self._build_camera_card(), stretch=55)
+        # Favor manual controls (~52%) so Turn/E-STOP are not clipped at 864 px.
+        body.addWidget(self._build_camera_card(), stretch=48)
         _control = self._build_control_card()
         # Scroll so Manual controls (straight test + 90° turns) stay
         # reachable on 1024×600; the stack also caches this screen on
@@ -243,9 +247,10 @@ class DriveScreen(QWidget):
         _ctrl_scroll.setFrameShape(QFrame.NoFrame)
         _ctrl_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         _ctrl_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        _control.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         _ctrl_scroll.setWidget(_control)
         _ctrl_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        body.addWidget(_ctrl_scroll, stretch=45)
+        body.addWidget(_ctrl_scroll, stretch=52)
 
         # Push initial state into the HUD / pills.
         self._queue_render_state(self._drive.state())
@@ -342,7 +347,9 @@ class DriveScreen(QWidget):
         feed = QLabel(viewport)
         feed.setAlignment(Qt.AlignCenter)
         feed.setStyleSheet("background-color: transparent;")
-        feed.setMinimumSize(320, 180)
+        # No minimum width — a 320 px floor forced the camera column past the
+        # 1024×600 panel and clipped the manual controls on the right.
+        feed.setMinimumHeight(120)
         # Ignored size policy so the (potentially huge) pixmap can't
         # feed back into the layout and balloon or collapse the card.
         feed.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
@@ -375,11 +382,11 @@ class DriveScreen(QWidget):
     def _make_hud(self, label: str, value: str) -> Card:
         # Tight HUD tile - was padding=12, spacing=4. At 1024 x 600 we
         # need every px the camera viewport can borrow.
-        box = Card(padding=8, spacing=2, subtle=True)
+        box = Card(padding=6, spacing=2, subtle=True)
         box.add(SectionLabel(label))
         v = QLabel(value)
         v.setStyleSheet(
-            "color: #1c1c1e; font-size: 16px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 14px; font-weight: 700;"
             " background-color: transparent;"
         )
         box.add(v)
@@ -442,7 +449,7 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.setSpacing(6)
-        self._straight_test_btn = QPushButton("Straight front")
+        self._straight_test_btn = QPushButton("Str. front")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
@@ -456,7 +463,7 @@ class DriveScreen(QWidget):
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
         straight_row.addWidget(self._straight_test_btn, stretch=1)
-        self._straight_back_test_btn = QPushButton("Straight back")
+        self._straight_back_test_btn = QPushButton("Str. back")
         self._straight_back_test_btn.setObjectName("secondaryButton")
         self._straight_back_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_back_test_btn.setFocusPolicy(Qt.NoFocus)
@@ -848,7 +855,7 @@ class DriveScreen(QWidget):
                     pass
             self._restore_after_straight_test()
         self._autonomy_btn.setText("Auto")
-        self._auto_pill.setText("Autonomous: coming soon")
+        self._auto_pill.setText("Auto: soon")
         self._auto_pill.set_kind(Pill.KIND_NEUTRAL)
 
         st = self._drive.state()
@@ -1148,6 +1155,12 @@ class DriveScreen(QWidget):
         if len(display_msg) > 96:
             display_msg = display_msg[:93] + "..."
 
+        def _pill_line(text: str, *, limit: int = 26) -> str:
+            t = (text or "").replace("\n", " ").strip()
+            if len(t) <= limit:
+                return t or "BLDC"
+            return t[: limit - 1] + "\u2026"
+
         conn_key = (bool(state["connected"]), message_raw)
         if conn_key != getattr(self, "_conn_pill_key", None):
             self._conn_pill_key = conn_key
@@ -1169,11 +1182,11 @@ class DriveScreen(QWidget):
             else:
                 self._conn_pill.setToolTip("")
         if state["connected"]:
-            self._conn_pill.setText(message_raw or "BLDC connected")
+            self._conn_pill.setText(_pill_line(message_raw or "BLDC OK"))
             self._conn_pill.set_kind(Pill.KIND_OK)
         elif message_raw:
-            self._conn_pill.setText(display_msg or "BLDC error")
+            self._conn_pill.setText(_pill_line(display_msg or "BLDC err"))
             self._conn_pill.set_kind(Pill.KIND_WARN)
         else:
-            self._conn_pill.setText("BLDC not connected")
+            self._conn_pill.setText("BLDC off")
             self._conn_pill.set_kind(Pill.KIND_NEUTRAL)

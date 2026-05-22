@@ -360,12 +360,9 @@ QPushButton#dpadButton {{
     border-radius: 12px;
     font-size: 14px;
     font-weight: 600;
-    /* 60 x 60 - fits a 3-row D-pad in ~210 px of vertical space and
-       leaves room for the autonomy / speed / brake / E-stop rows in
-       the same control card on a 600-tall panel. Still well above
-       the 44 px touch-target minimum. */
-    min-width: 60px;
-    min-height: 60px;
+    /* 54 x 54 — fits 1024-wide kiosk with sidebar + manual column. */
+    min-width: 54px;
+    min-height: 54px;
 }}
 QPushButton#dpadButton:hover {{
     background-color: {BRAND_RED_TINT};
@@ -385,12 +382,12 @@ QPushButton#dpadStop {{
     color: {BRAND_WHITE};
     border: none;
     /* radius half of min-size keeps the circular look */
-    border-radius: 30px;
+    border-radius: 27px;
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 1px;
-    min-width: 60px;
-    min-height: 60px;
+    min-width: 54px;
+    min-height: 54px;
 }}
 QPushButton#dpadStop:hover {{
     background-color: {BRAND_RED_HOVER};

@@ -111,7 +111,9 @@ class MainWindow(QMainWindow):
         if self._kiosk:
             primary = QGuiApplication.primaryScreen()
             if primary is not None:
-                pg = primary.geometry()
+                # availableGeometry excludes WM panels; geometry() can be
+                # wider than the visible panel and leaves the UI shifted/cropped.
+                pg = primary.availableGeometry()
                 self.resize(pg.width(), pg.height())
             else:
                 self.resize(1024, 600)
@@ -327,7 +329,7 @@ class MainWindow(QMainWindow):
         if self.isFullScreen() or self.isMaximized():
             self.showNormal()
 
-        target = primary.geometry()
+        target = primary.availableGeometry()
         if (self.x(), self.y(), self.width(), self.height()) != (
             target.x(), target.y(), target.width(), target.height()
         ):
@@ -344,12 +346,14 @@ class MainWindow(QMainWindow):
             if primary is None:
                 print("[kiosk] no primary screen reported", flush=True)
                 return
-            g = primary.geometry()
+            g = primary.availableGeometry()
+            full = primary.geometry()
             mode = "fullscreen" if _env_truthy("NINA_UI_FULLSCREEN_STRICT") else "sized"
             print(
                 f"[kiosk] mode={mode} "
                 f"screen={primary.name()!r} "
-                f"screen_rect=({g.x()},{g.y()},{g.width()}x{g.height()}) "
+                f"available_rect=({g.x()},{g.y()},{g.width()}x{g.height()}) "
+                f"full_rect=({full.x()},{full.y()},{full.width()}x{full.height()}) "
                 f"window_rect=({self.x()},{self.y()},{self.width()}x{self.height()}) "
                 f"devicePixelRatio={primary.devicePixelRatio()}",
                 flush=True,
