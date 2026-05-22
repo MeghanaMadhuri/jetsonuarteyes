@@ -467,16 +467,23 @@ QSlider::handle:horizontal {{
 /* ---------- Lists / scroll ---------- */
 
 QListWidget {{
-    background-color: transparent;
-    border: none;
+    background-color: #f5f5f7;
+    border: 1px solid {BRAND_BORDER};
+    border-radius: 8px;
+    outline: none;
+    font-size: 13px;
 }}
 QListWidget::item {{
-    background: transparent;
-    padding: 0px;
-    margin: 0px;
+    color: {BRAND_TEXT};
+    padding: 8px 10px;
+    border-bottom: 1px solid #ececee;
 }}
 QListWidget::item:selected {{
-    background: transparent;
+    background-color: #fbe7eb;
+    color: {BRAND_TEXT};
+}}
+QListWidget::item:hover {{
+    background-color: {BRAND_WHITE};
 }}
 
 QProgressBar {{

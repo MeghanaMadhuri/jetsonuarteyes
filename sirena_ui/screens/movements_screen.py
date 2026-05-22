@@ -94,6 +94,7 @@ class MovementsScreen(QWidget):
         card.add(self._movement_list, stretch=1)
 
         row = QHBoxLayout()
+        row.setSpacing(6)
         self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("primaryButton")
         self._run_btn.setCursor(Qt.PointingHandCursor)
@@ -107,6 +108,19 @@ class MovementsScreen(QWidget):
         row.addWidget(self._delete_btn)
 
         row.addStretch(1)
+
+        self._estop_btn = QPushButton("\u26A0  E-STOP")
+        self._estop_btn.setObjectName("stopButton")
+        self._estop_btn.setCursor(Qt.PointingHandCursor)
+        self._estop_btn.setMinimumHeight(34)
+        self._estop_btn.setMaximumHeight(34)
+        self._estop_btn.setStyleSheet(
+            "QPushButton#stopButton {"
+            "  padding: 4px 12px; font-size: 14px; border-radius: 17px;"
+            "}"
+        )
+        self._estop_btn.clicked.connect(self._on_emergency_stop)
+        row.addWidget(self._estop_btn)
 
         self._create_btn = QPushButton("Create new")
         self._create_btn.setObjectName("primaryButton")
@@ -137,6 +151,14 @@ class MovementsScreen(QWidget):
         if item is None:
             return None
         return str(item.data(Qt.UserRole) or "") or None
+
+    def _on_emergency_stop(self) -> None:
+        """Halt motors immediately (same as Drive screen E-STOP)."""
+        if self._running_id is not None:
+            self._running_id = None
+            self._set_list_busy(False)
+            self._list_status.setText("Emergency stop — sequence halted.")
+        self._service.drive.emergency_stop()
 
     def _on_run_selected(self) -> None:
         mid = self._selected_movement_id()
@@ -403,6 +425,8 @@ class MovementsScreen(QWidget):
             self._create_btn,
         ):
             w.setEnabled(not busy)
+        # E-STOP stays enabled while a sequence runs.
+        self._estop_btn.setEnabled(True)
 
 
 def _prompt_seconds(parent: QWidget, title: str, *, default: float, max_sec: float) -> Optional[float]:
