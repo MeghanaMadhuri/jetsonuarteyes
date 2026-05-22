@@ -896,11 +896,12 @@ def test_forward_loop_negative_drift_pivots_right() -> None:
     )
 
 
-def test_forward_loop_swap_pivot_dir_inverts_goals() -> None:
-    """With SWAP_PIVOT_DIR=1, a positive-drift pivot_left decision must
-    apply the L=BACK, R=FWD goals (the field-tested mapping on the
-    reference chassis where the conventional L=FWD,R=BACK mechanically
-    rotates the chassis right). The legacy mapping is never applied.
+def test_forward_loop_straight_corr_swap_legacy_env_ignored() -> None:
+    """``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR`` no longer changes goals.
+
+    Drift correction reuses :meth:`HoverboardAxisDrive._pivot_goals_for_hold_turn_step`
+    (same motor 12/13 ticks as held D-pad left). Only
+    ``NINA_HOVER_TURN_SWAP_PIVOT_DIR`` affects pivot mapping.
     """
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
@@ -913,15 +914,29 @@ def test_forward_loop_swap_pivot_dir_inverts_goals() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    blend = _held_dpad_pivot_blend_pct()
-    swapped_pivot_left = _pivot_right_goals_at_blend(blend)
-    legacy_pivot_left = _pivot_left_goals_at_blend(blend)
-    assert any(g == swapped_pivot_left for g in dxl.goal_writes), (
-        f"with swap=1, positive-drift pivot_left decision must apply "
-        f"{swapped_pivot_left}; goal_writes={dxl.goal_writes}"
+    hold_left = _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct())
+    assert any(g == hold_left for g in dxl.goal_writes), (
+        f"positive drift must use hold-left micro-step goals {hold_left}; "
+        f"goal_writes={dxl.goal_writes}"
     )
-    assert all(g != legacy_pivot_left for g in dxl.goal_writes), (
-        "with swap=1, the legacy L=FWD,R=BACK goals must NOT be applied"
+
+
+def test_forward_loop_drift_corr_goals_match_hold_turn_micro_step() -> None:
+    """Standstill correction must emit the same L/R goal dict as hold-turn."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([8.0, 0.0]))
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb.start_pulse_straight_forward(50)
+        time.sleep(0.25)
+        hb.stop()
+    _wait_until_idle(hb)
+
+    hold_left = hb._pivot_goals_for_hold_turn_step("left")
+    assert any(g == hold_left for g in dxl.goal_writes), (
+        f"drift correction must match hold-turn left goals {hold_left}; "
+        f"writes={dxl.goal_writes}"
     )
 
 

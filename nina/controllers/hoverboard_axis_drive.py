@@ -2417,14 +2417,12 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-            # Counter drift using the same remaining-sign → goals rule as held D-pad L/R.
+            # Same motor 12/13 goals as one held L/R micro-step.
             effective = -last_yaw if invert else last_yaw
-            remaining = -effective
-            step_goals = self._pivot_step_goals_for_remaining(
-                remaining,
-                step_blend,
-                swap_pivot=_explicit_yaw_corr_swap_pivot(),
-            )
+            turn_dir = self._hold_turn_direction_for_counter_drift(effective)
+            if turn_dir is None:
+                break
+            step_goals = self._pivot_goals_for_hold_turn_step(turn_dir)
             # Proportional step duration: target rotating ``|last_yaw|`` deg
             # at the calibrated ``step_rate_dps`` rotation rate, clamped to
             # [step_min_sec, step_dur_cap]. Small drifts get short pulses
@@ -3191,7 +3189,7 @@ class HoverboardAxisDrive:
         if residual >= deadband:
             residual = max(0.1, deadband * 0.5)
         invert = _imu_corr_invert_sign()
-        step_blend = _held_dpad_pivot_blend_pct()
+        step_blend = _held_dpad_pivot_blend_pct()  # logged; goals via hold-turn helper
         # Step duration cap + floor diverge between forward and backward:
         # the same 0.030 s kick that produces ~2.5° clean rotation when
         # correcting after a forward leg over-pushes (5–8°) when
@@ -3213,11 +3211,10 @@ class HoverboardAxisDrive:
         yaw_fn = self._imu_yaw_drift_fn
 
         current = initial_drift
-        corr_swap = _explicit_yaw_corr_swap_pivot()
         log.info(
             "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
-            "residual=%.2f deg invert=%s turn_swap=%s corr_swap_override=%s "
-            "step_blend=%d%% step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
+            "residual=%.2f deg invert=%s turn_swap=%s hold_turn_blend=%d%% "
+            "step_rate=%.1fdps step_dur_cap=%.2fs step_min=%.2fs "
             "step_settle=%.2fs max_steps=%d",
             direction_label,
             current,
@@ -3225,7 +3222,6 @@ class HoverboardAxisDrive:
             residual,
             invert,
             _imu_turn_swap_pivot_dir(),
-            corr_swap,
             step_blend,
             step_rate,
             step_dur_cap,
@@ -3250,15 +3246,12 @@ class HoverboardAxisDrive:
                 )
                 return
 
-            # Same remaining-sign → goals mapping as held D-pad L/R
-            # (positive drift → negative remaining → left-step geometry).
+            # Same motor 12/13 tick goals as :meth:`pulse_turn_micro_step`.
             effective = -current if invert else current
-            remaining = -effective
-            step_goals = self._pivot_step_goals_for_remaining(
-                remaining,
-                step_blend,
-                swap_pivot=_explicit_yaw_corr_swap_pivot(),
-            )
+            turn_dir = self._hold_turn_direction_for_counter_drift(effective)
+            if turn_dir is None:
+                return
+            step_goals = self._pivot_goals_for_hold_turn_step(turn_dir)
 
             # Proportional duration: aim to land at **zero** drift. The
             # old "land at ½ deadband short of zero" target weakens the
@@ -3317,12 +3310,13 @@ class HoverboardAxisDrive:
                 )
                 continue
             log.info(
-                "hover %s drift-correct: step %d — remaining=%+.2f deg "
-                "blend=%d%% this_dur=%.3fs drift was %+.2f → %+.2f deg",
+                "hover %s drift-correct: step %d — hold_turn=%s goals L=%d R=%d "
+                "this_dur=%.3fs drift was %+.2f → %+.2f deg",
                 direction_label,
                 step + 1,
-                remaining,
-                step_blend,
+                turn_dir,
+                step_goals.get(self._left_id),
+                step_goals.get(self._right_id),
                 this_step_dur,
                 current,
                 sample,
@@ -3924,18 +3918,9 @@ class HoverboardAxisDrive:
             if duration is not None
             else getattr(self.config, "turn_duration_sec", 0.0)
         )
-        if _imu_turn_swap_pivot_dir():
-            left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
-        else:
-            left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
-        goals = self._goals_for_wheels(
-            left_dir=left_dir,
-            left_speed=blend,
-            right_dir=right_dir,
-            right_speed=blend,
-        )
+        goals = self._pivot_goals_for_hold_turn_step("left")
         log.info(
-            "hover timed turn_left: blend=%d%% goals L=%d R=%d (full pivot L/R via hover_computed_turn_pivot_goals)",
+            "hover timed turn_left: blend=%d%% goals L=%d R=%d (same as hold L micro-step)",
             blend,
             goals.get(self._left_id),
             goals.get(self._right_id),
@@ -3964,18 +3949,9 @@ class HoverboardAxisDrive:
             if duration is not None
             else getattr(self.config, "turn_duration_sec", 0.0)
         )
-        if _imu_turn_swap_pivot_dir():
-            left_dir, right_dir = self.DIR_FORWARD, self.DIR_BACKWARD
-        else:
-            left_dir, right_dir = self.DIR_BACKWARD, self.DIR_FORWARD
-        goals = self._goals_for_wheels(
-            left_dir=left_dir,
-            left_speed=blend,
-            right_dir=right_dir,
-            right_speed=blend,
-        )
+        goals = self._pivot_goals_for_hold_turn_step("right")
         log.info(
-            "hover timed turn_right: blend=%d%% goals L=%d R=%d",
+            "hover timed turn_right: blend=%d%% goals L=%d R=%d (same as hold R micro-step)",
             blend,
             goals.get(self._left_id),
             goals.get(self._right_id),
@@ -4103,6 +4079,34 @@ class HoverboardAxisDrive:
             right_speed=step_blend,
         )
 
+    def _pivot_goals_for_hold_turn_step(self, direction: str) -> Dict[int, int]:
+        """Exact motor 12/13 tick goals for one held L/R or Turn micro-step.
+
+        Shared by :meth:`pulse_turn_micro_step`, straight-leg drift
+        correction, and in-motion yaw realign so IMU correction uses the
+        same lean poses as operator left/right turns (blend +
+        :func:`_imu_turn_swap_pivot_dir` only — no separate correction swap).
+        """
+        d = (direction or "").strip().lower()
+        if d not in ("left", "right"):
+            raise ValueError(
+                f"pivot_goals_for_hold_turn_step: expected 'left' or 'right', got {direction!r}"
+            )
+        blend = _held_dpad_pivot_blend_pct()
+        budget = _drive_turn_micro_step_deg()
+        remaining = budget if d == "right" else -budget
+        return self._pivot_step_goals_for_remaining(remaining, blend)
+
+    def _hold_turn_direction_for_counter_drift(
+        self, effective_drift_deg: float
+    ) -> Optional[str]:
+        """Map signed drift (intent frame) to ``'left'`` / ``'right'`` micro-step."""
+        if effective_drift_deg > 0.0:
+            return "left"
+        if effective_drift_deg < 0.0:
+            return "right"
+        return None
+
     def _imu_turn_run_one_step(
         self,
         direction: str,
@@ -4119,9 +4123,7 @@ class HoverboardAxisDrive:
         brake_goals = self._hold_turn_brake_goals()
         turn_halt = threading.Event()
 
-        step_goals = self._pivot_step_goals_for_remaining(
-            remaining_deg, step_blend,
-        )
+        step_goals = self._pivot_goals_for_hold_turn_step(direction)
 
         rotation_target = max(0.5, abs(remaining_deg))
         this_step_dur = max(
