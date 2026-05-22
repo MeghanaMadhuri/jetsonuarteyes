@@ -125,10 +125,10 @@ Environment=NINA_TOUCH_RELEASE_READS=5
 Environment=NINA_TOUCH_COOLDOWN_SEC=30
 Environment=NINA_TOUCH_BLIND_SEC=3
 
-# On-screen keyboard (onboard). Compact layout; auto = pop up on text focus.
+# On-screen keyboard (onboard). always = keep visible; auto = on text focus.
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=NINA_LOG_LEVEL=INFO
-Environment=NINA_UI_OSK=auto
+Environment=NINA_UI_OSK=always
 Environment=NINA_UI_OSK_ARGS=--not-show-in-launcher --layout=Compact
 
 # GP2Y0E02B IR cliff @ 0x40 (optional). If the sensor is not installed, set to 0

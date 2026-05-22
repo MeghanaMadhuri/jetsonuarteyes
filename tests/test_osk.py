@@ -331,6 +331,20 @@ def test_focus_in_on_button_does_not_spawn_osk(
     btn.deleteLater()
 
 
+def test_focus_in_on_list_widget_does_not_spawn_osk(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """Wi-Fi QListWidget/QListView taps must not steal the first OSK spawn."""
+    from PyQt5.QtWidgets import QListWidget, QListWidgetItem
+
+    osk = make_osk(mode="auto")
+    lst = QListWidget()
+    lst.addItem(QListWidgetItem("wifi-a"))
+    _send_focus_in(lst)
+    assert fake_subprocess.instances == []
+    lst.deleteLater()
+
+
 def test_combobox_only_spawns_when_editable(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
@@ -863,7 +877,7 @@ def test_first_focus_logs_diagnostic_line(
         _send_focus_in(edit2)
 
     diagnostic_lines = [r for r in caplog.records
-                        if "first text-widget activation" in r.message]
+                        if "text-widget activation" in r.message]
     assert len(diagnostic_lines) == 1, (
         f"expected exactly one first-focus log line, got {len(diagnostic_lines)}: "
         f"{[r.message for r in diagnostic_lines]}"

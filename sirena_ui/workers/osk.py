@@ -8,8 +8,9 @@ by:
 
   1. Installing a global QApplication event filter that watches for
      FocusIn events on text-input widgets (QLineEdit, QTextEdit,
-     QPlainTextEdit, QSpinBox, QDoubleSpinBox, editable QComboBox,
-     and anything with Qt.WA_InputMethodEnabled).
+     QPlainTextEdit, QSpinBox, QDoubleSpinBox, editable QComboBox).
+     Item views (QListWidget / QListView) are excluded so Wi-Fi lists
+     do not steal the first keyboard spawn.
   2. The first time such a widget is focused, spawning the system
      OSK as a subprocess (Ubuntu ships `onboard` for this purpose;
      it's apt-installable and the kiosk installer does that for you).
@@ -46,6 +47,7 @@ from typing import Iterable, Optional, Tuple
 from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QAbstractSpinBox,
     QComboBox,
     QDialog,
@@ -399,12 +401,47 @@ class OnScreenKeyboardManager(QObject):
         if (time.monotonic() - self._last_activation_mono) > 2.0:
             return
         self._reap_process()
-        if self.is_running:
+        if self._raise_onboard() or self._raise_onboard_with_wmctrl():
+            return
+        print("[osk] retry: raise failed, respawning onboard", flush=True)
+        self._kill_process()
+        self._spawn_fresh_onboard()
+
+    def _onboard_window_present(self) -> bool:
+        """Best-effort: is an onboard window listed by the window manager?"""
+        wmctrl = shutil.which("wmctrl")
+        if not wmctrl:
+            return self.is_running
+        try:
+            result = subprocess.run(
+                [wmctrl, "-l"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if result.returncode != 0:
+                return False
+            return "onboard" in (result.stdout or "").lower()
+        except Exception:
+            return False
+
+    def _ensure_onboard_for_editing(self) -> None:
+        """Show or respawn onboard when the operator taps a real text field."""
+        if not self._enabled:
+            return
+        self._reap_process()
+        self._configure_onboard_window_mode()
+        self._last_show_mono = time.monotonic()
+
+        if self.is_running and self._onboard_window_present():
+            print("[osk] raising existing onboard window", flush=True)
             self._raise_onboard()
+            QTimer.singleShot(120, self._raise_onboard)
+            self._schedule_show_retry()
             return
-        if self._raise_onboard():
-            return
-        print("[osk] retry: respawning onboard", flush=True)
+
+        print("[osk] respawn onboard for text entry", flush=True)
+        self._kill_process()
         self._spawn_fresh_onboard()
 
     def activate_text_input(self, widget: QWidget) -> None:
@@ -420,7 +457,7 @@ class OnScreenKeyboardManager(QObject):
         self._focus_for_keyboard(target)
         self._last_activation_target_id = id(target)
         self._last_activation_mono = time.monotonic()
-        self.show(force=True)
+        self._ensure_onboard_for_editing()
 
     def shutdown(self) -> None:
         """Tear down the OSK subprocess and disconnect from the app.
@@ -505,16 +542,29 @@ class OnScreenKeyboardManager(QObject):
         if not self._first_focus_logged:
             msg = (
                 f"OSK: text-widget activation ({type(target).__name__}, "
-                f"event={int(event_type)}) - calling show()"
+                f"event={int(event_type)})"
             )
             print(f"[osk] {msg}", flush=True)
             log.info(msg)
             self._first_focus_logged = True
-        self.show(force=True)
+        if self._is_editable_text_entry(target):
+            self._ensure_onboard_for_editing()
+        else:
+            self.show(force=True)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_editable_text_entry(widget: QWidget) -> bool:
+        if isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return widget.isEnabled() and not widget.isReadOnly()
+        if isinstance(widget, QAbstractSpinBox):
+            return widget.isEnabled()
+        if isinstance(widget, QComboBox) and widget.isEditable():
+            return widget.isEnabled()
+        return False
 
     def _resolve_enabled(self) -> bool:
         if self._mode == "off":
@@ -541,18 +591,14 @@ class OnScreenKeyboardManager(QObject):
     @staticmethod
     def _matches_text_input(obj: QObject) -> bool:
         """True when ``obj`` itself is a text-entry target."""
+        if isinstance(obj, QAbstractItemView):
+            return False
         if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
             return obj.isEnabled() and not obj.isReadOnly()
         if isinstance(obj, QAbstractSpinBox):
             return obj.isEnabled()
         if isinstance(obj, QComboBox) and obj.isEditable():
             return obj.isEnabled()
-        if isinstance(obj, QWidget) and obj.testAttribute(Qt.WA_InputMethodEnabled):
-            if not obj.isEnabled():
-                return False
-            policy = obj.focusPolicy()
-            if policy not in (Qt.NoFocus,):
-                return True
         return False
 
     @classmethod
@@ -584,11 +630,11 @@ class OnScreenKeyboardManager(QObject):
             pass
 
     @staticmethod
-    def _is_onboard_binary(binary: str) -> bool:
+    def _binary_is_onboard(binary: str) -> bool:
         return os.path.basename(binary) == "onboard"
 
     def _is_onboard_binary(self) -> bool:
-        return self._is_onboard_binary(self._binary)
+        return self._binary_is_onboard(self._binary)
 
     def _onboard_dbus_name_owned(self) -> bool:
         """True when a session onboard service is already registered."""
