@@ -112,13 +112,11 @@ hoverboard chassis; lower them only if the realign is over-shooting):
                                                                 pulse cycles so corrections don't fire
                                                                 back-to-back)
   ``NINA_HOVER_IMU_CORR_POLL_HZ``               default 5     (drift sample rate inside pulse holds)
-  ``NINA_HOVER_IMU_CORR_INVERT_SIGN``           default 0     (flip pivot direction if the IMU mount
-                                                                orientation and / or ``NINA_HOVER_SWAP_TURN_LR``
-                                                                combination makes positive drift map to
-                                                                "pivot right" on this chassis. Symptom:
-                                                                after warmup the realign still grows
-                                                                drift past ``BAIL_MARGIN_DEG``. Set to
-                                                                ``1`` then.)
+  ``NINA_HOVER_IMU_CORR_INVERT_SIGN``           default 0     (flip drift sign interpretation)
+  ``NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR``        default 1     (swap pivot-label→goals so in-motion
+                                                                realign rotates **against** drift on the
+                                                                reference chassis; set 0 if corrections
+                                                                run with drift instead of opposing it)
 
 Backward-direction overrides (THRESHOLD and STEP_RATE ship with their own
 backward-optimised defaults baked in after field testing; COOLDOWN still
@@ -1029,6 +1027,23 @@ def _straight_brake_settle_sec() -> float:
         )
     except ValueError:
         return 0.30
+
+
+def _imu_corr_swap_pivot_dir() -> bool:
+    """Swap pivot-label→goals for in-motion yaw realign (forward/back pulse).
+
+    Positive drift means the chassis drifted right; the correction must
+    rotate left. On the reference chassis, naive ``L=FWD, R=BACK`` (label
+    "pivot LEFT") actually yaws **right**, so the mapping is inverted by
+    default (``NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR=1``).
+
+    When True, a "counter drift left" decision applies ``L=BACK, R=FWD``
+    goals and vice versa. Independent of ``NINA_HOVER_TURN_SWAP_PIVOT_DIR``
+    (D-pad turns) and ``NINA_HOVER_STRAIGHT_CORR_SWAP_PIVOT_DIR``
+    (standstill correction).
+    """
+    val = os.environ.get("NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR", "1")
+    return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 
 def _straight_corr_swap_pivot_dir() -> bool:
@@ -2414,10 +2429,14 @@ class HoverboardAxisDrive:
                         exit_reason = "no progress"
                         break
 
-            # Same blend / step timing as held D-pad; drift sign picks direction.
+            # Counter drift: +drift → rotate left; swap maps label→goals on this chassis.
             effective = -last_yaw if invert else last_yaw
-            pivot_left = effective > 0.0
-            if pivot_left:
+            pivot_left_decision = effective > 0.0
+            swap_pivot = _imu_corr_swap_pivot_dir()
+            apply_left_goals = (
+                not pivot_left_decision if swap_pivot else pivot_left_decision
+            )
+            if apply_left_goals:
                 step_goals = self._goals_for_wheels(
                     left_dir=self.DIR_FORWARD,
                     left_speed=step_blend,

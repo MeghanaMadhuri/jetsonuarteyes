@@ -157,6 +157,7 @@ def _fast_correction_env(**extras: str) -> dict[str, str]:
         "NINA_HOVER_TURN_STEP_RATE_DEG_PER_SEC": "1000.0",
         "NINA_HOVER_TURN_PRE_SETTLE_SEC": "0.0",
         "NINA_HOVER_TURN_POST_SETTLE_SEC": "0.0",
+        "NINA_HOVER_IMU_CORR_SWAP_PIVOT_DIR": "1",
     }
     env.update(extras)
     return env
@@ -266,8 +267,8 @@ def test_corrective_hold_below_threshold_only_repplies_base_goals() -> None:
 # _imu_corrective_hold: pause-pivot-resume
 # ----------------------------------------------------------------------
 
-def test_corrective_hold_pivots_left_for_positive_drift() -> None:
-    """Drift +5 → pause, pivot left (F,B geometry), brake, re-prime, resume base."""
+def test_corrective_hold_pivots_against_positive_drift() -> None:
+    """Drift +5 → pause, pivot against drift (B,F at held blend), brake, re-prime."""
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -278,9 +279,9 @@ def test_corrective_hold_pivots_left_for_positive_drift() -> None:
     pre = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
     after = dxl.goal_writes[pre:]
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    assert any(w == pivot_left for w in after), (
-        f"expected pivot-left lean {pivot_left} in writes, saw {after}"
+    counter_drift = _pivot_goals_at_held_blend(turn_left=False)
+    assert any(w == counter_drift for w in after), (
+        f"expected counter-drift lean {counter_drift} in writes, saw {after}"
     )
     # Brake goals (2048, 2048) must appear between base and pivot.
     brake = {12: 2048, 13: 2048}
@@ -289,7 +290,7 @@ def test_corrective_hold_pivots_left_for_positive_drift() -> None:
     assert after[-1] == base, f"hold did not resume primed base lean; tail={after[-3:]}"
 
 
-def test_corrective_hold_pivots_right_for_negative_drift() -> None:
+def test_corrective_hold_pivots_against_negative_drift() -> None:
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -300,9 +301,9 @@ def test_corrective_hold_pivots_right_for_negative_drift() -> None:
     pre = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
     after = dxl.goal_writes[pre:]
-    pivot_right = _pivot_goals_at_held_blend(turn_left=False)
-    assert any(w == pivot_right for w in after), (
-        f"expected pivot-right lean {pivot_right} in writes, saw {after}"
+    counter_drift = _pivot_goals_at_held_blend(turn_left=True)
+    assert any(w == counter_drift for w in after), (
+        f"expected counter-drift lean {counter_drift} in writes, saw {after}"
     )
 
 
@@ -336,7 +337,8 @@ def test_corrective_hold_exits_pivot_when_drift_returns_to_deadband() -> None:
     # Total hold is 0.4s; ensure it took at least the hold duration but the
     # pivot itself was short (pivot_left only appears a small number of times).
     assert elapsed >= 0.35, "hold was cut short"
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     assert len(pivot_writes) <= 3, (
         f"expected closed-loop pivot to exit promptly; saw {len(pivot_writes)} pivot writes"
     )
@@ -650,8 +652,8 @@ def test_cooldown_persists_across_pulse_cycles() -> None:
     # cooldown from the first pivot is still active and should suppress.
     drv._imu_corrective_hold(base, 0.10, halt, is_forward=True)
     after = dxl.goal_writes[pre_second:]
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    assert all(w != pivot_left for w in after), (
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    assert all(w != counter for w in after), (
         "cooldown from previous hold must carry into the next hold; "
         f"saw {after}"
     )
@@ -678,8 +680,8 @@ def test_imu_begin_straight_resets_cooldown() -> None:
     pre_second = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.05, halt, is_forward=True)
     after_before_reset = dxl.goal_writes[pre_second:]
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    assert all(w != pivot_left for w in after_before_reset), (
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    assert all(w != counter for w in after_before_reset), (
         "before reset, cooldown should still block correction"
     )
 
@@ -688,7 +690,7 @@ def test_imu_begin_straight_resets_cooldown() -> None:
     pre_third = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.15, halt, is_forward=True)
     after_reset = dxl.goal_writes[pre_third:]
-    assert any(w == pivot_left for w in after_reset), (
+    assert any(w == counter for w in after_reset), (
         f"after _imu_begin_straight, the first sample must fire immediately "
         f"and trigger a pivot; saw {after_reset}"
     )
@@ -764,7 +766,7 @@ def test_default_tunables_are_conservative() -> None:
 # ----------------------------------------------------------------------
 
 def test_invert_sign_flips_pivot_direction_for_positive_drift() -> None:
-    """With invert ON, drift +5 should produce a *pivot-right* lean, not left."""
+    """With invert ON, drift +5 must use the opposite lean vs invert=0."""
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -776,19 +778,19 @@ def test_invert_sign_flips_pivot_direction_for_positive_drift() -> None:
     pre = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
     after = dxl.goal_writes[pre:]
-    pivot_right = _pivot_goals_at_held_blend(turn_left=False)
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    assert any(w == pivot_right for w in after), (
-        f"invert=1 + drift=+5 should pivot RIGHT, saw {after}"
+    no_invert = _pivot_goals_at_held_blend(turn_left=False)
+    inverted = _pivot_goals_at_held_blend(turn_left=True)
+    assert any(w == inverted for w in after), (
+        f"invert=1 + drift=+5 should pivot opposite to invert=0, saw {after}"
     )
-    assert not any(w == pivot_left for w in after), (
-        f"invert=1 + drift=+5 must NOT emit the un-inverted pivot-left lean, "
+    assert not any(w == no_invert for w in after), (
+        f"invert=1 + drift=+5 must NOT emit the invert=0 counter-drift lean, "
         f"saw {after}"
     )
 
 
 def test_invert_sign_flips_pivot_direction_for_negative_drift() -> None:
-    """With invert ON, drift -5 should produce a *pivot-left* lean."""
+    """With invert ON, drift -5 must use the opposite lean vs invert=0."""
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -800,14 +802,15 @@ def test_invert_sign_flips_pivot_direction_for_negative_drift() -> None:
     pre = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
     after = dxl.goal_writes[pre:]
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    assert any(w == pivot_left for w in after), (
-        f"invert=1 + drift=-5 should pivot LEFT, saw {after}"
+    no_invert = _pivot_goals_at_held_blend(turn_left=True)
+    inverted = _pivot_goals_at_held_blend(turn_left=False)
+    assert any(w == inverted for w in after), (
+        f"invert=1 + drift=-5 should pivot opposite to invert=0, saw {after}"
     )
 
 
-def test_invert_sign_off_preserves_original_convention() -> None:
-    """Default invert=off keeps the old positive-drift → pivot-left mapping."""
+def test_invert_sign_off_counters_positive_drift() -> None:
+    """Default invert=off: positive drift → pivot against drift (swap on)."""
     dxl = FakeDxl()
     drv = HoverboardAxisDrive(dxl, threading.RLock(), _axis(), _cfg())
     drv.initialize()
@@ -819,7 +822,9 @@ def test_invert_sign_off_preserves_original_convention() -> None:
     pre = len(dxl.goal_writes)
     drv._imu_corrective_hold(base, 0.25, halt, is_forward=True)
     after = dxl.goal_writes[pre:]
-    assert any(w == _pivot_goals_at_held_blend(turn_left=True) for w in after)
+    assert any(
+        w == _pivot_goals_at_held_blend(turn_left=False) for w in after
+    ), "positive drift must pivot against drift (B,F at held blend)"
 
 
 # ----------------------------------------------------------------------
@@ -859,12 +864,13 @@ def test_pivot_bails_when_drift_grows_past_starting_magnitude() -> None:
         drv._perform_pivot_correction(8.20, halt)
         elapsed = time.monotonic() - t0
         after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # Two consecutive growing samples must trigger the bail; only the first
     # 1-2 micro-steps may have fired before the bail short-circuits the loop.
     assert len(pivot_writes) <= 3, (
         f"wrong-direction bail must abort the realign quickly; saw "
-        f"{len(pivot_writes)} pivot-left micro-step writes"
+        f"{len(pivot_writes)} counter-drift micro-step writes"
     )
     # Brake must appear after the bail so the wheels don't remain leaned in
     # the wrong direction (re-prime is the caller's responsibility).
@@ -908,12 +914,13 @@ def test_realign_exits_when_drift_reaches_deadband() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(8.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # Initial drift +8 was used to TRIGGER the realign; the loop samples
     # +6 (act), +4 (act), +2 (act), +0.5 (exit). So ~3 actuated steps.
     assert 2 <= len(pivot_writes) <= 5, (
         f"realign should fire a small number of micro-steps before deadband "
-        f"exits the loop; saw {len(pivot_writes)} pivot-left writes"
+        f"exits the loop; saw {len(pivot_writes)} counter-drift writes"
     )
     # Last write should be brake or prime-neutral (both are {12:2048,13:2048}),
     # never leave the wheels leaned.
@@ -941,11 +948,12 @@ def test_realign_caps_at_max_steps_under_stuck_drift() -> None:
         drv._perform_pivot_correction(5.0, threading.Event())
         elapsed = time.monotonic() - t0
         after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # Constant +5° drift never trips the deadband, the overshoot guard, or
     # the wrong-direction bail (|5| is not > |initial 5| + deadband). Must
     # hit MAX_STEPS=6.
-    assert pivot_writes == [_pivot_goals_at_held_blend(turn_left=True)] * 6, (
+    assert pivot_writes == [counter] * 6, (
         f"stuck drift must fire exactly MAX_STEPS=6 micro-pivots; "
         f"saw {len(pivot_writes)} (writes={pivot_writes!r})"
     )
@@ -990,12 +998,13 @@ def test_warmup_grace_period_absorbs_pre_brake_momentum() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(8.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # All 7 steps should run (no early bail) — drift in warmup ignored,
     # post-warmup samples stay inside the 5° margin so no bail trigger.
     assert len(pivot_writes) >= 5, (
         f"warmup must absorb momentum-driven growth and let the realign "
-        f"run; saw only {len(pivot_writes)} pivot-left micro-step writes"
+        f"run; saw only {len(pivot_writes)} counter-drift micro-step writes"
     )
 
 
@@ -1077,7 +1086,8 @@ def test_bail_margin_must_be_exceeded_before_bail_fires() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(3.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # No two-in-a-row growths past 7° → must reach max_steps=7, not bail.
     assert len(pivot_writes) == 7, (
         f"isolated noisy samples past margin must NOT bail the realign; "
@@ -1108,19 +1118,17 @@ def test_realign_re_evaluates_direction_per_step() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(7.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_left = _pivot_goals_at_held_blend(turn_left=True)
-    pivot_right = _pivot_goals_at_held_blend(turn_left=False)
-    # Initial +7 drift -> first samples positive -> pivot LEFT for a couple
-    # of steps. Then sample -3 triggers the overshoot guard and exits without
-    # actuating a right-side step (so we don't see a pivot_right in this run).
-    assert any(w == pivot_left for w in after), (
-        f"expected at least one pivot-left micro-step; saw {after}"
+    counter_pos = _pivot_goals_at_held_blend(turn_left=False)
+    counter_neg = _pivot_goals_at_held_blend(turn_left=True)
+    # Initial +7 drift -> first samples positive -> counter-drift (B,F) steps.
+    # Then sample -3 triggers the overshoot guard and exits without
+    # actuating a step for the opposite drift sign.
+    assert any(w == counter_pos for w in after), (
+        f"expected at least one counter-drift micro-step; saw {after}"
     )
-    # Overshoot guard fires BEFORE the negative-drift step would actuate, so
-    # no pivot_right writes here; that's the desired "stop chasing" behaviour.
-    assert not any(w == pivot_right for w in after), (
+    assert not any(w == counter_neg for w in after), (
         f"overshoot past zero must STOP the realign, not chase the other way; "
-        f"saw pivot_right in {after}"
+        f"saw counter_neg in {after}"
     )
 
 
@@ -1235,7 +1243,8 @@ def test_no_progress_exit_when_drift_held_at_start_value() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(4.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     # Must exit at the progress-check step, not run all 20 max_steps.
     assert len(pivot_writes) <= 5, (
         f"no-progress safeguard must short-circuit the realign well "
@@ -1262,7 +1271,8 @@ def test_no_progress_check_disabled_by_setting_check_steps_zero() -> None:
     pre = len(dxl.goal_writes)
     drv._perform_pivot_correction(4.0, threading.Event())
     after = dxl.goal_writes[pre:]
-    pivot_writes = [w for w in after if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    pivot_writes = [w for w in after if w == counter]
     assert len(pivot_writes) == 6, (
         f"with progress-check disabled, stuck drift must run all "
         f"MAX_STEPS=6 micro-steps; saw {len(pivot_writes)}"
@@ -1523,7 +1533,8 @@ def test_corrective_hold_uses_back_threshold_for_backward() -> None:
     pre_fwd = len(dxl_fwd.goal_writes)
     drv_fwd._imu_corrective_hold(base, 0.10, halt, is_forward=True)
     fwd_writes = dxl_fwd.goal_writes[pre_fwd:]
-    fwd_pivot_writes = [w for w in fwd_writes if w == _pivot_goals_at_held_blend(turn_left=True)]
+    counter = _pivot_goals_at_held_blend(turn_left=False)
+    fwd_pivot_writes = [w for w in fwd_writes if w == counter]
     assert fwd_pivot_writes == [], (
         f"drift {drift} < forward threshold 10.0 must NOT pivot; saw "
         f"{len(fwd_pivot_writes)} pivot writes"
@@ -1532,7 +1543,7 @@ def test_corrective_hold_uses_back_threshold_for_backward() -> None:
     pre_back = len(dxl_back.goal_writes)
     drv_back._imu_corrective_hold(base, 0.10, halt, is_forward=False)
     back_writes = dxl_back.goal_writes[pre_back:]
-    back_pivot_writes = [w for w in back_writes if w == _pivot_goals_at_held_blend(turn_left=True)]
+    back_pivot_writes = [w for w in back_writes if w == counter]
     assert len(back_pivot_writes) >= 1, (
         f"drift {drift} > backward threshold 2.0 must fire pivot; saw "
         f"{len(back_pivot_writes)} pivot writes"
