@@ -1719,11 +1719,11 @@ def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
 
 
 def test_straight_fwd_ticks_offsets_default_for_new_mechanical_structure() -> None:
-    """Motor 12 (left) −10 ticks, motor 13 (right) +10 on straight forward."""
+    """Motor 12 (left) −10 ticks, motor 13 (right) +20 on straight forward."""
     assert _STRAIGHT_FWD_LEFT_TICKS_OFFSET == -10
-    assert _STRAIGHT_FWD_RIGHT_TICKS_OFFSET == 10
+    assert _STRAIGHT_FWD_RIGHT_TICKS_OFFSET == 20
     assert _straight_fwd_left_ticks_offset() == -10
-    assert _straight_fwd_right_ticks_offset() == 10
+    assert _straight_fwd_right_ticks_offset() == 20
 
 
 def test_straight_fwd_ticks_offsets_env_overrides_honored() -> None:
