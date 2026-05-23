@@ -44,7 +44,9 @@ def test_monitor_is_running_false_before_start() -> None:
             touch_at42qt2120=SimpleNamespace(
                 i2c_bus=7,
                 i2c_address=0x1C,
-                use_key_mask=True,
+                detect_mode="keystatus",
+                touch_channel=0,
+                use_key_mask=False,
                 channel_mask=0xFFF,
                 debounce_reads=3,
                 release_reads=2,
@@ -55,7 +57,6 @@ def test_monitor_is_running_false_before_start() -> None:
                 poll_interval_sec=0.1,
                 baseline_clear_reads=10,
                 post_baseline_arm_reads=15,
-                hold_sec=0.4,
                 stuck_high_sec=2.0,
                 stuck_clear_reads=15,
             )

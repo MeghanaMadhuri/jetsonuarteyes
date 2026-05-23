@@ -300,14 +300,17 @@ class TouchAt42qt2120Settings:
     On touch: stop drive, speak (bundled MP3), park Dynamixel IDs **1–13** at
     ``motor_goal`` (default **2048**). One shot per physical touch (rising edge +
     release before re-arm). Enable with ``NINA_TOUCH_AT42QT2120_ENABLE=1``.
-    Set ``NINA_TOUCH_USE_KEY_MASK=0`` for STATUS-only setups. Narrow
-    ``channel_mask`` (e.g. ``0x004`` for key 2) when unused channels pick
-    up cross-talk.
+    Set ``NINA_TOUCH_DETECT=keystatus`` for DMR-style KEY_STATUS reads (channel 0,
+    ``0xFF`` idle). Use ``NINA_TOUCH_DETECT=key_mask`` for legacy inverted 12-bit
+    mask wiring (idle ``0x001``, press clears to ``0x000``). ``status`` uses the
+    STATUS keys bit only.
     """
 
     enabled: bool
     i2c_bus: int
     i2c_address: int
+    detect_mode: str
+    touch_channel: int
     use_key_mask: bool
     channel_mask: int
     debounce_reads: int
@@ -922,17 +925,27 @@ def load_settings(repo_root: Path) -> NinaSettings:
         poll_interval_sec=max(0.02, _env_float("NINA_ESP32_TRIGGER_POLL_SEC", 0.05)),
     )
 
+    _touch_detect_raw = (os.environ.get("NINA_TOUCH_DETECT") or "").strip().lower()
+    if _touch_detect_raw in ("keystatus", "key_mask", "status"):
+        _touch_detect_mode = _touch_detect_raw
+    elif _env_bool("NINA_TOUCH_USE_KEY_MASK", False):
+        _touch_detect_mode = "key_mask"
+    else:
+        _touch_detect_mode = "keystatus"
+
     touch_at42qt2120 = TouchAt42qt2120Settings(
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
         i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
-        use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", True),
+        detect_mode=_touch_detect_mode,
+        touch_channel=max(0, min(11, _env_int("NINA_TOUCH_CHANNEL", 0))),
+        use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", False),
         channel_mask=max(
             1,
             min(0xFFF, _env_int("NINA_TOUCH_CHANNEL_MASK", 0xFFF)),
         ),
         debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 2))),
-        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 5))),
+        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 2))),
         baseline_clear_reads=max(
             1, min(50, _env_int("NINA_TOUCH_BASELINE_CLEAR_READS", 10))
         ),
@@ -950,11 +963,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
         startup_probe_delay_sec=max(
             0.0, _env_float("NINA_TOUCH_PROBE_DELAY_SEC", 0.4)
         ),
-        cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 8.0)),
+        cooldown_sec=max(0.0, _env_float("NINA_TOUCH_COOLDOWN_SEC", 2.0)),
         blind_after_reaction_sec=max(
             0.0, _env_float("NINA_TOUCH_BLIND_SEC", 3.0)
         ),
-        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.1)),
+        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 1.0)),
         tts_text=(
             (os.environ.get("NINA_TOUCH_TTS") or "").strip()
             or "Please dont touch me"

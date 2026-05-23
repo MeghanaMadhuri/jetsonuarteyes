@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
 from nina.sensors.at42qt2120 import AT42QT2120, is_available
 
@@ -16,31 +16,6 @@ log = logging.getLogger("nina.sensors.touch_at42qt2120")
 
 # Grace window for non-inverted grace debounce (mask-active path).
 _PRESS_GRACE_SEC = 0.18
-
-# Tolerate brief 0x001 reads mid-hold (inverted wiring: pressed = 0x000).
-_MAX_IDLE_POLLS_DURING_HOLD = 5
-
-
-def touch_hold_accumulator_step(
-    in_press: bool,
-    *,
-    accumulated_polls: int,
-    idle_polls: int,
-    hold_polls: int,
-    max_idle_polls: int = _MAX_IDLE_POLLS_DURING_HOLD,
-) -> Tuple[bool, int, int]:
-    """Fire after *hold_polls* in_press samples; brief idle glitches do not reset."""
-    if in_press:
-        accumulated_polls += 1
-        idle_polls = 0
-    else:
-        idle_polls += 1
-        if idle_polls > max_idle_polls:
-            accumulated_polls = 0
-            idle_polls = 0
-    if accumulated_polls >= hold_polls:
-        return True, 0, 0
-    return False, accumulated_polls, idle_polls
 
 
 def touch_inverted_press(masked: int, idle_mask: int) -> bool:
@@ -158,6 +133,21 @@ def touch_rising_edge_debounce_step(
     return False, n
 
 
+def touch_debounce_step(
+    touched: bool,
+    *,
+    debounce_reads: int,
+    consecutive_hits: int,
+) -> tuple[bool, int]:
+    """Level-trigger debounce: fire after *debounce_reads* consecutive pressed polls."""
+    if touched:
+        n = consecutive_hits + 1
+        if n >= debounce_reads:
+            return True, 0
+        return False, n
+    return False, 0
+
+
 def touch_stuck_high_step(
     touched_raw: bool,
     *,
@@ -233,50 +223,34 @@ def touch_baseline_ready_step(
     return False, n
 
 
-# Back-compat alias for older tests / imports.
-def touch_debounce_step(
-    touched: bool,
-    *,
-    debounce_reads: int,
-    consecutive_hits: int,
-) -> tuple[bool, int]:
-    """Legacy level-trigger debounce (prefer :func:`touch_rising_edge_debounce_step`)."""
-    if touched:
-        n = consecutive_hits + 1
-        if n >= debounce_reads:
-            return True, 0
-        return False, n
-    return False, 0
-
-
 class TouchAt42qt2120Monitor:
     """Poll AT42QT2120; on touch, stop drive, speak, park motors."""
 
     def __init__(self, service: "NinaService") -> None:
         self._svc = service
         s = service.settings.touch_at42qt2120
+        self._detect_mode = str(getattr(s, "detect_mode", "keystatus"))
+        self._touch_channel = int(getattr(s, "touch_channel", 0))
         self._debounce_reads = int(s.debounce_reads)
         self._release_reads = int(s.release_reads)
         self._baseline_clear_reads = int(s.baseline_clear_reads)
         self._post_baseline_arm_reads = int(
             getattr(s, "post_baseline_arm_reads", 15)
         )
-        self._hold_sec = float(getattr(s, "hold_sec", 0.4))
         self._stuck_after_sec = float(s.stuck_high_sec)
         self._stuck_clear_reads = int(s.stuck_clear_reads)
         self._cooldown_sec = float(s.cooldown_sec)
         self._blind_sec = float(s.blind_after_reaction_sec)
-        self._use_key_mask = bool(getattr(s, "use_key_mask", True))
+        self._use_key_mask = bool(getattr(s, "use_key_mask", False))
         self._channel_mask = int(getattr(s, "channel_mask", 0xFFF)) & 0xFFF
         self._poll_sec = float(s.poll_interval_sec)
-        self._hold_polls = max(2, int(round(self._hold_sec / self._poll_sec)))
         self._touch = AT42QT2120(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._armed = True
-        self._baseline_ready = False
+        self._baseline_ready = self._detect_mode != "key_mask"
         self._baseline_clear_hits = 0
-        self._touch_armed = False
+        self._touch_armed = self._detect_mode != "key_mask"
         self._post_baseline_idle_hits = 0
         self._stuck_latched = False
         self._stuck_clear_hits = 0
@@ -287,10 +261,6 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_signal_mono: float = -1e30
-        self._hold_accum_polls: int = 0
-        self._hold_idle_polls: int = 0
-        self._hold_started_logged: bool = False
-        self._fire_when_quiet_ends: bool = False
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
 
@@ -311,9 +281,9 @@ class TouchAt42qt2120Monitor:
             self._touch.close()
             raise
         self._armed = True
-        self._baseline_ready = False
+        self._baseline_ready = self._detect_mode != "key_mask"
         self._baseline_clear_hits = 0
-        self._touch_armed = False
+        self._touch_armed = self._detect_mode != "key_mask"
         self._post_baseline_idle_hits = 0
         self._stuck_latched = False
         self._stuck_clear_hits = 0
@@ -324,10 +294,6 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_signal_mono = -1e30
-        self._hold_accum_polls = 0
-        self._hold_idle_polls = 0
-        self._hold_started_logged = False
-        self._fire_when_quiet_ends = False
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
         self._stop.clear()
@@ -336,51 +302,19 @@ class TouchAt42qt2120Monitor:
         )
         self._thread.start()
         log.info(
-            "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
-            "debounce=%d release=%d baseline_clear=%d arm_idle=%d hold=%.2fs/%dpoll "
-            "stuck=%.1fs cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
-            "use_key_mask=%s channel_mask=0x%03X)",
+            "AT42QT2120 touch monitor started (i2c-%s 0x%02X detect=%s "
+            "poll=%.2fs debounce=%d release=%d cooldown=%.1fs blind=%.2fs "
+            "quiet=max(cooldown,blind) channel=%d)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
+            self._detect_mode,
             self._poll_sec,
             self._debounce_reads,
             self._release_reads,
-            self._baseline_clear_reads,
-            self._post_baseline_arm_reads,
-            self._hold_sec,
-            self._hold_polls,
-            self._stuck_after_sec,
             self._cooldown_sec,
             self._blind_sec,
-            self._use_key_mask,
-            self._channel_mask,
+            self._touch_channel,
         )
-
-    def _accumulate_inverted_hold(self, in_press: bool) -> bool:
-        """Update hold accumulator for inverted mask wiring; return True to fire."""
-        prev = self._hold_accum_polls
-        fire, self._hold_accum_polls, self._hold_idle_polls = (
-            touch_hold_accumulator_step(
-                in_press,
-                accumulated_polls=self._hold_accum_polls,
-                idle_polls=self._hold_idle_polls,
-                hold_polls=self._hold_polls,
-            )
-        )
-        if self._hold_accum_polls > 0 and not self._hold_started_logged:
-            self._hold_started_logged = True
-            log.info(
-                "AT42QT2120 press hold started (need %d polls at mask=0x000)",
-                self._hold_polls,
-            )
-        elif self._hold_accum_polls == 0 and prev > 0:
-            self._hold_started_logged = False
-        return fire
-
-    def _reset_inverted_hold(self) -> None:
-        self._hold_accum_polls = 0
-        self._hold_idle_polls = 0
-        self._hold_started_logged = False
 
     def stop(self) -> None:
         self._stop.set()
@@ -402,6 +336,63 @@ class TouchAt42qt2120Monitor:
         return t is not None and t.is_alive()
 
     def _run(self) -> None:
+        if self._detect_mode == "key_mask":
+            self._run_key_mask()
+        else:
+            read_pressed: Callable[[], bool]
+            if self._detect_mode == "status":
+                read_pressed = self._touch.keys_pressed
+            else:
+                ch = self._touch_channel
+                read_pressed = lambda ch=ch: self._touch.is_key_pressed(ch)
+            self._run_keystatus(read_pressed)
+
+    def _run_keystatus(self, read_pressed: Callable[[], bool]) -> None:
+        """DMR-style loop: KEY_STATUS byte (or STATUS), level debounce, release re-arm."""
+        while not self._stop.is_set():
+            try:
+                if self._touch.is_calibrating():
+                    self._hits = 0
+                    time.sleep(self._poll_sec)
+                    continue
+                pressed = read_pressed()
+            except Exception:
+                log.debug("AT42QT2120 read failed", exc_info=True)
+                self._hits = 0
+                time.sleep(max(self._poll_sec, 0.1))
+                continue
+
+            now = time.monotonic()
+            if now < self._quiet_until_mono:
+                self._armed = False
+                self._hits = 0
+                self._release_hits = 0
+                time.sleep(self._poll_sec)
+                continue
+
+            if not self._armed:
+                self._armed, self._release_hits = touch_release_rearm_step(
+                    pressed,
+                    armed=False,
+                    release_reads=self._release_reads,
+                    consecutive_clear=self._release_hits,
+                )
+                self._hits = 0
+                time.sleep(self._poll_sec)
+                continue
+
+            fire, self._hits = touch_debounce_step(
+                pressed,
+                debounce_reads=self._debounce_reads,
+                consecutive_hits=self._hits,
+            )
+            if fire:
+                self._complete_reaction(pressed=pressed, masked=None)
+
+            time.sleep(self._poll_sec)
+
+    def _run_key_mask(self) -> None:
+        """Legacy inverted 12-bit mask path with baseline learning."""
         while not self._stop.is_set():
             try:
                 if self._touch.is_calibrating():
@@ -412,10 +403,6 @@ class TouchAt42qt2120Monitor:
                 mask = self._touch.read_key_mask()
                 masked = mask & self._channel_mask
                 status_stuck = self._touch.status_stuck_idle()
-                if self._use_key_mask:
-                    touched_raw = masked != 0
-                else:
-                    touched_raw = self._touch.keys_pressed()
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
                 self._hits = 0
@@ -437,25 +424,17 @@ class TouchAt42qt2120Monitor:
                 )
             )
             if self._stuck_latched:
-                touched = (
-                    self._baseline_ready
-                    and touch_mask_active(
-                        masked, self._idle_mask, prev_masked=self._prev_masked
-                    )
-                    if self._use_key_mask
-                    else False
+                touched = self._baseline_ready and touch_mask_active(
+                    masked, self._idle_mask, prev_masked=self._prev_masked
                 )
-            elif self._use_key_mask:
-                if touch_inverted_idle(self._idle_mask):
-                    touched = self._baseline_ready and touch_inverted_press(
-                        masked, self._idle_mask
-                    )
-                else:
-                    touched = self._baseline_ready and touch_mask_active(
-                        masked, self._idle_mask, prev_masked=self._prev_masked
-                    )
+            elif touch_inverted_idle(self._idle_mask):
+                touched = self._baseline_ready and touch_inverted_press(
+                    masked, self._idle_mask
+                )
             else:
-                touched = touched_raw
+                touched = self._baseline_ready and touch_mask_active(
+                    masked, self._idle_mask, prev_masked=self._prev_masked
+                )
 
             if newly_stuck:
                 snap = self._touch.touch_snapshot()
@@ -466,34 +445,27 @@ class TouchAt42qt2120Monitor:
                     int(snap["status"]),
                 )
 
-            if self._use_key_mask:
-                was_ready = self._baseline_ready
-                self._baseline_ready, self._baseline_clear_hits, self._idle_mask = (
-                    touch_baseline_idle_step(
-                        masked,
-                        baseline_ready=self._baseline_ready,
-                        baseline_clear_reads=self._baseline_clear_reads,
-                        consecutive_clear=self._baseline_clear_hits,
-                        idle_mask=self._idle_mask,
-                    )
-                )
-                if was_ready != self._baseline_ready and self._baseline_ready:
-                    self._prev_masked = self._idle_mask
-                    self._post_baseline_idle_hits = 0
-                    self._touch_armed = False
-                    log.info(
-                        "AT42QT2120 idle baseline learned mask=0x%03X "
-                        "(arming after %d stable idle polls)",
-                        self._idle_mask,
-                        self._post_baseline_arm_reads,
-                    )
-            else:
-                self._baseline_ready, self._baseline_clear_hits = touch_baseline_ready_step(
-                    touched,
+            was_ready = self._baseline_ready
+            self._baseline_ready, self._baseline_clear_hits, self._idle_mask = (
+                touch_baseline_idle_step(
+                    masked,
                     baseline_ready=self._baseline_ready,
                     baseline_clear_reads=self._baseline_clear_reads,
                     consecutive_clear=self._baseline_clear_hits,
+                    idle_mask=self._idle_mask,
                 )
+            )
+            if was_ready != self._baseline_ready and self._baseline_ready:
+                self._prev_masked = self._idle_mask
+                self._post_baseline_idle_hits = 0
+                self._touch_armed = False
+                log.info(
+                    "AT42QT2120 idle baseline learned mask=0x%03X "
+                    "(arming after %d stable idle polls)",
+                    self._idle_mask,
+                    self._post_baseline_arm_reads,
+                )
+
             if not self._baseline_ready:
                 self._hits = 0
                 self._prev_touched = False
@@ -501,7 +473,7 @@ class TouchAt42qt2120Monitor:
                 time.sleep(self._poll_sec)
                 continue
 
-            if self._use_key_mask and not self._touch_armed:
+            if not self._touch_armed:
                 if masked == self._idle_mask:
                     self._post_baseline_idle_hits += 1
                 else:
@@ -519,44 +491,16 @@ class TouchAt42qt2120Monitor:
                     time.sleep(self._poll_sec)
                     continue
 
-            if (
-                self._use_key_mask
-                and self._baseline_ready
-                and self._touch_armed
-                and masked != self._prev_masked
-            ):
-                log.debug(
-                    "AT42QT2120 mask 0x%03X -> 0x%03X (idle=0x%03X in_press=%s)",
-                    self._prev_masked,
-                    masked,
-                    self._idle_mask,
-                    touch_inverted_press(masked, self._idle_mask)
-                    if touch_inverted_idle(self._idle_mask)
-                    else touch_mask_active(
-                        masked, self._idle_mask, prev_masked=self._prev_masked
-                    ),
-                )
-
-            # After a reaction, stay disarmed until the quiet window ends
-            # (max of blind + cooldown) so motor vibration cannot retrigger.
             if now < self._quiet_until_mono:
                 self._armed = False
                 self._hits = 0
                 self._release_hits = 0
-                if self._use_key_mask and touch_inverted_idle(self._idle_mask):
-                    if self._accumulate_inverted_hold(
-                        touch_inverted_press(masked, self._idle_mask)
-                    ):
-                        self._fire_when_quiet_ends = True
                 self._prev_touched = touched
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
-            if self._fire_when_quiet_ends:
-                self._fire_when_quiet_ends = False
-                fire = True
-            elif not self._armed:
+            if not self._armed:
                 self._armed, self._release_hits = touch_release_rearm_step(
                     touched,
                     armed=False,
@@ -565,62 +509,60 @@ class TouchAt42qt2120Monitor:
                 )
                 self._hits = 0
                 self._last_signal_mono = -1e30
-                self._reset_inverted_hold()
                 self._prev_touched = touched
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
+            fire = False
+            if touch_inverted_idle(self._idle_mask):
+                fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
+                    touched,
+                    consecutive_hits=self._hits,
+                    last_signal_mono=self._last_signal_mono,
+                    now=now,
+                    debounce_reads=self._debounce_reads,
+                )
             else:
-                fire = False
-                if self._use_key_mask and touch_inverted_idle(self._idle_mask):
-                    fire = self._accumulate_inverted_hold(
-                        touch_inverted_press(masked, self._idle_mask)
-                    )
-                elif self._use_key_mask:
-                    signal = touched
-                    fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
-                        signal,
-                        consecutive_hits=self._hits,
-                        last_signal_mono=self._last_signal_mono,
-                        now=now,
-                        debounce_reads=self._debounce_reads,
-                    )
-                else:
-                    if not touched:
-                        self._hits = 0
-                        self._prev_touched = False
-                        self._prev_masked = masked
-                        time.sleep(self._poll_sec)
-                        continue
-                    fire, self._hits = touch_rising_edge_debounce_step(
-                        touched,
-                        self._prev_touched,
-                        debounce_reads=self._debounce_reads,
-                        consecutive_hits=self._hits,
-                    )
-                    self._prev_touched = touched
+                fire, self._hits = touch_rising_edge_debounce_step(
+                    touched,
+                    self._prev_touched,
+                    debounce_reads=self._debounce_reads,
+                    consecutive_hits=self._hits,
+                )
+                self._prev_touched = touched
 
             if fire:
-                self._armed = False
-                self._release_hits = 0
-                self._hits = 0
-                self._reset_inverted_hold()
-                try:
-                    self._svc.run_touch_reaction()
-                except Exception:
-                    log.exception("Touch reaction failed")
-                self._last_fire_mono = time.monotonic()
-                quiet_sec = max(self._blind_sec, self._cooldown_sec)
-                if quiet_sec > 0:
-                    self._quiet_until_mono = self._last_fire_mono + quiet_sec
-                log.info(
-                    "AT42QT2120 touch reaction complete mask=0x%03X idle=0x%03X — "
-                    "quiet for %.1fs",
-                    masked,
-                    self._idle_mask,
-                    quiet_sec,
-                )
+                self._complete_reaction(pressed=touched, masked=masked)
 
             self._prev_masked = masked
             time.sleep(self._poll_sec)
+
+    def _complete_reaction(
+        self, *, pressed: bool, masked: Optional[int]
+    ) -> None:
+        self._armed = False
+        self._release_hits = 0
+        self._hits = 0
+        try:
+            self._svc.run_touch_reaction()
+        except Exception:
+            log.exception("Touch reaction failed")
+        self._last_fire_mono = time.monotonic()
+        quiet_sec = max(self._blind_sec, self._cooldown_sec)
+        if quiet_sec > 0:
+            self._quiet_until_mono = self._last_fire_mono + quiet_sec
+        if masked is None:
+            log.info(
+                "AT42QT2120 touch reaction complete pressed=%s — quiet for %.1fs",
+                pressed,
+                quiet_sec,
+            )
+        else:
+            log.info(
+                "AT42QT2120 touch reaction complete mask=0x%03X idle=0x%03X — "
+                "quiet for %.1fs",
+                masked,
+                self._idle_mask,
+                quiet_sec,
+            )

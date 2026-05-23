@@ -27,6 +27,9 @@ REG_STATUS = 0x02
 REG_KEY_STATUS1 = 0x03
 REG_KEY_STATUS2 = 0x04
 
+# DMR firmware treats a keystatus byte of 0xFF as no touch on that register.
+_KEYSTATUS_IDLE_BYTE = 0xFF
+
 # STATUS bits
 _STATUS_KEYS = 1 << 0
 _STATUS_SLIDER = 1 << 1
@@ -151,6 +154,20 @@ class AT42QT2120:
         lo = self.read_register(REG_KEY_STATUS1)
         hi = self.read_register(REG_KEY_STATUS2)
         return ((hi & 0x0F) << 8) | (lo & 0xFF)
+
+    def is_key_pressed(self, channel: int = 0) -> bool:
+        """DMR-style touch read: KEY_STATUS byte, ``0xFF`` idle, bit set = pressed."""
+        ch = int(channel)
+        if ch < 0 or ch > 11:
+            return False
+        if ch > 7:
+            data = self.read_register(REG_KEY_STATUS2)
+            ch -= 8
+        else:
+            data = self.read_register(REG_KEY_STATUS1)
+        if int(data) == _KEYSTATUS_IDLE_BYTE:
+            return False
+        return bool(int(data) & (1 << ch))
 
     def any_touch(self) -> bool:
         """True if STATUS or (optionally) key mask reports activity."""
