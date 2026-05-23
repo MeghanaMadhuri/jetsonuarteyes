@@ -158,16 +158,25 @@ class AT42QT2120:
             return True
         return self.read_key_mask() != 0
 
-    def touch_active(self, *, use_key_mask: bool = False) -> bool:
-        """Conservative touch detect for safety reactions.
+    def status_stuck_idle(self) -> bool:
+        """True when STATUS keys bit is set but the 12-bit mask is zero.
 
-        Prefer STATUS bit 0 only; the 12-bit key mask often picks up
-        cross-talk / floating channels and causes false retriggers.
+        This pattern means the electrode back is coupled to metal/chassis —
+        not a real capacitive touch on a wired channel.
         """
+        return self.keys_pressed() and self.read_key_mask() == 0
+
+    def touch_active(
+        self,
+        *,
+        use_key_mask: bool = True,
+        channel_mask: int = 0xFFF,
+    ) -> bool:
+        """Detect touch via STATUS and/or filtered key-mask bits."""
         if self.keys_pressed():
             return True
         if use_key_mask:
-            return self.read_key_mask() != 0
+            return (self.read_key_mask() & (int(channel_mask) & 0xFFF)) != 0
         return False
 
     def touch_snapshot(self) -> dict:

@@ -142,7 +142,8 @@ class TouchAt42qt2120Monitor:
         self._stuck_clear_reads = int(s.stuck_clear_reads)
         self._cooldown_sec = float(s.cooldown_sec)
         self._blind_sec = float(s.blind_after_reaction_sec)
-        self._use_key_mask = bool(getattr(s, "use_key_mask", False))
+        self._use_key_mask = bool(getattr(s, "use_key_mask", True))
+        self._channel_mask = int(getattr(s, "channel_mask", 0xFFF)) & 0xFFF
         self._poll_sec = float(s.poll_interval_sec)
         self._touch = AT42QT2120(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
@@ -194,7 +195,8 @@ class TouchAt42qt2120Monitor:
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
             "debounce=%d release=%d baseline_clear=%d stuck=%.1fs "
-            "cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) use_key_mask=%s)",
+            "cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
+            "use_key_mask=%s channel_mask=0x%03X)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
             self._poll_sec,
@@ -205,6 +207,7 @@ class TouchAt42qt2120Monitor:
             self._cooldown_sec,
             self._blind_sec,
             self._use_key_mask,
+            self._channel_mask,
         )
 
     def stop(self) -> None:
@@ -234,7 +237,13 @@ class TouchAt42qt2120Monitor:
                     self._prev_touched = False
                     time.sleep(self._poll_sec)
                     continue
-                touched_raw = self._touch.touch_active(use_key_mask=self._use_key_mask)
+                mask = self._touch.read_key_mask()
+                mask_touch = (mask & self._channel_mask) != 0
+                status_stuck = self._touch.status_stuck_idle()
+                touched_raw = self._touch.touch_active(
+                    use_key_mask=self._use_key_mask,
+                    channel_mask=self._channel_mask,
+                )
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
                 self._hits = 0
@@ -244,9 +253,9 @@ class TouchAt42qt2120Monitor:
                 continue
 
             now = time.monotonic()
-            touched, self._stuck_latched, self._touch_high_since_mono, self._stuck_clear_hits, newly_stuck = (
+            _, self._stuck_latched, self._touch_high_since_mono, self._stuck_clear_hits, newly_stuck = (
                 touch_stuck_high_step(
-                    touched_raw,
+                    status_stuck,
                     stuck_latched=self._stuck_latched,
                     touch_high_since_mono=self._touch_high_since_mono,
                     stuck_clear_hits=self._stuck_clear_hits,
@@ -255,6 +264,11 @@ class TouchAt42qt2120Monitor:
                     stuck_clear_reads=self._stuck_clear_reads,
                 )
             )
+            if self._stuck_latched:
+                # Phantom STATUS-high with mask=0 — still honour real mask touches.
+                touched = mask_touch if self._use_key_mask else False
+            else:
+                touched = touched_raw
             if newly_stuck:
                 snap = self._touch.touch_snapshot()
                 log.warning(

@@ -300,14 +300,16 @@ class TouchAt42qt2120Settings:
     On touch: stop drive, speak (bundled MP3), park Dynamixel IDs **1–13** at
     ``motor_goal`` (default **2048**). One shot per physical touch (rising edge +
     release before re-arm). Enable with ``NINA_TOUCH_AT42QT2120_ENABLE=1``.
-    Set ``NINA_TOUCH_USE_KEY_MASK=1`` only if STATUS bit 0 never asserts on
-    your wiring (mask-only setups are noisier).
+    Set ``NINA_TOUCH_USE_KEY_MASK=0`` for STATUS-only setups. Narrow
+    ``channel_mask`` (e.g. ``0x004`` for key 2) when unused channels pick
+    up cross-talk.
     """
 
     enabled: bool
     i2c_bus: int
     i2c_address: int
     use_key_mask: bool
+    channel_mask: int
     debounce_reads: int
     release_reads: int
     baseline_clear_reads: int
@@ -922,7 +924,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
         i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
-        use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", False),
+        use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", True),
+        channel_mask=max(
+            1,
+            min(0xFFF, _env_int("NINA_TOUCH_CHANNEL_MASK", 0xFFF)),
+        ),
         debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 5))),
         release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 5))),
         baseline_clear_reads=max(

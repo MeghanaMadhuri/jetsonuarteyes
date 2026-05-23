@@ -141,6 +141,57 @@ def test_baseline_requires_clear_before_ready() -> None:
     assert hits == 0
 
 
+def test_stuck_status_high_still_allows_mask_touch() -> None:
+    """Phantom STATUS-high must not block real mask-only electrode touches."""
+    armed = True
+    baseline_ready = True
+    prev = False
+    hits = 0
+    release_hits = 0
+    stuck_latched = True
+    fires = 0
+    debounce_reads = 3
+    release_reads = 2
+
+    def poll(*, status_stuck: bool, mask_touch: bool) -> None:
+        nonlocal armed, prev, hits, release_hits, stuck_latched, fires, baseline_ready
+        touched_raw = status_stuck or mask_touch
+        if stuck_latched:
+            touched = mask_touch
+        else:
+            touched = touched_raw
+        if not baseline_ready:
+            return
+        if not armed:
+            armed, release_hits = touch_release_rearm_step(
+                touched,
+                armed=False,
+                release_reads=release_reads,
+                consecutive_clear=release_hits,
+            )
+            hits = 0
+            prev = touched
+            return
+        if not touched:
+            hits = 0
+            prev = False
+            return
+        fire, hits = touch_rising_edge_debounce_step(
+            touched, prev, debounce_reads=debounce_reads, consecutive_hits=hits
+        )
+        prev = touched
+        if fire:
+            fires += 1
+            armed = False
+            release_hits = 0
+            hits = 0
+
+    # STATUS phantom stuck; real touch arrives on mask only.
+    for _ in range(debounce_reads):
+        poll(status_stuck=True, mask_touch=True)
+    assert fires == 1
+
+
 def test_simulated_monitor_loop_one_fire_per_gesture() -> None:
     """Exercise the same state transitions the monitor thread uses."""
     armed = True
