@@ -129,6 +129,9 @@ Environment=NINA_TOUCH_POLL_SEC=1.0
 Environment=NINA_TOUCH_COOLDOWN_SEC=2
 Environment=NINA_TOUCH_BLIND_SEC=3
 
+# Vision: start face recognition when opening the Vision screen (YuNet + SFace).
+Environment=NINA_VISION_FACE_AUTO=1
+
 # On-screen keyboard (onboard). always = keep visible; auto = on text focus.
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=NINA_LOG_LEVEL=INFO

@@ -12,10 +12,9 @@ Design goals:
     this package (same root used by ``NinaService`` settings).
   * Synthesis runs on a background QThread so we never stall the
     Vision worker / GUI thread on the gTTS HTTP request.
-  * Playback prefers cached MP3 via mpg123/ffplay; common Jetson images
-    have only `aplay` — without mpg123, greetings fall back to `espeak`.
-    Actual subprocess playback runs on a daemon thread so the Qt GUI
-    thread never blocks on audio I/O.
+  * Playback uses ``AudioPlayer.play`` (persistent ALSA pipe on Jetson, same
+    path as touch/battery alerts). Actual playback runs on a daemon thread
+    so the Qt GUI thread never blocks on audio I/O.
 
 Public API:
 
@@ -41,17 +40,10 @@ from typing import Dict, Optional
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
-from nina.services.audio_player import (
-    AudioPlayer,
-    mpg123_command_for,
-    play_silence_preroll_blocking,
-)
+from nina.services.audio_player import AudioPlayer, play_silence_preroll_blocking
 
 
 log = logging.getLogger("sirena_ui.face_greeter")
-
-# Optional ALSA device for greetings, e.g. hw:0,0 or plug:dmix (Jetson / kiosk).
-_GREET_APLAY_DEVICE = (os.environ.get("NINA_GREET_APLAY_DEVICE") or "").strip()
 
 
 def _stderr_tail(data: Optional[bytes], limit: int = 400) -> str:
@@ -128,10 +120,32 @@ class FaceGreeter(QObject):
         return Path(repo_root) / "nina" / "data" / "greetings"
 
     def _playback_available(self) -> bool:
-        """MP3 via mpg123/ffplay, or espeak (with optional WAV + aplay)."""
-        if self._player.can_play(Path("_greet_probe.mp3")):
+        """Shared AudioPlayer pipeline, or espeak as last resort."""
+        if self._player.is_supported:
             return True
         return bool(shutil.which("espeak-ng") or shutil.which("espeak"))
+
+    def _play_via_audio_player_blocking(
+        self, path: Path, *, timeout: float = 120.0
+    ) -> bool:
+        """Play through ``AudioPlayer`` (persistent pipe when enabled) and wait."""
+        path = Path(path)
+        if not path.exists() or not self._player.can_play(path):
+            return False
+        with self._playback_gate:
+            handle = self._player.play(path, skip_preroll=True)
+        if handle is None:
+            return False
+        try:
+            rc = handle.wait(timeout=timeout)
+            return rc == 0
+        except subprocess.TimeoutExpired:
+            log.warning("FaceGreeter: playback timed out for %s", path.name)
+            try:
+                handle.terminate()
+            except Exception:
+                pass
+            return False
 
     def _try_espeak(self, text: str) -> bool:
         """Speak ``text`` via espeak (always on a background thread so the GUI
@@ -180,10 +194,10 @@ class FaceGreeter(QObject):
                     return
                 return
 
-            if self._play_wav_blocking(Path(wav_path)):
+            if self._play_via_audio_player_blocking(Path(wav_path)):
                 return
             log.warning(
-                "FaceGreeter: WAV playback failed (%r); see prior aplay/paplay logs",
+                "FaceGreeter: WAV playback failed (%r); see prior AudioPlayer logs",
                 text[:40],
             )
             self._espeak_direct(text, es_path)
@@ -192,56 +206,6 @@ class FaceGreeter(QObject):
                 os.unlink(wav_path)
             except OSError:
                 pass
-
-    def _aplay_argv(self, wav: str) -> Optional[list]:
-        exe = shutil.which("aplay")
-        if not exe:
-            return None
-        cmd = [exe, "-q"]
-        if _GREET_APLAY_DEVICE:
-            cmd.extend(["-D", _GREET_APLAY_DEVICE])
-        cmd.append(wav)
-        return cmd
-
-    def _play_wav_blocking(self, wav_path: Path) -> bool:
-        """Play a WAV with aplay (optional ALSA device) then paplay."""
-        with self._playback_gate:
-            play_silence_preroll_blocking()
-            wav = str(wav_path)
-            cmd = self._aplay_argv(wav)
-            if cmd is not None:
-                r = subprocess.run(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=120,
-                    check=False,
-                )
-                if r.returncode == 0:
-                    return True
-                log.warning(
-                    "FaceGreeter: aplay failed rc=%s stderr=%s (try "
-                    "NINA_GREET_APLAY_DEVICE=plug:dmix or paplay / dash)",
-                    r.returncode,
-                    _stderr_tail(r.stderr),
-                )
-            paplay = shutil.which("paplay")
-            if paplay:
-                r = subprocess.run(
-                    [paplay, wav],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=120,
-                    check=False,
-                )
-                if r.returncode == 0:
-                    return True
-                log.warning(
-                    "FaceGreeter: paplay failed rc=%s stderr=%s",
-                    r.returncode,
-                    _stderr_tail(r.stderr),
-                )
-            return False
 
     def _espeak_direct(self, text: str, es_path: str) -> bool:
         """Last resort: espeak's own audio output (Pulse etc.)."""
@@ -267,58 +231,6 @@ class FaceGreeter(QObject):
                 log.warning("FaceGreeter: espeak direct: %s", exc)
                 return False
 
-    def _play_mp3_blocking(self, path: Path) -> bool:
-        """Play MP3 with mpg123 (log stream), then ffplay as fallback."""
-        path = Path(path)
-        with self._playback_gate:
-            play_silence_preroll_blocking()
-            cmd = mpg123_command_for(path)
-            if cmd:
-                r = subprocess.run(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=120,
-                    check=False,
-                )
-                if r.returncode == 0:
-                    return True
-                log.warning(
-                    "FaceGreeter: mpg123 failed rc=%s stderr=%s",
-                    r.returncode,
-                    _stderr_tail(r.stderr),
-                )
-        ffplay = shutil.which("ffplay")
-        if ffplay:
-            with self._playback_gate:
-                play_silence_preroll_blocking()
-            env = dict(os.environ)
-            env.setdefault("SDL_AUDIODRIVER", "alsa")
-            r = subprocess.run(
-                [
-                    ffplay,
-                    "-nodisp",
-                    "-autoexit",
-                    "-loglevel",
-                    "error",
-                    "-hide_banner",
-                    str(path),
-                ],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=120,
-                check=False,
-                env=env,
-            )
-            if r.returncode == 0:
-                return True
-            log.warning(
-                "FaceGreeter: ffplay failed rc=%s stderr=%s",
-                r.returncode,
-                _stderr_tail(r.stderr),
-            )
-        return False
-
     def greet(self, name: str) -> None:
         """Speak "Hello <name>" if cooldown has elapsed for this name.
 
@@ -330,8 +242,8 @@ class FaceGreeter(QObject):
             return
         if not self._playback_available():
             log.warning(
-                "FaceGreeter: no MP3 player (mpg123/ffplay) or espeak; "
-                "install e.g. sudo apt install -y mpg123"
+                "FaceGreeter: no AudioPlayer (aplay/mpg123/ffplay) or espeak; "
+                "install e.g. sudo apt install -y alsa-utils mpg123"
             )
             return
 
@@ -375,8 +287,7 @@ class FaceGreeter(QObject):
         if not self._playback_available():
             log.warning(
                 "FaceGreeter.greet_now: no playback toolchain "
-                "(need mpg123/ffplay for cached MP3, or espeak-ng for TTS); "
-                "cache_dir=%s",
+                "(need AudioPlayer or espeak-ng); cache_dir=%s",
                 self._cache_dir.resolve(),
             )
             return
@@ -418,7 +329,7 @@ class FaceGreeter(QObject):
                                 with greeter._lock:
                                     greeter._last_greeted[name] = time.time()
                             return
-                    if greeter._play_mp3_blocking(out_path):
+                    if greeter._play_via_audio_player_blocking(out_path):
                         greeter.spoken.emit(name)
                         with greeter._lock:
                             greeter._last_greeted[name] = time.time()
@@ -496,25 +407,14 @@ class FaceGreeter(QObject):
         self.reset_cooldown(name)
 
     def _play_clip_blocking(self, path: Path, name: str) -> bool:
-        """Synchronous playback (subprocess) — blocks; call from a worker thread."""
+        """Synchronous playback (AudioPlayer) — blocks; call from a worker thread."""
         text = f"Hello {name}"
         try:
-            suf = Path(path).suffix.lower()
-            if suf == ".mp3":
-                if self._play_mp3_blocking(path):
-                    self.spoken.emit(name)
-                    return True
-            elif suf == ".wav" and self._play_wav_blocking(Path(path)):
+            if self._play_via_audio_player_blocking(path):
                 self.spoken.emit(name)
                 return True
-            if self._player.can_play(path):
-                proc = self._player.play(path, skip_preroll=True)
-                if proc is not None:
-                    self.spoken.emit(name)
-                    return True
             log.warning(
-                "FaceGreeter: cannot play %s (need mpg123 or ffplay); "
-                "trying espeak fallback",
+                "FaceGreeter: AudioPlayer failed for %s; trying espeak fallback",
                 path.name,
             )
         except Exception as exc:  # pragma: no cover - subprocess errors
