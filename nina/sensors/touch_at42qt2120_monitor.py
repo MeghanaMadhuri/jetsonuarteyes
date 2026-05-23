@@ -14,34 +14,33 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("nina.sensors.touch_at42qt2120")
 
-# Tolerate brief 0x001 bounce while the inverted electrode reads 0x000.
+# Grace window for non-inverted grace debounce (mask-active path).
 _PRESS_GRACE_SEC = 0.18
 
+# Tolerate brief 0x001 reads mid-hold (inverted wiring: pressed = 0x000).
+_MAX_IDLE_POLLS_DURING_HOLD = 5
 
-# Brief 0x001 bounce while the electrode is held (inverted: reads 0x000).
-_PRESS_BOUNCE_GRACE_SEC = 0.22
 
-
-def touch_sustained_hold_step(
+def touch_hold_accumulator_step(
     in_press: bool,
     *,
-    press_since_mono: Optional[float],
-    last_in_press_mono: float,
-    now: float,
-    hold_sec: float,
-    bounce_grace_sec: float = _PRESS_BOUNCE_GRACE_SEC,
-) -> Tuple[bool, Optional[float], float]:
-    """Fire once after *in_press* for *hold_sec*; tolerate brief idle bounces mid-hold."""
+    accumulated_polls: int,
+    idle_polls: int,
+    hold_polls: int,
+    max_idle_polls: int = _MAX_IDLE_POLLS_DURING_HOLD,
+) -> Tuple[bool, int, int]:
+    """Fire after *hold_polls* in_press samples; brief idle glitches do not reset."""
     if in_press:
-        last = now
-        if press_since_mono is None:
-            return False, now, last
-        if (now - press_since_mono) >= hold_sec:
-            return True, None, last
-        return False, press_since_mono, last
-    if press_since_mono is not None and (now - last_in_press_mono) <= bounce_grace_sec:
-        return False, press_since_mono, last_in_press_mono
-    return False, None, last_in_press_mono
+        accumulated_polls += 1
+        idle_polls = 0
+    else:
+        idle_polls += 1
+        if idle_polls > max_idle_polls:
+            accumulated_polls = 0
+            idle_polls = 0
+    if accumulated_polls >= hold_polls:
+        return True, 0, 0
+    return False, accumulated_polls, idle_polls
 
 
 def touch_inverted_press(masked: int, idle_mask: int) -> bool:
@@ -262,7 +261,7 @@ class TouchAt42qt2120Monitor:
         self._post_baseline_arm_reads = int(
             getattr(s, "post_baseline_arm_reads", 15)
         )
-        self._hold_sec = float(getattr(s, "hold_sec", 0.6))
+        self._hold_sec = float(getattr(s, "hold_sec", 0.4))
         self._stuck_after_sec = float(s.stuck_high_sec)
         self._stuck_clear_reads = int(s.stuck_clear_reads)
         self._cooldown_sec = float(s.cooldown_sec)
@@ -270,6 +269,7 @@ class TouchAt42qt2120Monitor:
         self._use_key_mask = bool(getattr(s, "use_key_mask", True))
         self._channel_mask = int(getattr(s, "channel_mask", 0xFFF)) & 0xFFF
         self._poll_sec = float(s.poll_interval_sec)
+        self._hold_polls = max(2, int(round(self._hold_sec / self._poll_sec)))
         self._touch = AT42QT2120(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -287,8 +287,10 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_signal_mono: float = -1e30
-        self._press_since_mono: Optional[float] = None
-        self._last_in_press_mono: float = -1e30
+        self._hold_accum_polls: int = 0
+        self._hold_idle_polls: int = 0
+        self._hold_started_logged: bool = False
+        self._fire_when_quiet_ends: bool = False
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
 
@@ -322,8 +324,10 @@ class TouchAt42qt2120Monitor:
         self._hits = 0
         self._release_hits = 0
         self._last_signal_mono = -1e30
-        self._press_since_mono = None
-        self._last_in_press_mono = -1e30
+        self._hold_accum_polls = 0
+        self._hold_idle_polls = 0
+        self._hold_started_logged = False
+        self._fire_when_quiet_ends = False
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
         self._stop.clear()
@@ -333,7 +337,7 @@ class TouchAt42qt2120Monitor:
         self._thread.start()
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
-            "debounce=%d release=%d baseline_clear=%d arm_idle=%d hold=%.2fs "
+            "debounce=%d release=%d baseline_clear=%d arm_idle=%d hold=%.2fs/%dpoll "
             "stuck=%.1fs cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
             "use_key_mask=%s channel_mask=0x%03X)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
@@ -344,12 +348,39 @@ class TouchAt42qt2120Monitor:
             self._baseline_clear_reads,
             self._post_baseline_arm_reads,
             self._hold_sec,
+            self._hold_polls,
             self._stuck_after_sec,
             self._cooldown_sec,
             self._blind_sec,
             self._use_key_mask,
             self._channel_mask,
         )
+
+    def _accumulate_inverted_hold(self, in_press: bool) -> bool:
+        """Update hold accumulator for inverted mask wiring; return True to fire."""
+        prev = self._hold_accum_polls
+        fire, self._hold_accum_polls, self._hold_idle_polls = (
+            touch_hold_accumulator_step(
+                in_press,
+                accumulated_polls=self._hold_accum_polls,
+                idle_polls=self._hold_idle_polls,
+                hold_polls=self._hold_polls,
+            )
+        )
+        if self._hold_accum_polls > 0 and not self._hold_started_logged:
+            self._hold_started_logged = True
+            log.info(
+                "AT42QT2120 press hold started (need %d polls at mask=0x000)",
+                self._hold_polls,
+            )
+        elif self._hold_accum_polls == 0 and prev > 0:
+            self._hold_started_logged = False
+        return fire
+
+    def _reset_inverted_hold(self) -> None:
+        self._hold_accum_polls = 0
+        self._hold_idle_polls = 0
+        self._hold_started_logged = False
 
     def stop(self) -> None:
         self._stop.set()
@@ -512,13 +543,20 @@ class TouchAt42qt2120Monitor:
                 self._armed = False
                 self._hits = 0
                 self._release_hits = 0
-                self._press_since_mono = None
+                if self._use_key_mask and touch_inverted_idle(self._idle_mask):
+                    if self._accumulate_inverted_hold(
+                        touch_inverted_press(masked, self._idle_mask)
+                    ):
+                        self._fire_when_quiet_ends = True
                 self._prev_touched = touched
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
-            if not self._armed:
+            if self._fire_when_quiet_ends:
+                self._fire_when_quiet_ends = False
+                fire = True
+            elif not self._armed:
                 self._armed, self._release_hits = touch_release_rearm_step(
                     touched,
                     armed=False,
@@ -527,58 +565,47 @@ class TouchAt42qt2120Monitor:
                 )
                 self._hits = 0
                 self._last_signal_mono = -1e30
-                self._press_since_mono = None
+                self._reset_inverted_hold()
                 self._prev_touched = touched
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
-            fire = False
-            if self._use_key_mask and touch_inverted_idle(self._idle_mask):
-                in_press = touch_inverted_press(masked, self._idle_mask)
-                was_holding = self._press_since_mono is not None
-                fire, self._press_since_mono, self._last_in_press_mono = (
-                    touch_sustained_hold_step(
-                        in_press,
-                        press_since_mono=self._press_since_mono,
-                        last_in_press_mono=self._last_in_press_mono,
-                        now=now,
-                        hold_sec=self._hold_sec,
-                    )
-                )
-                if in_press and not was_holding and self._press_since_mono is not None:
-                    log.info(
-                        "AT42QT2120 press hold started (need %.1fs at mask=0x000)",
-                        self._hold_sec,
-                    )
-            elif self._use_key_mask:
-                signal = touched
-                fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
-                    signal,
-                    consecutive_hits=self._hits,
-                    last_signal_mono=self._last_signal_mono,
-                    now=now,
-                    debounce_reads=self._debounce_reads,
-                )
             else:
-                if not touched:
-                    self._hits = 0
-                    self._prev_touched = False
-                    self._prev_masked = masked
-                    time.sleep(self._poll_sec)
-                    continue
-                fire, self._hits = touch_rising_edge_debounce_step(
-                    touched,
-                    self._prev_touched,
-                    debounce_reads=self._debounce_reads,
-                    consecutive_hits=self._hits,
-                )
-                self._prev_touched = touched
+                fire = False
+                if self._use_key_mask and touch_inverted_idle(self._idle_mask):
+                    fire = self._accumulate_inverted_hold(
+                        touch_inverted_press(masked, self._idle_mask)
+                    )
+                elif self._use_key_mask:
+                    signal = touched
+                    fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
+                        signal,
+                        consecutive_hits=self._hits,
+                        last_signal_mono=self._last_signal_mono,
+                        now=now,
+                        debounce_reads=self._debounce_reads,
+                    )
+                else:
+                    if not touched:
+                        self._hits = 0
+                        self._prev_touched = False
+                        self._prev_masked = masked
+                        time.sleep(self._poll_sec)
+                        continue
+                    fire, self._hits = touch_rising_edge_debounce_step(
+                        touched,
+                        self._prev_touched,
+                        debounce_reads=self._debounce_reads,
+                        consecutive_hits=self._hits,
+                    )
+                    self._prev_touched = touched
 
             if fire:
                 self._armed = False
                 self._release_hits = 0
                 self._hits = 0
+                self._reset_inverted_hold()
                 try:
                     self._svc.run_touch_reaction()
                 except Exception:

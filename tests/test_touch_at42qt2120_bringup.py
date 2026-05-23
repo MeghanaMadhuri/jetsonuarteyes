@@ -55,7 +55,7 @@ def test_monitor_is_running_false_before_start() -> None:
                 poll_interval_sec=0.1,
                 baseline_clear_reads=10,
                 post_baseline_arm_reads=15,
-                hold_sec=0.6,
+                hold_sec=0.4,
                 stuck_high_sec=2.0,
                 stuck_clear_reads=15,
             )

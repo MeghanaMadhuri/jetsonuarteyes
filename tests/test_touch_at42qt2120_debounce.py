@@ -14,7 +14,7 @@ from nina.sensors.touch_at42qt2120_monitor import (
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
     touch_stuck_high_step,
-    touch_sustained_hold_step,
+    touch_hold_accumulator_step,
 )
 
 
@@ -212,79 +212,69 @@ def test_inverted_press_requires_start_from_idle() -> None:
     assert not (0x000 == 0x001)  # prev must equal idle for inverted arm
 
 
-def test_sustained_hold_requires_continuous_press() -> None:
-    since: float | None = None
-    last = 0.0
+def test_hold_accumulator_requires_enough_press_polls() -> None:
+    accum = 0
+    idle = 0
     fired = False
-    t = 0.0
 
     def step(in_press: bool) -> None:
-        nonlocal since, last, fired, t
-        fire, since, last = touch_sustained_hold_step(
+        nonlocal accum, idle, fired
+        fire, accum, idle = touch_hold_accumulator_step(
             in_press,
-            press_since_mono=since,
-            last_in_press_mono=last,
-            now=t,
-            hold_sec=0.6,
+            accumulated_polls=accum,
+            idle_polls=idle,
+            hold_polls=6,
         )
         if fire:
             fired = True
-        t += 0.10
 
-    for _ in range(3):
+    for _ in range(5):
         step(True)
     assert not fired
-    for _ in range(4):
-        step(True)
+    step(True)
     assert fired
 
 
-def test_sustained_hold_tolerates_brief_bounce() -> None:
-    since: float | None = None
-    last = 0.0
+def test_hold_accumulator_tolerates_brief_bounce() -> None:
+    accum = 0
+    idle = 0
     fired = False
-    t = 0.0
 
     def step(in_press: bool) -> None:
-        nonlocal since, last, fired, t
-        fire, since, last = touch_sustained_hold_step(
+        nonlocal accum, idle, fired
+        fire, accum, idle = touch_hold_accumulator_step(
             in_press,
-            press_since_mono=since,
-            last_in_press_mono=last,
-            now=t,
-            hold_sec=0.5,
-            bounce_grace_sec=0.2,
+            accumulated_polls=accum,
+            idle_polls=idle,
+            hold_polls=5,
+            max_idle_polls=3,
         )
         if fire:
             fired = True
-        t += 0.10
 
     for _ in range(3):
         step(True)
-    step(False)  # bounce within grace
+    step(False)  # bounce within tolerance
     for _ in range(3):
         step(True)
     assert fired
 
 
 def test_brief_noise_glitch_does_not_fire() -> None:
-    since: float | None = None
-    last = 0.0
+    accum = 0
+    idle = 0
     fired = False
-    t = 0.0
 
     def step(in_press: bool) -> None:
-        nonlocal since, last, fired, t
-        fire, since, last = touch_sustained_hold_step(
+        nonlocal accum, idle, fired
+        fire, accum, idle = touch_hold_accumulator_step(
             in_press,
-            press_since_mono=since,
-            last_in_press_mono=last,
-            now=t,
-            hold_sec=0.6,
+            accumulated_polls=accum,
+            idle_polls=idle,
+            hold_polls=6,
         )
         if fire:
             fired = True
-        t += 0.10
 
     step(True)
     step(True)
@@ -295,19 +285,19 @@ def test_brief_noise_glitch_does_not_fire() -> None:
 
 
 def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
-    """Idle leakage at 0x001; hold cleared 0x000 for hold_sec."""
+    """Idle leakage at 0x001; hold cleared 0x000 for hold_polls."""
     idle_mask = 0
     baseline_ready = False
     baseline_hits = 0
     armed = True
     fires = 0
-    press_since: float | None = None
-    last_in_press = 0.0
-    t = 0.0
+    accum = 0
+    idle_polls = 0
+    hold_polls = 5
 
     def poll(masked: int) -> None:
         nonlocal idle_mask, baseline_ready, baseline_hits, armed, fires
-        nonlocal press_since, last_in_press, t
+        nonlocal accum, idle_polls
         baseline_ready, baseline_hits, idle_mask = touch_baseline_idle_step(
             masked,
             baseline_ready=baseline_ready,
@@ -325,21 +315,20 @@ def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
                 release_reads=2,
                 consecutive_clear=0,
             )
-            press_since = None
-            t += 0.10
+            accum = 0
+            idle_polls = 0
             return
-        fire, press_since, last_in_press = touch_sustained_hold_step(
+        fire, accum, idle_polls = touch_hold_accumulator_step(
             in_press,
-            press_since_mono=press_since,
-            last_in_press_mono=last_in_press,
-            now=t,
-            hold_sec=0.5,
+            accumulated_polls=accum,
+            idle_polls=idle_polls,
+            hold_polls=hold_polls,
         )
         if fire:
             fires += 1
             armed = False
-            press_since = None
-        t += 0.10
+            accum = 0
+            idle_polls = 0
 
     for _ in range(3):
         poll(0x001)

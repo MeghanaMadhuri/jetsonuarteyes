@@ -124,9 +124,9 @@ Environment=NINA_TOUCH_I2C_BUS=7
 Environment=NINA_TOUCH_USE_KEY_MASK=1
 Environment=NINA_TOUCH_DEBOUNCE=2
 Environment=NINA_TOUCH_RELEASE_READS=5
-Environment=NINA_TOUCH_HOLD_SEC=0.6
+Environment=NINA_TOUCH_HOLD_SEC=0.4
 Environment=NINA_TOUCH_ARM_IDLE_READS=15
-Environment=NINA_TOUCH_COOLDOWN_SEC=15
+Environment=NINA_TOUCH_COOLDOWN_SEC=8
 Environment=NINA_TOUCH_BLIND_SEC=3
 
 # On-screen keyboard (onboard). always = keep visible; auto = on text focus.
