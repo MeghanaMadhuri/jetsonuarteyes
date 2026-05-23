@@ -1880,6 +1880,22 @@ def _imu_turn_swap_pivot_dir() -> bool:
     return val.strip().lower() not in ("0", "false", "no", "off", "")
 
 
+def _counter_drift_pivot_remaining_deg(effective_drift_deg: float) -> float:
+    """Intent-frame remaining yaw for one counter-drift micro-pivot.
+
+    Positive *effective_drift_deg* means the chassis has yawed right and
+    needs a physical left correction. On the reference mount with
+    ``NINA_HOVER_TURN_SWAP_PIVOT_DIR=0`` (the default), that physical
+    left rotation is a **positive** remaining (``L=BACK, R=FWD`` via
+    :meth:`HoverboardAxisDrive._pivot_step_goals_for_remaining`); with
+    swap enabled the same pose is a **negative** remaining. Mapping through
+    remaining keeps counter-yaw correct regardless of the D-pad label swap.
+    """
+    if _imu_turn_swap_pivot_dir():
+        return -effective_drift_deg
+    return effective_drift_deg
+
+
 def estimate_forward_pulse_series_duration_sec(axis: HoverboardAxisSettings) -> float:
     """Bench watchdog upper-bound for the drift-corrected forward loop.
 
@@ -3468,6 +3484,7 @@ class HoverboardAxisDrive:
         yaw_fn = self._imu_yaw_drift_fn
 
         current = initial_drift
+        tried_opposite_pivot = False
         log.info(
             "hover %s drift-correct: start=%+.2f deg deadband=%.2f deg "
             "residual=%.2f deg invert=%s turn_swap=%s hold_turn_blend=%d%% "
@@ -3506,87 +3523,111 @@ class HoverboardAxisDrive:
             turn_dir = self._hold_turn_direction_for_counter_drift(effective)
             if turn_dir is None:
                 return
-            step_goals = self._pivot_goals_for_hold_turn_step(turn_dir)
             this_step_dur = hold_step_dur
+            sample: Optional[float] = None
 
-            try:
-                self._apply_goals(step_goals)
-            except Exception:
-                log.debug(
-                    "%s drift-correct: step apply failed",
-                    direction_label, exc_info=True,
-                )
-            if halt.wait(timeout=this_step_dur):
-                return
-            try:
-                self._apply_goals(brake_goals)
-            except Exception:
-                pass
-            # Active settle between correction steps so the next drift
-            # sample isn't taken while the chassis is still rotating
-            # from the pivot we just commanded. Falls back to the legacy
-            # step_settle timer when no yaw_rate_fn is wired.
-            settle_status, settle_elapsed, _ = self._active_settle_until_still(
-                halt, context=f"{direction_label} corr step {step + 1}"
-            )
-            if settle_status == "halted":
-                return
-            if settle_status == "no_rate":
-                if step_settle > 0.0 and halt.wait(timeout=step_settle):
+            for attempt in range(2):
+                step_goals = self._pivot_goals_for_hold_turn_step(turn_dir)
+
+                try:
+                    self._apply_goals(step_goals)
+                except Exception:
+                    log.debug(
+                        "%s drift-correct: step apply failed",
+                        direction_label, exc_info=True,
+                    )
+                if halt.wait(timeout=this_step_dur):
                     return
-            elif settle_status == "timeout":
-                log.warning(
-                    "hover %s drift-correct: step %d settle BAILED "
-                    "(elapsed %.2fs); exiting correction so the next "
-                    "leg can sample fresh.",
-                    direction_label, step + 1, settle_elapsed,
+                try:
+                    self._apply_goals(brake_goals)
+                except Exception:
+                    pass
+                # Active settle between correction steps so the next drift
+                # sample isn't taken while the chassis is still rotating
+                # from the pivot we just commanded. Falls back to the legacy
+                # step_settle timer when no yaw_rate_fn is wired.
+                settle_status, settle_elapsed, _ = self._active_settle_until_still(
+                    halt, context=f"{direction_label} corr step {step + 1}"
                 )
-                return
+                if settle_status == "halted":
+                    return
+                if settle_status == "no_rate":
+                    if step_settle > 0.0 and halt.wait(timeout=step_settle):
+                        return
+                elif settle_status == "timeout":
+                    log.warning(
+                        "hover %s drift-correct: step %d settle BAILED "
+                        "(elapsed %.2fs); exiting correction so the next "
+                        "leg can sample fresh.",
+                        direction_label, step + 1, settle_elapsed,
+                    )
+                    return
 
-            sample = yaw_fn() if yaw_fn is not None else None
-            if sample is None:
-                log.debug(
-                    "%s drift-correct: step %d IMU returned None, "
-                    "holding previous drift estimate",
-                    direction_label, step + 1,
-                )
-                continue
-            log.info(
-                "hover %s drift-correct: step %d — hold_turn=%s goals L=%d R=%d "
-                "this_dur=%.3fs drift was %+.2f → %+.2f deg",
-                direction_label,
-                step + 1,
-                turn_dir,
-                step_goals.get(self._left_id),
-                step_goals.get(self._right_id),
-                this_step_dur,
-                current,
-                sample,
-            )
+                sample = yaw_fn() if yaw_fn is not None else None
+                if sample is None:
+                    log.debug(
+                        "%s drift-correct: step %d IMU returned None, "
+                        "holding previous drift estimate",
+                        direction_label, step + 1,
+                    )
+                    break
 
-            # Safety net: if this step INCREASED |drift| by more than a
-            # noise slop, the pivot is going the wrong way (operator has
-            # the wrong INVERT_SIGN, the IMU just glitched, or a wheel
-            # stalled while the other spun). Don't compound the error —
-            # exit immediately so the next drive leg can sample fresh
-            # rather than keep spinning into a 400° runaway.
-            wrong_dir_slop = max(0.5, deadband)
-            if abs(sample) > abs(current) + wrong_dir_slop:
-                log.warning(
-                    "hover %s drift-correct: step %d INCREASED |drift| "
-                    "(|%+.2f| -> |%+.2f|, slop=%.2f deg) — pivot direction "
-                    "is wrong (check NINA_HOVER_IMU_CORR_INVERT_SIGN) or "
-                    "sensor glitch. Aborting correction; next leg will "
-                    "sample fresh.",
+                retry_tag = " (retry)" if attempt > 0 else ""
+                log.info(
+                    "hover %s drift-correct: step %d%s — hold_turn=%s goals L=%d R=%d "
+                    "this_dur=%.3fs drift was %+.2f → %+.2f deg",
                     direction_label,
                     step + 1,
+                    retry_tag,
+                    turn_dir,
+                    step_goals.get(self._left_id),
+                    step_goals.get(self._right_id),
+                    this_step_dur,
                     current,
                     sample,
-                    wrong_dir_slop,
                 )
-                return
 
-            current = sample
+                # Safety net: if this step INCREASED |drift| by more than a
+                # noise slop, the pivot is going the wrong way (operator has
+                # the wrong INVERT_SIGN, the IMU just glitched, or a wheel
+                # stalled while the other spun). Retry once with the opposite
+                # hold turn before giving up.
+                wrong_dir_slop = max(0.5, deadband)
+                if abs(sample) > abs(current) + wrong_dir_slop:
+                    if attempt == 0 and not tried_opposite_pivot:
+                        tried_opposite_pivot = True
+                        turn_dir = "left" if turn_dir == "right" else "right"
+                        log.warning(
+                            "hover %s drift-correct: step %d INCREASED |drift| "
+                            "(|%+.2f| -> |%+.2f|, slop=%.2f deg) — pivot direction "
+                            "is wrong; retrying once with hold_turn=%s",
+                            direction_label,
+                            step + 1,
+                            current,
+                            sample,
+                            wrong_dir_slop,
+                            turn_dir,
+                        )
+                        continue
+                    log.warning(
+                        "hover %s drift-correct: step %d INCREASED |drift| "
+                        "(|%+.2f| -> |%+.2f|, slop=%.2f deg) — pivot direction "
+                        "is wrong (check NINA_HOVER_IMU_CORR_INVERT_SIGN) or "
+                        "sensor glitch. Aborting correction; next leg will "
+                        "sample fresh.",
+                        direction_label,
+                        step + 1,
+                        current,
+                        sample,
+                        wrong_dir_slop,
+                    )
+                    return
+
+                current = sample
+                break
+
+            if sample is None:
+                continue
 
         log.warning(
             "hover %s drift-correct: max steps (%d) reached, drift "
@@ -4298,8 +4339,10 @@ class HoverboardAxisDrive:
         """Pivot lean goals from signed yaw budget (same rule as held D-pad L/R).
 
         Positive *remaining_deg* → turn right in the intent frame; negative
-        → turn left. Drift correction passes ``remaining = -effective_drift``
-        so a rightward drift uses the same geometry as a held **left** step.
+        → turn left. Drift correction uses
+        :func:`_counter_drift_pivot_remaining_deg` so the commanded pose
+        always yaws opposite the measured drift (see
+        :meth:`_hold_turn_direction_for_counter_drift`).
         """
         if swap_pivot is None:
             swap_pivot = _imu_turn_swap_pivot_dir()
@@ -4342,12 +4385,17 @@ class HoverboardAxisDrive:
     def _hold_turn_direction_for_counter_drift(
         self, effective_drift_deg: float
     ) -> Optional[str]:
-        """Map signed drift (intent frame) to ``'left'`` / ``'right'`` micro-step."""
-        if effective_drift_deg > 0.0:
-            return "left"
-        if effective_drift_deg < 0.0:
-            return "right"
-        return None
+        """Map signed drift (intent frame) to held D-pad micro-step label.
+
+        The label is derived from :func:`_counter_drift_pivot_remaining_deg`
+        so counter-yaw uses the hold step whose goals physically oppose the
+        drift on this chassis (swap=0 reference mount needs hold-**right**
+        for +drift, not hold-left).
+        """
+        remaining = _counter_drift_pivot_remaining_deg(effective_drift_deg)
+        if remaining == 0.0:
+            return None
+        return "left" if remaining < 0.0 else "right"
 
     def _imu_turn_run_one_step(
         self,

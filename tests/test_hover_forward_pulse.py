@@ -85,12 +85,26 @@ class FakeDxl:
 
 
 def _drift_corr_pivot_goal_pair() -> tuple[dict[int, int], dict[int, int]]:
-    """Held-D-pad blend goals used by standstill drift correction."""
+    """Held-D-pad blend goals used by standstill drift correction (swap=0).
+
+    Positive drift counters with hold-right; negative with hold-left.
+    """
     blend = _held_dpad_pivot_blend_pct()
     return (
-        _pivot_left_goals_at_blend(blend),
         _pivot_right_goals_at_blend(blend),
+        _pivot_left_goals_at_blend(blend),
     )
+
+
+def _counter_drift_goals_for_drift(drift_deg: float, *, invert: bool = False) -> dict[int, int]:
+    from nina.controllers.hoverboard_axis_drive import _counter_drift_pivot_remaining_deg
+
+    effective = -drift_deg if invert else drift_deg
+    remaining = _counter_drift_pivot_remaining_deg(effective)
+    blend = _held_dpad_pivot_blend_pct()
+    if remaining < 0.0:
+        return _pivot_left_goals_at_blend(blend)
+    return _pivot_right_goals_at_blend(blend)
 
 
 def _axis_pulse_fast() -> HoverboardAxisSettings:
@@ -528,7 +542,7 @@ def test_drift_correction_uses_smaller_step_deg_than_hold_turn(
         )
 
     assert len(calls) >= 1
-    assert calls[0] == 5.0
+    assert calls[0] == _straight_corr_step_deg()
     assert _straight_corr_step_deg() < _drive_turn_micro_step_deg()
     assert _hold_turn_step_duration_sec(_straight_corr_step_deg()) < (
         _hold_turn_step_duration_sec(_drive_turn_micro_step_deg())
@@ -795,8 +809,8 @@ class _DriftSequence:
         return 0.0
 
 
-def test_forward_loop_positive_drift_pivots_left() -> None:
-    """Drift > 0 → counter-yaw step matches held D-pad left (30% blend)."""
+def test_forward_loop_positive_drift_pivots_against_drift() -> None:
+    """Drift > 0 → counter-yaw step (hold-right on swap=0 reference mount)."""
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
     # Big initial drift, then drift returns to 0 after one pivot step.
@@ -809,14 +823,14 @@ def test_forward_loop_positive_drift_pivots_left() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_left = _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct())
-    assert any(g == pivot_left for g in dxl.goal_writes), (
-        f"expected held-left counter-drift goals {pivot_left} not found in {dxl.goal_writes}"
+    counter = _counter_drift_goals_for_drift(10.0)
+    assert any(g == counter for g in dxl.goal_writes), (
+        f"expected counter-drift goals {counter} not found in {dxl.goal_writes}"
     )
 
 
-def test_forward_loop_negative_drift_pivots_right() -> None:
-    """Drift < 0 → counter-yaw step matches held D-pad right (30% blend)."""
+def test_forward_loop_negative_drift_pivots_against_drift() -> None:
+    """Drift < 0 → counter-yaw step (hold-left on swap=0 reference mount)."""
     axis = _axis_pulse_fast()
     hb, dxl = _make_hb(axis)
     hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([-10.0, 0.0]))
@@ -827,10 +841,22 @@ def test_forward_loop_negative_drift_pivots_right() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_right = _pivot_right_goals_at_blend(_held_dpad_pivot_blend_pct())
-    assert any(g == pivot_right for g in dxl.goal_writes), (
-        f"expected held-right counter-drift goals {pivot_right} not found"
+    pivot_left = _counter_drift_goals_for_drift(-10.0)
+    assert any(g == pivot_left for g in dxl.goal_writes), (
+        f"expected counter-drift goals {pivot_left} not found"
     )
+
+
+def test_counter_drift_pivot_remaining_honours_turn_swap() -> None:
+    """Counter-yaw remaining sign must flip with NINA_HOVER_TURN_SWAP_PIVOT_DIR."""
+    from nina.controllers.hoverboard_axis_drive import _counter_drift_pivot_remaining_deg
+
+    with patch.dict(os.environ, {"NINA_HOVER_TURN_SWAP_PIVOT_DIR": "0"}, clear=False):
+        assert _counter_drift_pivot_remaining_deg(5.0) == 5.0
+        assert _counter_drift_pivot_remaining_deg(-3.0) == -3.0
+    with patch.dict(os.environ, {"NINA_HOVER_TURN_SWAP_PIVOT_DIR": "1"}, clear=False):
+        assert _counter_drift_pivot_remaining_deg(5.0) == -5.0
+        assert _counter_drift_pivot_remaining_deg(-3.0) == 3.0
 
 
 def test_forward_loop_straight_corr_swap_legacy_env_ignored() -> None:
@@ -851,9 +877,9 @@ def test_forward_loop_straight_corr_swap_legacy_env_ignored() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    hold_left = _pivot_left_goals_at_blend(_held_dpad_pivot_blend_pct())
-    assert any(g == hold_left for g in dxl.goal_writes), (
-        f"positive drift must use hold-left micro-step goals {hold_left}; "
+    hold_right = _counter_drift_goals_for_drift(10.0)
+    assert any(g == hold_right for g in dxl.goal_writes), (
+        f"positive drift must use counter-yaw micro-step goals {hold_right}; "
         f"goal_writes={dxl.goal_writes}"
     )
 
@@ -870,9 +896,9 @@ def test_forward_loop_drift_corr_goals_match_hold_turn_micro_step() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    hold_left = hb._pivot_goals_for_hold_turn_step("left")
-    assert any(g == hold_left for g in dxl.goal_writes), (
-        f"drift correction must match hold-turn left goals {hold_left}; "
+    hold_right = hb._pivot_goals_for_hold_turn_step("right")
+    assert any(g == hold_right for g in dxl.goal_writes), (
+        f"drift correction must match hold-turn right goals {hold_right}; "
         f"writes={dxl.goal_writes}"
     )
 
@@ -890,9 +916,9 @@ def test_forward_loop_invert_sign_flips_pivot_direction() -> None:
         hb.stop()
     _wait_until_idle(hb)
 
-    pivot_right = _pivot_right_goals_at_blend(_held_dpad_pivot_blend_pct())
-    assert any(g == pivot_right for g in dxl.goal_writes), (
-        "with INVERT_SIGN=1, positive drift should produce a right pivot"
+    pivot_left = _counter_drift_goals_for_drift(10.0, invert=True)
+    assert any(g == pivot_left for g in dxl.goal_writes), (
+        "with INVERT_SIGN=1, positive drift should produce a left pivot"
     )
 
 
@@ -1069,6 +1095,31 @@ def test_active_settle_timeout_skips_correction_but_still_checks_abort() -> None
     )
 
 
+def test_forward_loop_wrong_direction_retries_opposite_pivot() -> None:
+    """First pivot that grows |drift| must retry once with the other hold turn."""
+    axis = _axis_pulse_fast()
+    hb, dxl = _make_hb(axis)
+    # Worse on first sample, better after opposite retry.
+    hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([12.0, 0.2]))
+
+    with patch.dict(os.environ, _fast_straight_env(), clear=False):
+        hb._correct_drift_at_standstill(
+            initial_drift=5.0,
+            brake_goals={12: 2048, 13: 2048},
+            halt=threading.Event(),
+            direction_label="forward",
+        )
+
+    pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
+    pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
+    assert pivot_steps == 2, (
+        f"wrong-direction step must retry opposite hold turn once; "
+        f"saw {pivot_steps} pivot writes in {dxl.goal_writes}"
+    )
+    assert any(g == pivot_l for g in dxl.goal_writes), "retry must use hold-left goals"
+    assert any(g == pivot_r for g in dxl.goal_writes), "first attempt uses hold-right goals"
+
+
 def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
     """If a correction step INCREASES |drift| (wrong pivot direction /
     sensor glitch / wheel stall), the loop must bail after exactly one
@@ -1079,6 +1130,7 @@ def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
     # Sequence: post-leg sample is +5.0, then after step 1 it's WORSE
     # (+12.0), then it keeps getting worse if we were to keep stepping.
     # The loop must stop after the +5.0 → +12.0 step.
+    # Worse on first sample, still worse after opposite retry → bail.
     hb.set_imu_hooks(yaw_drift_fn=_DriftSequence([5.0, 12.0, 20.0, 30.0]))
 
     with patch.dict(os.environ, _fast_straight_env(), clear=False):
@@ -1089,10 +1141,9 @@ def test_forward_loop_aborts_correction_when_step_makes_drift_worse() -> None:
 
     pivot_l, pivot_r = _drift_corr_pivot_goal_pair()
     pivot_steps = sum(1 for g in dxl.goal_writes if g == pivot_l or g == pivot_r)
-    assert pivot_steps <= 2, (
-        f"loop must bail after the first wrong-direction step within a "
-        f"single correction window; saw {pivot_steps} pivot writes in "
-        f"{dxl.goal_writes}"
+    assert pivot_steps <= 3, (
+        f"loop must bail after wrong-direction step and one opposite retry; "
+        f"saw {pivot_steps} pivot writes in {dxl.goal_writes}"
     )
 
 
