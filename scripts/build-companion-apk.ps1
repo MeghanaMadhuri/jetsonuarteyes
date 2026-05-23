@@ -15,19 +15,51 @@ if (-not (Test-Path $Android)) {
     Write-Error "Missing android folder: $Android"
 }
 
+if (-not $env:JAVA_HOME) {
+    $jbrCandidates = @(
+        "$env:LOCALAPPDATA\Programs\Android\Android Studio\jbr",
+        "${env:ProgramFiles}\Android\Android Studio\jbr",
+        "${env:ProgramFiles(x86)}\Android\Android Studio\jbr"
+    )
+    foreach ($jbr in $jbrCandidates) {
+        if (Test-Path (Join-Path $jbr "bin\java.exe")) {
+            $env:JAVA_HOME = $jbr
+            Write-Host "JAVA_HOME=$jbr"
+            break
+        }
+    }
+}
+
+if (-not $env:ANDROID_HOME -and $env:LOCALAPPDATA) {
+    $sdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    if (Test-Path $sdk) {
+        $env:ANDROID_HOME = $sdk
+        $env:ANDROID_SDK_ROOT = $sdk
+    }
+}
+
 Push-Location $Android
 try {
     if (Test-Path $Gradlew) {
         Write-Host "Building release APK..."
         & .\gradlew.bat assembleRelease --no-daemon
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Gradle assembleRelease failed (exit $LASTEXITCODE)"
+        }
         $releaseDir = Join-Path $Android "app\build\outputs\apk\release"
         $apk = Get-ChildItem $releaseDir -Filter "Sirena UI*.apk" -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
         if ($apk -and (Test-Path $apk.FullName)) {
+            $shareName = "NinaCompanion-$(
+                if ($apk.BaseName -match 'Sirena UI-(.+)$') { $Matches[1] } else { 'sideload' }
+            )-sideload.apk"
+            $sharePath = Join-Path $Root $shareName
+            Copy-Item -Force $apk.FullName $sharePath
             Write-Host ""
             Write-Host "OK: $($apk.FullName)"
-            Write-Host "Share this file for sideload install (Settings → allow unknown sources)."
+            Write-Host "Share: $sharePath ($([math]::Round($apk.Length / 1MB, 1)) MB)"
+            Write-Host "Sideload: copy to tablet, allow unknown sources, open APK to install."
         }
     }
     else {

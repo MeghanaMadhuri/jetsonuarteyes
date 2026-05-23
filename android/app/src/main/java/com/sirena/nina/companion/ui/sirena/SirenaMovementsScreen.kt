@@ -501,16 +501,16 @@ fun SirenaMovementsScreen(
                                     onClick = {
                                         if (kind == "brake") {
                                             editSteps = editSteps + StepDraft("brake")
-                                            return@forEach
+                                        } else {
+                                            dialogKind = kind
+                                            dialogValue =
+                                                when (kind) {
+                                                    "forward", "backward" -> "1.0"
+                                                    "turn_left", "turn_right" -> "90"
+                                                    else -> ""
+                                                }
+                                            dialogUturnRight = true
                                         }
-                                        dialogKind = kind
-                                        dialogValue =
-                                            when (kind) {
-                                                "forward", "backward" -> "1.0"
-                                                "turn_left", "turn_right" -> "90"
-                                                else -> ""
-                                            }
-                                        dialogUturnRight = true
                                     },
                                 )
                             }
