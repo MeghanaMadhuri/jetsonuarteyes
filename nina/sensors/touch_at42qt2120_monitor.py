@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 log = logging.getLogger("nina.sensors.touch_at42qt2120")
 
 
+def touch_mask_active(masked: int, idle_mask: int) -> bool:
+    """True when *masked* has bits set above the learned idle fingerprint."""
+    return (int(masked) & ~int(idle_mask) & 0xFFF) != 0
+
+
 def touch_release_rearm_step(
     touched: bool,
     *,
@@ -292,13 +297,17 @@ class TouchAt42qt2120Monitor:
             )
             if self._stuck_latched:
                 touched = (
-                    self._baseline_ready and masked != self._idle_mask
+                    self._baseline_ready
+                    and touch_mask_active(masked, self._idle_mask)
                     if self._use_key_mask
                     else False
                 )
             elif self._use_key_mask:
-                # Ignore latched STATUS; fire only when the mask changes from idle.
-                touched = self._baseline_ready and masked != self._idle_mask
+                # Ignore latched STATUS; fire only when new mask bits appear above idle.
+                touched = (
+                    self._baseline_ready
+                    and touch_mask_active(masked, self._idle_mask)
+                )
             else:
                 touched = touched_raw
 
@@ -325,7 +334,7 @@ class TouchAt42qt2120Monitor:
                 if was_ready != self._baseline_ready and self._baseline_ready:
                     log.info(
                         "AT42QT2120 idle baseline learned mask=0x%03X "
-                        "(fires on mask change; STATUS ignored)",
+                        "(fires when new mask bits appear above idle; STATUS ignored)",
                         self._idle_mask,
                     )
             else:

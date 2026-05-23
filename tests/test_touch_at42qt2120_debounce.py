@@ -6,6 +6,7 @@ from nina.sensors.touch_at42qt2120_monitor import (
     touch_baseline_idle_step,
     touch_baseline_ready_step,
     touch_debounce_step,
+    touch_mask_active,
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
     touch_stuck_high_step,
@@ -191,7 +192,7 @@ def test_constant_idle_mask_fires_on_change() -> None:
         )
         if not baseline_ready:
             return
-        touched = masked != idle_mask
+        touched = touch_mask_active(masked, idle_mask)
         if not armed:
             armed, release_hits = touch_release_rearm_step(
                 touched,
@@ -228,6 +229,12 @@ def test_constant_idle_mask_fires_on_change() -> None:
     for _ in range(debounce_reads):
         poll(0x003)
     assert fires == 1
+
+
+def test_mask_drop_to_zero_does_not_fire_with_idle_leakage() -> None:
+    """Glitch 0x001→0x000 must not trigger (only new bits above idle count)."""
+    assert not touch_mask_active(0x000, 0x001)
+    assert touch_mask_active(0x003, 0x001)
 
 
 def test_stuck_status_high_still_allows_mask_touch() -> None:
