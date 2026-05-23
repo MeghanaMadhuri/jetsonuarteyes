@@ -225,6 +225,9 @@ class TouchAt42qt2120Monitor:
         self._debounce_reads = int(s.debounce_reads)
         self._release_reads = int(s.release_reads)
         self._baseline_clear_reads = int(s.baseline_clear_reads)
+        self._post_baseline_arm_reads = int(
+            getattr(s, "post_baseline_arm_reads", 15)
+        )
         self._stuck_after_sec = float(s.stuck_high_sec)
         self._stuck_clear_reads = int(s.stuck_clear_reads)
         self._cooldown_sec = float(s.cooldown_sec)
@@ -238,6 +241,8 @@ class TouchAt42qt2120Monitor:
         self._armed = True
         self._baseline_ready = False
         self._baseline_clear_hits = 0
+        self._touch_armed = False
+        self._post_baseline_idle_hits = 0
         self._stuck_latched = False
         self._stuck_clear_hits = 0
         self._touch_high_since_mono: Optional[float] = None
@@ -269,6 +274,8 @@ class TouchAt42qt2120Monitor:
         self._armed = True
         self._baseline_ready = False
         self._baseline_clear_hits = 0
+        self._touch_armed = False
+        self._post_baseline_idle_hits = 0
         self._stuck_latched = False
         self._stuck_clear_hits = 0
         self._touch_high_since_mono = None
@@ -287,7 +294,7 @@ class TouchAt42qt2120Monitor:
         self._thread.start()
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
-            "debounce=%d release=%d baseline_clear=%d stuck=%.1fs "
+            "debounce=%d release=%d baseline_clear=%d arm_idle=%d stuck=%.1fs "
             "cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
             "use_key_mask=%s channel_mask=0x%03X)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
@@ -296,6 +303,7 @@ class TouchAt42qt2120Monitor:
             self._debounce_reads,
             self._release_reads,
             self._baseline_clear_reads,
+            self._post_baseline_arm_reads,
             self._stuck_after_sec,
             self._cooldown_sec,
             self._blind_sec,
@@ -395,10 +403,14 @@ class TouchAt42qt2120Monitor:
                     )
                 )
                 if was_ready != self._baseline_ready and self._baseline_ready:
+                    self._prev_masked = self._idle_mask
+                    self._post_baseline_idle_hits = 0
+                    self._touch_armed = False
                     log.info(
                         "AT42QT2120 idle baseline learned mask=0x%03X "
-                        "(fires when mask differs from idle; STATUS ignored)",
+                        "(arming after %d stable idle polls)",
                         self._idle_mask,
+                        self._post_baseline_arm_reads,
                     )
             else:
                 self._baseline_ready, self._baseline_clear_hits = touch_baseline_ready_step(
@@ -413,6 +425,24 @@ class TouchAt42qt2120Monitor:
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
+
+            if self._use_key_mask and not self._touch_armed:
+                if masked == self._idle_mask:
+                    self._post_baseline_idle_hits += 1
+                else:
+                    self._post_baseline_idle_hits = 0
+                    self._prev_masked = masked
+                if self._post_baseline_idle_hits >= self._post_baseline_arm_reads:
+                    self._touch_armed = True
+                    self._prev_masked = self._idle_mask
+                    log.info(
+                        "AT42QT2120 touch reactions armed (idle=0x%03X)",
+                        self._idle_mask,
+                    )
+                else:
+                    self._hits = 0
+                    time.sleep(self._poll_sec)
+                    continue
 
             if (
                 self._use_key_mask
@@ -465,24 +495,27 @@ class TouchAt42qt2120Monitor:
                 time.sleep(self._poll_sec)
                 continue
 
+            fire = False
             if self._use_key_mask:
                 press_edge = touch_press_edge(
                     self._prev_masked, masked, self._idle_mask
                 )
-                # Inverted wiring (idle mask != 0): one 0x001->0x000 edge is the
-                # whole gesture — do not wait for debounce_reads (often 5 via
-                # stale /etc/nina-link/navigation.env).
-                if touch_inverted_idle(self._idle_mask) and press_edge:
-                    fire = True
+                # Inverted: only accept a press that starts from stable idle.
+                if (
+                    touch_inverted_idle(self._idle_mask)
+                    and press_edge
+                    and self._prev_masked == self._idle_mask
+                ):
+                    signal = True
                 else:
                     signal = touched or press_edge
-                    fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
-                        signal,
-                        consecutive_hits=self._hits,
-                        last_signal_mono=self._last_signal_mono,
-                        now=now,
-                        debounce_reads=self._debounce_reads,
-                    )
+                fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
+                    signal,
+                    consecutive_hits=self._hits,
+                    last_signal_mono=self._last_signal_mono,
+                    now=now,
+                    debounce_reads=self._debounce_reads,
+                )
             else:
                 if not touched:
                     self._hits = 0

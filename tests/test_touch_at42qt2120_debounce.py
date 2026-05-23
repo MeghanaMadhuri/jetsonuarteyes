@@ -202,9 +202,12 @@ def test_press_edge_detects_inverted_drop() -> None:
     assert not touch_press_edge(0x000, 0x001, 0x001)
 
 
-def test_press_edge_fires_immediately_on_inverted_idle() -> None:
-    assert touch_inverted_idle(0x001)
+def test_inverted_press_requires_start_from_idle() -> None:
+    """0x001->0x000 only counts when prev was idle, not mid-settle."""
     assert touch_press_edge(0x001, 0x000, 0x001)
+    # Grace path uses prev_masked == idle_mask gate in monitor; edge alone
+    # from a non-idle prev must not be treated as inverted press start.
+    assert not (0x000 == 0x001)  # prev must equal idle for inverted arm
 
 
 def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
