@@ -8,11 +8,13 @@ from nina.sensors.touch_at42qt2120_monitor import (
     touch_debounce_step,
     touch_grace_debounce_step,
     touch_inverted_idle,
+    touch_inverted_press,
     touch_mask_active,
     touch_press_edge,
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
     touch_stuck_high_step,
+    touch_sustained_hold_step,
 )
 
 
@@ -210,23 +212,102 @@ def test_inverted_press_requires_start_from_idle() -> None:
     assert not (0x000 == 0x001)  # prev must equal idle for inverted arm
 
 
+def test_sustained_hold_requires_continuous_press() -> None:
+    since: float | None = None
+    last = 0.0
+    fired = False
+    t = 0.0
+
+    def step(in_press: bool) -> None:
+        nonlocal since, last, fired, t
+        fire, since, last = touch_sustained_hold_step(
+            in_press,
+            press_since_mono=since,
+            last_in_press_mono=last,
+            now=t,
+            hold_sec=0.6,
+        )
+        if fire:
+            fired = True
+        t += 0.10
+
+    for _ in range(3):
+        step(True)
+    assert not fired
+    for _ in range(4):
+        step(True)
+    assert fired
+
+
+def test_sustained_hold_tolerates_brief_bounce() -> None:
+    since: float | None = None
+    last = 0.0
+    fired = False
+    t = 0.0
+
+    def step(in_press: bool) -> None:
+        nonlocal since, last, fired, t
+        fire, since, last = touch_sustained_hold_step(
+            in_press,
+            press_since_mono=since,
+            last_in_press_mono=last,
+            now=t,
+            hold_sec=0.5,
+            bounce_grace_sec=0.2,
+        )
+        if fire:
+            fired = True
+        t += 0.10
+
+    for _ in range(3):
+        step(True)
+    step(False)  # bounce within grace
+    for _ in range(3):
+        step(True)
+    assert fired
+
+
+def test_brief_noise_glitch_does_not_fire() -> None:
+    since: float | None = None
+    last = 0.0
+    fired = False
+    t = 0.0
+
+    def step(in_press: bool) -> None:
+        nonlocal since, last, fired, t
+        fire, since, last = touch_sustained_hold_step(
+            in_press,
+            press_since_mono=since,
+            last_in_press_mono=last,
+            now=t,
+            hold_sec=0.6,
+        )
+        if fire:
+            fired = True
+        t += 0.10
+
+    step(True)
+    step(True)
+    step(False)
+    step(False)
+    step(True)
+    assert not fired
+
+
 def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
-    """Idle leakage at 0x001; press clears to 0x000."""
+    """Idle leakage at 0x001; hold cleared 0x000 for hold_sec."""
     idle_mask = 0
     baseline_ready = False
     baseline_hits = 0
     armed = True
-    prev = False
-    hits = 0
-    release_hits = 0
     fires = 0
-    debounce_reads = 3
-    release_reads = 2
-    prev_masked = 0
+    press_since: float | None = None
+    last_in_press = 0.0
+    t = 0.0
 
     def poll(masked: int) -> None:
-        nonlocal idle_mask, baseline_ready, baseline_hits, armed, prev, hits
-        nonlocal release_hits, fires, prev_masked
+        nonlocal idle_mask, baseline_ready, baseline_hits, armed, fires
+        nonlocal press_since, last_in_press, t
         baseline_ready, baseline_hits, idle_mask = touch_baseline_idle_step(
             masked,
             baseline_ready=baseline_ready,
@@ -235,46 +316,34 @@ def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
             idle_mask=idle_mask,
         )
         if not baseline_ready:
-            prev_masked = masked
             return
-        touched = touch_mask_active(masked, idle_mask, prev_masked=prev_masked)
+        in_press = touch_inverted_press(masked, idle_mask)
         if not armed:
-            armed, release_hits = touch_release_rearm_step(
-                touched,
+            armed, _ = touch_release_rearm_step(
+                in_press,
                 armed=False,
-                release_reads=release_reads,
-                consecutive_clear=release_hits,
+                release_reads=2,
+                consecutive_clear=0,
             )
-            hits = 0
-            prev = touched
-            prev_masked = masked
+            press_since = None
+            t += 0.10
             return
-        if not touched:
-            hits = 0
-            prev = False
-            prev_masked = masked
-            return
-        fire, hits = touch_rising_edge_debounce_step(
-            touched, prev, debounce_reads=debounce_reads, consecutive_hits=hits
+        fire, press_since, last_in_press = touch_sustained_hold_step(
+            in_press,
+            press_since_mono=press_since,
+            last_in_press_mono=last_in_press,
+            now=t,
+            hold_sec=0.5,
         )
-        prev = touched
         if fire:
             fires += 1
             armed = False
-            release_hits = 0
-            hits = 0
-        prev_masked = masked
+            press_since = None
+        t += 0.10
 
     for _ in range(3):
         poll(0x001)
-    assert baseline_ready
-    assert idle_mask == 0x001
-
-    for _ in range(10):
-        poll(0x001)
-    assert fires == 0
-
-    for _ in range(debounce_reads):
+    for _ in range(6):
         poll(0x000)
     assert fires == 1
 

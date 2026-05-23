@@ -314,6 +314,7 @@ class TouchAt42qt2120Settings:
     release_reads: int
     baseline_clear_reads: int
     post_baseline_arm_reads: int
+    hold_sec: float
     stuck_high_sec: float
     stuck_clear_reads: int
     startup_probe_attempts: int
@@ -938,6 +939,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         post_baseline_arm_reads=max(
             1, min(50, _env_int("NINA_TOUCH_ARM_IDLE_READS", 15))
         ),
+        hold_sec=max(0.2, _env_float("NINA_TOUCH_HOLD_SEC", 0.6)),
         stuck_high_sec=max(0.5, _env_float("NINA_TOUCH_STUCK_SEC", 2.0)),
         stuck_clear_reads=max(
             1, min(50, _env_int("NINA_TOUCH_STUCK_CLEAR_READS", 15))
