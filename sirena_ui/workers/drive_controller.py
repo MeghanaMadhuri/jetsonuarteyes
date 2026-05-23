@@ -526,6 +526,19 @@ class DriveController(QObject):
         """
         return self._nav if self._nav is not None else self._injected_nav
 
+    def _straight_pulse_skip_reason(self, direction: str) -> Optional[str]:
+        """Human-readable reason straight FWD/BACK did not start the drift-correct loop."""
+        if direction not in (_DIR_FORWARD, _DIR_BACK):
+            return "not forward/back"
+        if not self.supports_forward_pulse():
+            return "nav lacks start_pulse_straight_*"
+        if getattr(self._nav, "is_forward_pulse_active", lambda: False)():
+            return "straight pulse thread already active"
+        with self._lock:
+            if not self._hover_straight_pulse_next:
+                return "hover_straight_pulse_next=false (prior pivot/continuous leg)"
+        return None
+
     def _should_start_straight_pulse(self, direction: str) -> bool:
         """Whether the next FWD/BACK command should run the hoverboard pulse series.
 
@@ -1115,11 +1128,18 @@ class DriveController(QObject):
                     self._active_drive = None
                     self._hover_straight_pulse_next = False
                 log.info(
-                    "drive: hover %s pulse speed=%s%%",
+                    "drive: hover %s pulse speed=%s%% (drift-correct loop)",
                     "forward" if direction == _DIR_FORWARD else "backward",
                     speed_pct,
                 )
             elif start_from_stop and direction in (_DIR_FORWARD, _DIR_BACK):
+                skip = self._straight_pulse_skip_reason(direction)
+                log.warning(
+                    "drive from stop (straight fallback): kick/cruise instead of "
+                    "drift-correct loop — reason=%s direction=%s",
+                    skip or "unknown",
+                    direction,
+                )
                 kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
                 cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
                 self._nav.drive_continuous(ldir, rdir, kick)

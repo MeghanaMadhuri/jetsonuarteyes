@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -12,6 +13,19 @@ from nina.controllers.dynamixel_manager import DynamixelManager
 # Both forms are read/written transparently so existing manifests keep
 # working.
 ManifestEntry = Union[str, Dict[str, Any]]
+
+
+def action_playback_speed() -> float:
+    """Tempo multiplier for smooth action playback (UI + ESP32 + tablet).
+
+    ``1.0`` = recorded frame timing; ``0.5`` = half speed (default — matches
+    the Actions screen ``PlaybackWorker``). Override with
+    ``NINA_ACTION_PLAYBACK_SPEED``.
+    """
+    try:
+        return max(0.05, float(os.environ.get("NINA_ACTION_PLAYBACK_SPEED", "0.5")))
+    except ValueError:
+        return 0.5
 
 
 class ActionRunner:
@@ -58,7 +72,7 @@ class ActionRunner:
         smooth: bool = True,
         sub_hz: float = 50.0,
         max_speed: int = 1023,
-        speed: float = 1.0,
+        speed: Optional[float] = None,
         stop_event: Optional[threading.Event] = None,
         release_neutral_name: Optional[str] = None,
         release_ramp_sec: float = 1.5,
@@ -82,7 +96,7 @@ class ActionRunner:
                 action_path,
                 sub_hz=sub_hz,
                 max_speed=max_speed,
-                speed=speed,
+                speed=action_playback_speed() if speed is None else speed,
                 stop_event=stop_event,
                 release_neutral_path=release_path,
                 release_ramp_sec=release_ramp_sec,

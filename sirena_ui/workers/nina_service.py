@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from PyQt5.QtCore import Qt
 
 from nina.config.settings import NinaSettings, load_settings
-from nina.controllers.action_runner import ActionRunner
+from nina.controllers.action_runner import ActionRunner, action_playback_speed
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
@@ -433,12 +433,18 @@ class NinaService:
                             audio_timer.daemon = True
                             audio_timer.start()
                             self._esp32_reaction_audio_timer = audio_timer
+                    play_speed = action_playback_speed()
+                    log.info(
+                        "ESP32 trigger: playing '%s' smooth speed=%.2f",
+                        action_name,
+                        play_speed,
+                    )
                     completed = self.action_runner.run_named_action(
                         action_name,
                         smooth=True,
                         sub_hz=50.0,
                         max_speed=1023,
-                        speed=1.0,
+                        speed=play_speed,
                         stop_event=self._esp32_reaction_stop,
                         release_neutral_name=self.settings.neutral_action_name,
                         release_ramp_sec=float(trig.release_ramp_sec),

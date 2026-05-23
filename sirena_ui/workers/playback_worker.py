@@ -8,6 +8,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from nina.controllers.action_runner import action_playback_speed
 from nina.sensors.ads1115 import is_battery_motion_blocked
 from nina.services.audio_player import AudioPlayer
 from nina.services.sensor_alert_audio import maybe_speak_low_battery
@@ -26,7 +27,7 @@ class PlaybackWorker(QThread):
         smooth: bool = True,
         sub_hz: float = 50.0,
         max_speed: int = 1023,
-        speed: float = 0.5,
+        speed: Optional[float] = None,
         audio_path: Optional[Path] = None,
         audio_offset_sec: float = 0.0,
         *,
@@ -39,7 +40,7 @@ class PlaybackWorker(QThread):
         self._smooth = smooth
         self._sub_hz = sub_hz
         self._max_speed = max_speed
-        self._speed = speed
+        self._speed = action_playback_speed() if speed is None else speed
         self._audio_path = audio_path
         self._audio_offset_sec = max(0.0, float(audio_offset_sec))
         self._audio_player = AudioPlayer()
