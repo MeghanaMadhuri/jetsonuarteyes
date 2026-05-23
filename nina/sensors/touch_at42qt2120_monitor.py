@@ -334,7 +334,7 @@ class TouchAt42qt2120Monitor:
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X poll=%.2fs "
             "debounce=%d release=%d baseline_clear=%d arm_idle=%d hold=%.2fs "
-            "cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
+            "stuck=%.1fs cooldown=%.1fs blind=%.2fs quiet=max(cooldown,blind) "
             "use_key_mask=%s channel_mask=0x%03X)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
@@ -536,6 +536,7 @@ class TouchAt42qt2120Monitor:
             fire = False
             if self._use_key_mask and touch_inverted_idle(self._idle_mask):
                 in_press = touch_inverted_press(masked, self._idle_mask)
+                was_holding = self._press_since_mono is not None
                 fire, self._press_since_mono, self._last_in_press_mono = (
                     touch_sustained_hold_step(
                         in_press,
@@ -545,6 +546,11 @@ class TouchAt42qt2120Monitor:
                         hold_sec=self._hold_sec,
                     )
                 )
+                if in_press and not was_holding and self._press_since_mono is not None:
+                    log.info(
+                        "AT42QT2120 press hold started (need %.1fs at mask=0x000)",
+                        self._hold_sec,
+                    )
             elif self._use_key_mask:
                 signal = touched
                 fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
