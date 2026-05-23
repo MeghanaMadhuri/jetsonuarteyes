@@ -118,6 +118,7 @@ Environment=NINA_BATTERY_LATCH_PERSIST=1
 # Environment=NINA_DRIVE_CAMERA_COL_MAX_W=288
 
 # Capacitive touch AT42QT2120 @ 0x1c (same bus 7, pins 3/5).
+# Placed after EnvironmentFile so these override /etc/nina-link/navigation.env.
 Environment=NINA_TOUCH_AT42QT2120_ENABLE=1
 Environment=NINA_TOUCH_I2C_BUS=7
 Environment=NINA_TOUCH_USE_KEY_MASK=1

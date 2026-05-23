@@ -48,6 +48,11 @@ def touch_grace_debounce_step(
     return False, 0, last_signal_mono
 
 
+def touch_inverted_idle(idle_mask: int) -> bool:
+    """True when idle leakage sets mask bits (channel-0 inverted wiring)."""
+    return (int(idle_mask) & 0xFFF) != 0
+
+
 def touch_mask_active(
     masked: int,
     idle_mask: int,
@@ -464,14 +469,20 @@ class TouchAt42qt2120Monitor:
                 press_edge = touch_press_edge(
                     self._prev_masked, masked, self._idle_mask
                 )
-                signal = touched or press_edge
-                fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
-                    signal,
-                    consecutive_hits=self._hits,
-                    last_signal_mono=self._last_signal_mono,
-                    now=now,
-                    debounce_reads=self._debounce_reads,
-                )
+                # Inverted wiring (idle mask != 0): one 0x001->0x000 edge is the
+                # whole gesture — do not wait for debounce_reads (often 5 via
+                # stale /etc/nina-link/navigation.env).
+                if touch_inverted_idle(self._idle_mask) and press_edge:
+                    fire = True
+                else:
+                    signal = touched or press_edge
+                    fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
+                        signal,
+                        consecutive_hits=self._hits,
+                        last_signal_mono=self._last_signal_mono,
+                        now=now,
+                        debounce_reads=self._debounce_reads,
+                    )
             else:
                 if not touched:
                     self._hits = 0

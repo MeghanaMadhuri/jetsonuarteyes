@@ -7,6 +7,7 @@ from nina.sensors.touch_at42qt2120_monitor import (
     touch_baseline_ready_step,
     touch_debounce_step,
     touch_grace_debounce_step,
+    touch_inverted_idle,
     touch_mask_active,
     touch_press_edge,
     touch_release_rearm_step,
@@ -199,6 +200,11 @@ def test_grace_debounce_tolerates_inverted_bounce() -> None:
 def test_press_edge_detects_inverted_drop() -> None:
     assert touch_press_edge(0x001, 0x000, 0x001)
     assert not touch_press_edge(0x000, 0x001, 0x001)
+
+
+def test_press_edge_fires_immediately_on_inverted_idle() -> None:
+    assert touch_inverted_idle(0x001)
+    assert touch_press_edge(0x001, 0x000, 0x001)
 
 
 def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
