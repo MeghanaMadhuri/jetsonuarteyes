@@ -21,16 +21,18 @@ def touch_mask_active(
     *,
     prev_masked: int = 0,
 ) -> bool:
-    """True when *masked* shows touch above the learned idle fingerprint.
+    """True when *masked* differs from the learned idle fingerprint.
 
-    Accepts:
-    - New bit positions above idle (``masked & ~idle``)
-    - Numeric mask increase above idle
-    - Recovery above idle after a brief dip (common AT42QT2120 press shape)
+    Nina's AT42QT2120 wiring reads **inverted** on channel 0: idle leakage holds
+    ``mask=0x001`` and a physical press **clears** it to ``0x000``. Also accept
+    the normal (non-inverted) case where new bits appear above idle.
     """
     masked &= 0xFFF
     idle_mask &= 0xFFF
     prev = int(prev_masked) & 0xFFF
+
+    if idle_mask != 0 and masked < idle_mask:
+        return True
     if (masked & ~idle_mask) != 0:
         return True
     if masked > idle_mask:
@@ -355,7 +357,7 @@ class TouchAt42qt2120Monitor:
                 if was_ready != self._baseline_ready and self._baseline_ready:
                     log.info(
                         "AT42QT2120 idle baseline learned mask=0x%03X "
-                        "(fires when new mask bits appear above idle; STATUS ignored)",
+                        "(fires when mask differs from idle; STATUS ignored)",
                         self._idle_mask,
                     )
             else:

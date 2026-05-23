@@ -167,8 +167,8 @@ def test_baseline_idle_learns_stable_mask() -> None:
     assert hits == 0
 
 
-def test_constant_idle_mask_fires_on_change() -> None:
-    """Idle leakage at 0x001 must not block baseline or prevent touch on 0x003."""
+def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:
+    """Idle leakage at 0x001; press clears to 0x000."""
     idle_mask = 0
     baseline_ready = False
     baseline_hits = 0
@@ -232,20 +232,20 @@ def test_constant_idle_mask_fires_on_change() -> None:
     assert fires == 0
 
     for _ in range(debounce_reads):
-        poll(0x003)
+        poll(0x000)
     assert fires == 1
 
 
-def test_mask_drop_to_zero_does_not_fire_with_idle_leakage() -> None:
-    """Glitch 0x001→0x000 must not trigger (only new bits above idle count)."""
-    assert not touch_mask_active(0x000, 0x001, prev_masked=0x001)
+def test_mask_drop_below_idle_counts_as_touch() -> None:
+    """This bot's electrode clears mask bit 0 on press (idle 0x001 -> touch 0x000)."""
+    assert touch_mask_active(0x000, 0x001, prev_masked=0x001)
+    assert not touch_mask_active(0x001, 0x001, prev_masked=0x001)
     assert touch_mask_active(0x003, 0x001)
-    assert not touch_mask_active(0x001, 0x001, prev_masked=0x000)
 
 
 def test_dip_then_rise_above_idle_counts_as_touch() -> None:
-    """Press shape 0x001 -> 0x000 -> 0x003 must still fire on the rise leg."""
-    assert not touch_mask_active(0x000, 0x001, prev_masked=0x001)
+    """Inverted press (0x001->0x000) and rise-above-idle (0x000->0x003) both count."""
+    assert touch_mask_active(0x000, 0x001, prev_masked=0x001)
     assert touch_mask_active(0x003, 0x001, prev_masked=0x000)
 
 
