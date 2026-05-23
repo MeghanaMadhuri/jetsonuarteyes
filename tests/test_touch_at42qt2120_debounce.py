@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from nina.sensors.touch_at42qt2120_monitor import (
+    touch_baseline_idle_step,
     touch_baseline_ready_step,
     touch_debounce_step,
     touch_release_rearm_step,
@@ -139,6 +140,94 @@ def test_baseline_requires_clear_before_ready() -> None:
     )
     assert ready
     assert hits == 0
+
+
+def test_baseline_idle_learns_stable_mask() -> None:
+    ready, hits, idle = touch_baseline_idle_step(
+        0x001,
+        baseline_ready=False,
+        baseline_clear_reads=3,
+        consecutive_clear=0,
+        idle_mask=0,
+    )
+    assert not ready
+    assert idle == 0x001
+    assert hits == 1
+
+    ready, hits, idle = touch_baseline_idle_step(
+        0x001,
+        baseline_ready=False,
+        baseline_clear_reads=3,
+        consecutive_clear=2,
+        idle_mask=0x001,
+    )
+    assert ready
+    assert idle == 0x001
+    assert hits == 0
+
+
+def test_constant_idle_mask_fires_on_change() -> None:
+    """Idle leakage at 0x001 must not block baseline or prevent touch on 0x003."""
+    idle_mask = 0
+    baseline_ready = False
+    baseline_hits = 0
+    armed = True
+    prev = False
+    hits = 0
+    release_hits = 0
+    fires = 0
+    debounce_reads = 3
+    release_reads = 2
+
+    def poll(masked: int) -> None:
+        nonlocal idle_mask, baseline_ready, baseline_hits, armed, prev, hits
+        nonlocal release_hits, fires
+        baseline_ready, baseline_hits, idle_mask = touch_baseline_idle_step(
+            masked,
+            baseline_ready=baseline_ready,
+            baseline_clear_reads=3,
+            consecutive_clear=baseline_hits,
+            idle_mask=idle_mask,
+        )
+        if not baseline_ready:
+            return
+        touched = masked != idle_mask
+        if not armed:
+            armed, release_hits = touch_release_rearm_step(
+                touched,
+                armed=False,
+                release_reads=release_reads,
+                consecutive_clear=release_hits,
+            )
+            hits = 0
+            prev = touched
+            return
+        if not touched:
+            hits = 0
+            prev = False
+            return
+        fire, hits = touch_rising_edge_debounce_step(
+            touched, prev, debounce_reads=debounce_reads, consecutive_hits=hits
+        )
+        prev = touched
+        if fire:
+            fires += 1
+            armed = False
+            release_hits = 0
+            hits = 0
+
+    for _ in range(3):
+        poll(0x001)
+    assert baseline_ready
+    assert idle_mask == 0x001
+
+    for _ in range(10):
+        poll(0x001)
+    assert fires == 0
+
+    for _ in range(debounce_reads):
+        poll(0x003)
+    assert fires == 1
 
 
 def test_stuck_status_high_still_allows_mask_touch() -> None:

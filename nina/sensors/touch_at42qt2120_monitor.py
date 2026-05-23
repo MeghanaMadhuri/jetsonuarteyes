@@ -95,6 +95,28 @@ def touch_stuck_high_step(
     return True, False, touch_high_since_mono, 0, False
 
 
+def touch_baseline_idle_step(
+    masked: int,
+    *,
+    baseline_ready: bool,
+    baseline_clear_reads: int,
+    consecutive_clear: int,
+    idle_mask: int,
+) -> Tuple[bool, int, int]:
+    """Learn a stable idle key-mask and require it for *baseline_clear_reads* polls."""
+    if baseline_ready:
+        return True, consecutive_clear, idle_mask
+    candidate = int(masked) & 0xFFF
+    if idle_mask == 0:
+        return False, 1, candidate
+    if candidate != idle_mask:
+        return False, 1, candidate
+    n = consecutive_clear + 1
+    if n >= baseline_clear_reads:
+        return True, 0, idle_mask
+    return False, n, idle_mask
+
+
 def touch_baseline_ready_step(
     effective_touched: bool,
     *,
@@ -154,6 +176,8 @@ class TouchAt42qt2120Monitor:
         self._stuck_latched = False
         self._stuck_clear_hits = 0
         self._touch_high_since_mono: Optional[float] = None
+        self._idle_mask: int = 0
+        self._prev_masked: int = 0
         self._prev_touched = False
         self._hits = 0
         self._release_hits = 0
@@ -182,6 +206,8 @@ class TouchAt42qt2120Monitor:
         self._stuck_latched = False
         self._stuck_clear_hits = 0
         self._touch_high_since_mono = None
+        self._idle_mask = 0
+        self._prev_masked = 0
         self._prev_touched = False
         self._hits = 0
         self._release_hits = 0
@@ -238,12 +264,12 @@ class TouchAt42qt2120Monitor:
                     time.sleep(self._poll_sec)
                     continue
                 mask = self._touch.read_key_mask()
-                mask_touch = (mask & self._channel_mask) != 0
+                masked = mask & self._channel_mask
                 status_stuck = self._touch.status_stuck_idle()
-                touched_raw = self._touch.touch_active(
-                    use_key_mask=self._use_key_mask,
-                    channel_mask=self._channel_mask,
-                )
+                if self._use_key_mask:
+                    touched_raw = masked != 0
+                else:
+                    touched_raw = self._touch.keys_pressed()
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
                 self._hits = 0
@@ -265,30 +291,54 @@ class TouchAt42qt2120Monitor:
                 )
             )
             if self._stuck_latched:
-                # Phantom STATUS-high with mask=0 — still honour real mask touches.
-                touched = mask_touch if self._use_key_mask else False
+                touched = (
+                    self._baseline_ready and masked != self._idle_mask
+                    if self._use_key_mask
+                    else False
+                )
+            elif self._use_key_mask:
+                # Ignore latched STATUS; fire only when the mask changes from idle.
+                touched = self._baseline_ready and masked != self._idle_mask
             else:
                 touched = touched_raw
+
             if newly_stuck:
                 snap = self._touch.touch_snapshot()
                 log.warning(
-                    "AT42QT2120 line stuck HIGH for %.1fs (STATUS=0x%02X mask=0x%03X) — "
-                    "touch reactions suppressed until the pad idles clear. "
+                    "AT42QT2120 STATUS stuck HIGH with mask=0 (STATUS=0x%02X) — "
+                    "touch reactions suppressed until STATUS clears. "
                     "Insulate the electrode back from metal/chassis.",
-                    self._stuck_after_sec,
                     int(snap["status"]),
-                    int(snap["mask"]),
                 )
 
-            self._baseline_ready, self._baseline_clear_hits = touch_baseline_ready_step(
-                touched,
-                baseline_ready=self._baseline_ready,
-                baseline_clear_reads=self._baseline_clear_reads,
-                consecutive_clear=self._baseline_clear_hits,
-            )
+            if self._use_key_mask:
+                was_ready = self._baseline_ready
+                self._baseline_ready, self._baseline_clear_hits, self._idle_mask = (
+                    touch_baseline_idle_step(
+                        masked,
+                        baseline_ready=self._baseline_ready,
+                        baseline_clear_reads=self._baseline_clear_reads,
+                        consecutive_clear=self._baseline_clear_hits,
+                        idle_mask=self._idle_mask,
+                    )
+                )
+                if was_ready != self._baseline_ready and self._baseline_ready:
+                    log.info(
+                        "AT42QT2120 idle baseline learned mask=0x%03X "
+                        "(fires on mask change; STATUS ignored)",
+                        self._idle_mask,
+                    )
+            else:
+                self._baseline_ready, self._baseline_clear_hits = touch_baseline_ready_step(
+                    touched,
+                    baseline_ready=self._baseline_ready,
+                    baseline_clear_reads=self._baseline_clear_reads,
+                    consecutive_clear=self._baseline_clear_hits,
+                )
             if not self._baseline_ready:
                 self._hits = 0
-                self._prev_touched = touched
+                self._prev_touched = False
+                self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
@@ -341,8 +391,12 @@ class TouchAt42qt2120Monitor:
                 if quiet_sec > 0:
                     self._quiet_until_mono = self._last_fire_mono + quiet_sec
                 log.info(
-                    "AT42QT2120 touch reaction complete — quiet for %.1fs",
+                    "AT42QT2120 touch reaction complete mask=0x%03X idle=0x%03X — "
+                    "quiet for %.1fs",
+                    masked,
+                    self._idle_mask,
                     quiet_sec,
                 )
 
+            self._prev_masked = masked
             time.sleep(self._poll_sec)
