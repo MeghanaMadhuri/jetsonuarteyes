@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -208,7 +209,12 @@ class DynamixelManager:
         max_speed: int = 1023,
         warmup_sec: float = 0.5,
         speed: float = 1.0,
-    ) -> None:
+        *,
+        stop_event: Optional[threading.Event] = None,
+        release_neutral_path: Optional[Path] = None,
+        release_ramp_sec: float = 1.5,
+        release_max_speed: Optional[int] = None,
+    ) -> bool:
         """
         Smoothly play back a recorded action.
 
@@ -225,12 +231,19 @@ class DynamixelManager:
           2.0 -> double speed (half as long)
         Interpolation density (sub_hz) is unchanged, so smoothness is preserved
         at any tempo.
+
+        When ``stop_event`` is set during playback and ``release_neutral_path``
+        is provided, motion eases from the live present positions into the
+        neutral pose over ``release_ramp_sec`` instead of stopping abruptly.
+
+        Returns ``True`` when the action completes normally, ``False`` when
+        playback was interrupted (including after a release ramp).
         """
         self._require_initialized()
         action = json.loads(action_path.read_text(encoding="utf-8"))
         frames = action.get("frames", [])
         if not frames:
-            return
+            return True
 
         sub_hz = max(1.0, float(sub_hz))
         sub_dt = 1.0 / sub_hz
@@ -247,20 +260,80 @@ class DynamixelManager:
         first_goals = self._frame_goals(frames[0])
         warmup = max(float(warmup_sec), float(frames[0].get("duration", 0.0)) / speed)
         if warmup > 0 and first_goals:
-            self._interpolate_segment(present, first_goals, warmup, sub_dt)
+            if self._interpolate_segment(
+                present, first_goals, warmup, sub_dt, stop_event=stop_event
+            ):
+                return self._ramp_to_neutral_on_release(
+                    release_neutral_path,
+                    release_ramp_sec,
+                    sub_dt,
+                    release_max_speed or max_speed,
+                )
         elif first_goals:
             self.sync_write_goal_position(first_goals)
 
         for i in range(len(frames) - 1):
+            if stop_event is not None and stop_event.is_set():
+                return self._ramp_to_neutral_on_release(
+                    release_neutral_path,
+                    release_ramp_sec,
+                    sub_dt,
+                    release_max_speed or max_speed,
+                )
             a = frames[i]
             b = frames[i + 1]
             delay = float(b.get("delay", 0.0)) / speed
-            if delay > 0:
-                time.sleep(delay)
+            if delay > 0 and self._wait_interruptible(delay, stop_event):
+                return self._ramp_to_neutral_on_release(
+                    release_neutral_path,
+                    release_ramp_sec,
+                    sub_dt,
+                    release_max_speed or max_speed,
+                )
             duration = max(0.001, float(b.get("duration", 0.05)) / speed)
             a_goals = self._frame_goals(a) or first_goals
             b_goals = self._frame_goals(b)
-            self._interpolate_segment(a_goals, b_goals, duration, sub_dt)
+            if self._interpolate_segment(
+                a_goals, b_goals, duration, sub_dt, stop_event=stop_event
+            ):
+                return self._ramp_to_neutral_on_release(
+                    release_neutral_path,
+                    release_ramp_sec,
+                    sub_dt,
+                    release_max_speed or max_speed,
+                )
+        return True
+
+    def goals_from_action_file(self, action_path: Path) -> Dict[int, int]:
+        """Absolute goal positions from the last keyframe of an action file."""
+        action = json.loads(action_path.read_text(encoding="utf-8"))
+        frames = action.get("frames", [])
+        if not frames:
+            return {}
+        for frame in reversed(frames):
+            goals = self._frame_goals(frame)
+            if goals:
+                return goals
+        return {}
+
+    def ramp_present_to_goals(
+        self,
+        target_goals: Dict[int, int],
+        duration_sec: float,
+        *,
+        sub_hz: float = 50.0,
+        max_speed: int = 1023,
+    ) -> None:
+        """Ease from live present positions into ``target_goals``."""
+        self._require_initialized()
+        if not target_goals or duration_sec <= 0:
+            if target_goals:
+                self.sync_write_goal_position(target_goals)
+            return
+        present = self._read_present_goals()
+        sub_dt = 1.0 / max(1.0, float(sub_hz))
+        self.set_moving_speed_for_ids(ACTION_MOTOR_IDS, max_speed)
+        self._interpolate_segment(present, target_goals, duration_sec, sub_dt)
 
     def sync_write(self, addr: int, size: int, payload: Dict[int, List[int]]) -> None:
         """Broadcast SyncWrite to many servos at once. No status return."""
@@ -368,24 +441,74 @@ class DynamixelManager:
         self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC)
         return True
 
+    def _read_present_goals(self) -> Dict[int, int]:
+        present: Dict[int, int] = {}
+        for sid in ACTION_MOTOR_IDS:
+            v = self.read_reg(sid, *REG_PRESENT_POS)
+            if v is not None:
+                present[sid] = self._clamp_pos(v)
+        return present
+
+    def _wait_interruptible(
+        self,
+        duration: float,
+        stop_event: Optional[threading.Event],
+        poll_sec: float = 0.02,
+    ) -> bool:
+        """Wait up to ``duration``. Returns ``True`` when ``stop_event`` is set."""
+        if duration <= 0:
+            return stop_event is not None and stop_event.is_set()
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(poll_sec, remaining))
+        return stop_event is not None and stop_event.is_set()
+
+    def _ramp_to_neutral_on_release(
+        self,
+        release_neutral_path: Optional[Path],
+        release_ramp_sec: float,
+        sub_dt: float,
+        max_speed: int,
+    ) -> bool:
+        if release_neutral_path is None or not release_neutral_path.exists():
+            return False
+        neutral_goals = self.goals_from_action_file(release_neutral_path)
+        if not neutral_goals:
+            return False
+        present = self._read_present_goals()
+        ramp = max(0.05, float(release_ramp_sec))
+        self.set_moving_speed_for_ids(ACTION_MOTOR_IDS, max_speed)
+        self._interpolate_segment(present, neutral_goals, ramp, sub_dt)
+        return False
+
     def _interpolate_segment(
         self,
         a_goals: Dict[int, int],
         b_goals: Dict[int, int],
         duration: float,
         sub_dt: float,
-    ) -> None:
+        *,
+        stop_event: Optional[threading.Event] = None,
+    ) -> bool:
+        """Interpolate ``a_goals`` → ``b_goals``. Returns ``True`` if interrupted."""
         ids = sorted(set(a_goals.keys()) | set(b_goals.keys()))
         if not ids or duration <= 0:
             if b_goals:
                 self.sync_write_goal_position(b_goals)
             if duration > 0:
-                time.sleep(duration)
-            return
+                return self._wait_interruptible(duration, stop_event)
+            return False
 
         steps = max(1, int(round(duration / sub_dt)))
         start = time.monotonic()
         for k in range(1, steps):
+            if stop_event is not None and stop_event.is_set():
+                return True
             t = k / steps
             interp: Dict[int, int] = {}
             for sid in ids:
@@ -399,14 +522,16 @@ class DynamixelManager:
             target = start + k * sub_dt
             sleep_for = target - time.monotonic()
             if sleep_for > 0:
-                time.sleep(sleep_for)
+                if self._wait_interruptible(sleep_for, stop_event):
+                    return True
 
         if b_goals:
             self.sync_write_goal_position(b_goals)
         target = start + duration
         sleep_for = target - time.monotonic()
         if sleep_for > 0:
-            time.sleep(sleep_for)
+            return self._wait_interruptible(sleep_for, stop_event)
+        return False
 
     def _frame_goals(self, frame: Dict[str, Any]) -> Dict[int, int]:
         goals: Dict[int, int] = {}

@@ -1,6 +1,7 @@
 """Unit tests for ESP32 GPIO trigger debounce helpers."""
 
 from nina.sensors.esp32_trigger_monitor import (
+    esp32_falling_edge_step,
     esp32_release_rearm_step,
     esp32_rising_edge_step,
 )
@@ -47,3 +48,27 @@ def test_release_rearm_after_low_samples() -> None:
         False, armed=False, release_reads=2, consecutive_low=n
     )
     assert armed2
+
+
+def test_falling_edge_requires_debounce_reads() -> None:
+    stop, n = esp32_falling_edge_step(
+        False, True, debounce_reads=3, consecutive_low=0
+    )
+    assert not stop
+    assert n == 1
+    stop2, n2 = esp32_falling_edge_step(
+        False, False, debounce_reads=3, consecutive_low=n
+    )
+    assert not stop2
+    assert n2 == 2
+    stop3, _ = esp32_falling_edge_step(
+        False, False, debounce_reads=3, consecutive_low=n2
+    )
+    assert stop3
+
+
+def test_high_resets_falling_edge_counter() -> None:
+    _, n = esp32_falling_edge_step(False, True, debounce_reads=3, consecutive_low=1)
+    stop, n2 = esp32_falling_edge_step(True, False, debounce_reads=3, consecutive_low=n)
+    assert not stop
+    assert n2 == 0

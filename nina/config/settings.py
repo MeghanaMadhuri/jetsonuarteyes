@@ -203,18 +203,18 @@ class HoverboardAxisSettings:
     file — overrides must be wired in code or as ``NINA_HOVER_*`` env
     vars in ``/etc/nina-link/navigation.env``.
 
-    **Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is set,
-    ``start_pulse_straight_forward`` runs ``pulse_series_max`` cycles: forward hold
-    ``pulse_series_fwd_sec``, coast dwell ``pulse_series_coast_initial_sec``, coast blend
-    ``pulse_forward_coast_blend`` (brake→full forward lean), ramps
-    ``max(pulse_forward_return_ramp_sec, pulse_series_min_transition_sec)``.
+    **Straight FWD/BACK (drive-then-check):** ``start_pulse_straight_forward`` /
+    ``start_pulse_straight_backward`` run ``_drift_correct_loop``: full lean for
+    ``NINA_HOVER_STRAIGHT_LEG_SEC`` (default **0.5 s**), brake, wait for standstill,
+    sample cumulative IMU drift, correct with left/right micro-step pivots when
+    ``|drift|`` exceeds ``NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG``, then repeat until
+    the operator releases. Tune via ``NINA_HOVER_STRAIGHT_*`` env vars.
 
-    ``start_pulse_straight_backward`` is a **separate** series: backward hold ``pulse_series_back_sec``
-    (default **0.9** s), coast dwell ``pulse_series_back_coast_initial_sec``, blend
-    ``pulse_backward_coast_blend`` (brake→full reverse lean), ramps
-    ``max(pulse_backward_return_ramp_sec, pulse_series_min_transition_sec)``.
-
-    Both end at full brake. ``pulse_forward_on_sec`` / ``pulse_forward_brake_sec`` / ``pulse_waveform`` are unused by the series.
+    ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` gates **saved Movements**
+    straight segments only; D-pad and Straight bench always use the drift-correct loop
+    when ``HoverboardAxisDrive`` is the nav backend. Legacy ``pulse_series_*`` /
+    ``pulse_forward_coast_blend`` fields remain in this dataclass for compatibility
+    but are not used by straight motion anymore.
     """
 
     id_left: int
@@ -334,8 +334,11 @@ class Esp32TriggerSettings:
     """ESP32 digital trigger on Jetson 40-pin **physical pin 11** (BCM **17**), active-high.
 
     When the line is pulled high, Nina plays a named arm action (default
-    ``namaste``). Uses the legacy E-stop 1 header pad (input only; navigation
-    does not drive it). Enable with ``NINA_ESP32_TRIGGER_ENABLE=1``.
+    ``namaste``). While the action runs, the monitor keeps polling the same
+    line; when it goes low, playback eases to ``NINA_NEUTRAL_ACTION`` over
+    ``NINA_ESP32_TRIGGER_RELEASE_RAMP_SEC``. Uses the legacy E-stop 1 header
+    pad (input only; navigation does not drive it). Enable with
+    ``NINA_ESP32_TRIGGER_ENABLE=1``.
     """
 
     enabled: bool
@@ -346,6 +349,8 @@ class Esp32TriggerSettings:
     release_reads: int
     cooldown_sec: float
     poll_interval_sec: float
+    release_ramp_sec: float
+    release_ramp_speed_pct: float
 
 
 @dataclass(frozen=True)
@@ -923,6 +928,13 @@ def load_settings(repo_root: Path) -> NinaSettings:
         release_reads=max(1, min(20, _env_int("NINA_ESP32_TRIGGER_RELEASE_READS", 2))),
         cooldown_sec=max(0.0, _env_float("NINA_ESP32_TRIGGER_COOLDOWN_SEC", 20.0)),
         poll_interval_sec=max(0.02, _env_float("NINA_ESP32_TRIGGER_POLL_SEC", 0.05)),
+        release_ramp_sec=max(
+            0.05, _env_float("NINA_ESP32_TRIGGER_RELEASE_RAMP_SEC", 1.5)
+        ),
+        release_ramp_speed_pct=max(
+            0.05,
+            min(1.0, _env_float("NINA_ESP32_TRIGGER_RELEASE_RAMP_SPEED", 0.35)),
+        ),
     )
 
     _touch_detect_raw = (os.environ.get("NINA_TOUCH_DETECT") or "").strip().lower()

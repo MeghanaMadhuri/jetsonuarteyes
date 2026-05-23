@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -58,6 +59,10 @@ class ActionRunner:
         sub_hz: float = 50.0,
         max_speed: int = 1023,
         speed: float = 1.0,
+        stop_event: Optional[threading.Event] = None,
+        release_neutral_name: Optional[str] = None,
+        release_ramp_sec: float = 1.5,
+        release_max_speed: Optional[int] = None,
     ) -> Path:
         actions = self.list_actions()
         if action_name not in actions:
@@ -65,12 +70,23 @@ class ActionRunner:
         action_path = self.actions_dir / actions[action_name]
         if not action_path.exists():
             raise FileNotFoundError(f"Action file not found: {action_path}")
+        release_path: Optional[Path] = None
+        if release_neutral_name:
+            rel = actions.get(release_neutral_name)
+            if rel:
+                candidate = self.actions_dir / rel
+                if candidate.exists():
+                    release_path = candidate
         if smooth:
             self.dxl.play_smooth(
                 action_path,
                 sub_hz=sub_hz,
                 max_speed=max_speed,
                 speed=speed,
+                stop_event=stop_event,
+                release_neutral_path=release_path,
+                release_ramp_sec=release_ramp_sec,
+                release_max_speed=release_max_speed,
             )
         else:
             self.dxl.execute_action_file(action_path)

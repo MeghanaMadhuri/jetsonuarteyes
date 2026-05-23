@@ -1,8 +1,11 @@
 """Poll a Jetson GPIO line for an ESP32 trigger (default BCM 17 / pin 11, active-high).
 
-When the line goes high (debounced rising edge), runs a named arm action on
-``NinaService`` (default ``namaste``). Default pin is the Orin Nano header
-**physical pin 11** (BCM 17, legacy E-stop 1 pad); navigation does not drive it.
+When the line goes high (debounced rising edge), starts a named arm action on
+``NinaService`` (default ``namaste``). While the action plays, the monitor keeps
+polling; when the line goes low (debounced falling edge), the action eases to
+the configured neutral pose instead of stopping abruptly. Default pin is the Orin
+Nano header **physical pin 11** (BCM 17, legacy E-stop 1 pad); navigation does
+not drive it.
 """
 
 from __future__ import annotations
@@ -31,6 +34,22 @@ def esp32_rising_edge_step(
     if not high:
         return False, 0
     n = 1 if not prev_high else consecutive_hits + 1
+    if n >= debounce_reads:
+        return True, 0
+    return False, n
+
+
+def esp32_falling_edge_step(
+    high: bool,
+    prev_high: bool,
+    *,
+    debounce_reads: int,
+    consecutive_low: int,
+) -> tuple[bool, int]:
+    """Return ``(should_release_stop, new_consecutive_low)`` for one poll."""
+    if high:
+        return False, 0
+    n = 1 if prev_high else consecutive_low + 1
     if n >= debounce_reads:
         return True, 0
     return False, n
@@ -100,7 +119,7 @@ class Esp32GpioInput:
 
 
 class Esp32TriggerMonitor:
-    """Background poll; fires ``NinaService.run_esp32_trigger_reaction`` on HIGH."""
+    """Background poll; starts ESP32 action on HIGH, eases to neutral on LOW."""
 
     def __init__(self, service: "NinaService") -> None:
         self._svc = service
@@ -117,8 +136,9 @@ class Esp32TriggerMonitor:
         self._prev_high = False
         self._hits = 0
         self._release_hits = 0
+        self._fall_hits = 0
         self._last_fire_mono = -1e30
-        self._reaction_lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self._debug = os.environ.get("NINA_ESP32_TRIGGER_DEBUG", "").strip() in (
             "1",
             "true",
@@ -126,6 +146,7 @@ class Esp32TriggerMonitor:
         )
         self._last_high: Optional[bool] = None
         self._fire_count = 0
+        self._release_stop_count = 0
 
     def start(self) -> None:
         self._gpio.open()
@@ -133,6 +154,7 @@ class Esp32TriggerMonitor:
         self._prev_high = False
         self._hits = 0
         self._release_hits = 0
+        self._fall_hits = 0
         self._last_fire_mono = -1e30
         self._stop.clear()
         self._thread = threading.Thread(
@@ -142,7 +164,7 @@ class Esp32TriggerMonitor:
         s = self._svc.settings.esp32_trigger
         log.info(
             "ESP32 trigger monitor started (BCM %s active_high=%s action=%s "
-            "poll=%.2fs debounce=%d release=%d cooldown=%.1fs)",
+            "poll=%.2fs debounce=%d release=%d cooldown=%.1fs ramp=%.2fs)",
             s.gpio_bcm,
             s.active_high,
             self._action_name,
@@ -150,10 +172,15 @@ class Esp32TriggerMonitor:
             self._debounce_reads,
             self._release_reads,
             self._cooldown_sec,
+            s.release_ramp_sec,
         )
 
     def stop(self) -> None:
         self._stop.set()
+        try:
+            self._svc.request_esp32_trigger_release_stop()
+        except Exception:
+            log.debug("ESP32 trigger: release stop on monitor shutdown failed", exc_info=True)
         t = self._thread
         self._thread = None
         if t is not None:
@@ -176,8 +203,17 @@ class Esp32TriggerMonitor:
         running = bool(thread is not None and thread.is_alive())
         s = self._svc.settings.esp32_trigger
         high = self._last_high
+        reaction_active = False
+        try:
+            reaction_active = bool(self._svc.is_esp32_reaction_active())
+        except Exception:
+            pass
         if not running:
             detail = "monitor stopped"
+        elif reaction_active and high is False:
+            detail = f"action releasing to neutral (BCM {s.gpio_bcm} LOW)"
+        elif reaction_active:
+            detail = f"action playing (BCM {s.gpio_bcm} HIGH)"
         elif high is None:
             detail = f"ready, BCM {s.gpio_bcm} (no sample yet)"
         elif high:
@@ -189,9 +225,11 @@ class Esp32TriggerMonitor:
             "gpio_bcm": int(s.gpio_bcm),
             "line_high": high,
             "armed": bool(self._armed),
+            "reaction_active": reaction_active,
             "active_high": bool(s.active_high),
             "action_name": str(self._action_name),
             "fire_count": int(self._fire_count),
+            "release_stop_count": int(self._release_stop_count),
             "detail": detail,
         }
 
@@ -202,6 +240,7 @@ class Esp32TriggerMonitor:
             except Exception:
                 log.debug("ESP32 GPIO read failed", exc_info=True)
                 self._hits = 0
+                self._fall_hits = 0
                 self._prev_high = False
                 self._last_high = None
                 time.sleep(max(self._poll_sec, 0.1))
@@ -209,47 +248,68 @@ class Esp32TriggerMonitor:
 
             if self._debug and high != self._last_high:
                 log.info(
-                    "ESP32 GPIO BCM %s logical %s (armed=%s hits=%d)",
+                    "ESP32 GPIO BCM %s logical %s (armed=%s hits=%d fall=%d)",
                     self._svc.settings.esp32_trigger.gpio_bcm,
                     "HIGH" if high else "LOW",
                     self._armed,
                     self._hits,
+                    self._fall_hits,
                 )
             self._last_high = high
 
-            now = time.monotonic()
-            fire, self._hits = esp32_rising_edge_step(
-                high,
-                self._prev_high,
-                debounce_reads=self._debounce_reads,
-                consecutive_hits=self._hits,
-            )
-            self._prev_high = high
-
-            if fire and self._armed and (now - self._last_fire_mono) >= self._cooldown_sec:
-                if self._reaction_lock.acquire(blocking=False):
+            reaction_active = self._svc.is_esp32_reaction_active()
+            if reaction_active:
+                release, self._fall_hits = esp32_falling_edge_step(
+                    high,
+                    self._prev_high,
+                    debounce_reads=self._release_reads,
+                    consecutive_low=self._fall_hits,
+                )
+                if release:
+                    self._release_stop_count += 1
+                    log.info(
+                        "ESP32 trigger release (#%d) — GPIO LOW, easing to neutral",
+                        self._release_stop_count,
+                    )
                     try:
-                        self._last_fire_mono = now
-                        self._armed = False
-                        self._release_hits = 0
-                        self._fire_count += 1
-                        log.info(
-                            "ESP32 trigger fired (#%d) — playing action '%s'",
-                            self._fire_count,
-                            self._action_name,
-                        )
+                        self._svc.request_esp32_trigger_release_stop()
+                    except Exception:
+                        log.exception("ESP32 trigger release stop failed")
+            else:
+                self._fall_hits = 0
+                now = time.monotonic()
+                fire, self._hits = esp32_rising_edge_step(
+                    high,
+                    self._prev_high,
+                    debounce_reads=self._debounce_reads,
+                    consecutive_hits=self._hits,
+                )
+                if fire and self._armed and (now - self._last_fire_mono) >= self._cooldown_sec:
+                    if self._start_lock.acquire(blocking=False):
                         try:
-                            self._svc.run_esp32_trigger_reaction(self._action_name)
-                        except Exception:
-                            log.exception("ESP32 trigger reaction failed")
-                    finally:
-                        self._reaction_lock.release()
+                            self._last_fire_mono = now
+                            self._armed = False
+                            self._release_hits = 0
+                            self._fire_count += 1
+                            log.info(
+                                "ESP32 trigger fired (#%d) — starting action '%s'",
+                                self._fire_count,
+                                self._action_name,
+                            )
+                            try:
+                                self._svc.start_esp32_trigger_reaction(self._action_name)
+                            except Exception:
+                                log.exception("ESP32 trigger reaction failed")
+                        finally:
+                            self._start_lock.release()
 
-            self._armed, self._release_hits = esp32_release_rearm_step(
-                high,
-                armed=self._armed,
-                release_reads=self._release_reads,
-                consecutive_low=self._release_hits,
-            )
+                if not reaction_active:
+                    self._armed, self._release_hits = esp32_release_rearm_step(
+                        high,
+                        armed=self._armed,
+                        release_reads=self._release_reads,
+                        consecutive_low=self._release_hits,
+                    )
 
+            self._prev_high = high
             time.sleep(self._poll_sec)

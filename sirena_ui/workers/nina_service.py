@@ -88,6 +88,11 @@ class NinaService:
         self._touch_monitor: Optional[TouchAt42qt2120Monitor] = None
         self._esp32_trigger_monitor: Optional[Esp32TriggerMonitor] = None
         self._esp32_trigger_start_detail: Optional[str] = None
+        self._esp32_reaction_thread: Optional[threading.Thread] = None
+        self._esp32_reaction_stop = threading.Event()
+        self._esp32_reaction_audio: Optional[AudioPlayer] = None
+        self._esp32_reaction_audio_timer: Optional[threading.Timer] = None
+        self._esp32_reaction_lock = threading.Lock()
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
         self._movement_store: Optional[MovementStore] = None
 
@@ -323,67 +328,138 @@ class NinaService:
         st["enabled"] = True
         return st
 
-    def run_esp32_trigger_reaction(self, action_name: str) -> None:
-        """Stop drive and play a named gesture (with manifest audio if configured)."""
-        try:
-            if self._face_follow is not None:
-                try:
-                    self._face_follow.stop()
-                except Exception:
-                    pass
-            self.drive.stop(drain=True)
-        except Exception:
-            log.exception("ESP32 trigger: drive / face-follow stop failed")
+    def is_esp32_reaction_active(self) -> bool:
+        """True while an ESP32-triggered arm action is playing."""
+        t = self._esp32_reaction_thread
+        return t is not None and t.is_alive()
 
-        if is_battery_motion_blocked():
+    def start_esp32_trigger_reaction(self, action_name: str) -> None:
+        """Stop drive and play a named gesture (non-blocking for GPIO monitor)."""
+        with self._esp32_reaction_lock:
+            if self.is_esp32_reaction_active():
+                log.info("ESP32 trigger: action already running — ignoring re-fire")
+                return
+            self._esp32_reaction_stop.clear()
+            thr = threading.Thread(
+                target=self._run_esp32_trigger_reaction,
+                args=(action_name,),
+                name="nina_esp32_trigger_reaction",
+                daemon=True,
+            )
+            self._esp32_reaction_thread = thr
+            thr.start()
+
+    def request_esp32_trigger_release_stop(self) -> None:
+        """GPIO went LOW during an ESP32 action — ease arms back to neutral."""
+        if not self.is_esp32_reaction_active():
+            return
+        if self._esp32_reaction_stop.is_set():
+            return
+        self._esp32_reaction_stop.set()
+        log.info("ESP32 trigger release — ramping action to neutral")
+        audio = self._esp32_reaction_audio
+        if audio is not None:
             try:
-                maybe_speak_low_battery()
+                audio.stop_all()
+            except Exception:
+                log.debug("ESP32 trigger: audio stop failed", exc_info=True)
+        timer = self._esp32_reaction_audio_timer
+        if timer is not None:
+            try:
+                timer.cancel()
             except Exception:
                 pass
-            log.warning("ESP32 trigger: motion blocked (low battery)")
-            return
 
-        if not self._bus_ready:
-            log.info("ESP32 trigger: Dynamixel bus not ready — initializing")
-            try:
-                self.ensure_bus()
-            except Exception:
-                log.exception("ESP32 trigger: bus init failed")
-                return
+    def run_esp32_trigger_reaction(self, action_name: str) -> None:
+        """Blocking ESP32 reaction (tests / CLI). Prefer :meth:`start_esp32_trigger_reaction`."""
+        self.start_esp32_trigger_reaction(action_name)
+        t = self._esp32_reaction_thread
+        if t is not None:
+            t.join()
 
-        audio_path = self.action_audio_path(action_name)
-        audio_offset = self.action_audio_offset(action_name) if audio_path else 0.0
+    def _run_esp32_trigger_reaction(self, action_name: str) -> None:
+        """Stop drive and play a named gesture (with manifest audio if configured)."""
         audio_player = AudioPlayer()
         audio_timer: Optional[threading.Timer] = None
-
+        self._esp32_reaction_audio = audio_player
+        self._esp32_reaction_audio_timer = None
         try:
-            with self.bus_lock:
-                self.dxl._require_initialized()
-                if audio_path is not None:
-                    if audio_offset <= 0.0:
-                        audio_player.play(audio_path)
+            try:
+                if self._face_follow is not None:
+                    try:
+                        self._face_follow.stop()
+                    except Exception:
+                        pass
+                self.drive.stop(drain=True)
+            except Exception:
+                log.exception("ESP32 trigger: drive / face-follow stop failed")
+
+            if is_battery_motion_blocked():
+                try:
+                    maybe_speak_low_battery()
+                except Exception:
+                    pass
+                log.warning("ESP32 trigger: motion blocked (low battery)")
+                return
+
+            if not self._bus_ready:
+                log.info("ESP32 trigger: Dynamixel bus not ready — initializing")
+                try:
+                    self.ensure_bus()
+                except Exception:
+                    log.exception("ESP32 trigger: bus init failed")
+                    return
+
+            audio_path = self.action_audio_path(action_name)
+            audio_offset = self.action_audio_offset(action_name) if audio_path else 0.0
+            trig = self.settings.esp32_trigger
+            release_speed = max(
+                1,
+                int(1023 * float(trig.release_ramp_speed_pct)),
+            )
+
+            try:
+                with self.bus_lock:
+                    self.dxl._require_initialized()
+                    if audio_path is not None:
+                        if audio_offset <= 0.0:
+                            audio_player.play(audio_path)
+                        else:
+                            audio_timer = threading.Timer(
+                                audio_offset,
+                                audio_player.play,
+                                args=(audio_path,),
+                            )
+                            audio_timer.daemon = True
+                            audio_timer.start()
+                            self._esp32_reaction_audio_timer = audio_timer
+                    completed = self.action_runner.run_named_action(
+                        action_name,
+                        smooth=True,
+                        sub_hz=50.0,
+                        max_speed=1023,
+                        speed=1.0,
+                        stop_event=self._esp32_reaction_stop,
+                        release_neutral_name=self.settings.neutral_action_name,
+                        release_ramp_sec=float(trig.release_ramp_sec),
+                        release_max_speed=release_speed,
+                    )
+                    if completed:
+                        log.info("ESP32 trigger: action '%s' finished", action_name)
                     else:
-                        audio_timer = threading.Timer(
-                            audio_offset,
-                            audio_player.play,
-                            args=(audio_path,),
+                        log.info(
+                            "ESP32 trigger: action '%s' released to neutral",
+                            action_name,
                         )
-                        audio_timer.daemon = True
-                        audio_timer.start()
-                self.action_runner.run_named_action(
-                    action_name,
-                    smooth=True,
-                    sub_hz=50.0,
-                    max_speed=1023,
-                    speed=1.0,
-                )
-                log.info("ESP32 trigger: action '%s' finished", action_name)
-        except Exception:
-            log.exception("ESP32 trigger: action '%s' failed", action_name)
+            except Exception:
+                log.exception("ESP32 trigger: action '%s' failed", action_name)
         finally:
             if audio_timer is not None:
                 audio_timer.cancel()
             audio_player.stop_all()
+            self._esp32_reaction_audio = None
+            self._esp32_reaction_audio_timer = None
+            self._esp32_reaction_thread = None
 
     def start_battery_ads1115_monitor(self) -> None:
         """Start ADS1115 pack-voltage monitor when enabled in settings."""

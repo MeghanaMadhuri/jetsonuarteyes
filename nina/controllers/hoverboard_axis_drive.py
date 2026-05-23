@@ -25,32 +25,24 @@ lean. **Timed** ``turn_left`` / ``turn_right`` use full pivot goals (100% blend)
 (30% of full pivot by default). Legacy unequal-duty path uses
 ``NINA_HOVER_TURN_SLOW_WHEEL_PCT`` vs outer ``speed_percent``. **Turn right** mirrors left.
 
-**Straight pulse (series):** when ``NINA_HOVER_PULSE_FORWARD`` / ``pulse_forward_enabled`` is true,
-``start_pulse_straight_forward`` and ``start_pulse_straight_backward`` run **independent** timed
-series (separate parameters for forward vs backward hold, coast dwell, coast blend, and return ramps).
-Both use ``pulse_series_max`` then full brake.
-Cancel with ``stop()`` / ``emergency_stop()`` / ``set_wheels`` / ``drive_continuous``.
+**Straight FWD/BACK (drive-then-check):** ``start_pulse_straight_forward`` and
+``start_pulse_straight_backward`` spawn :meth:`_drift_correct_loop` — the method
+names are legacy. Each cycle: command full forward/back lean for
+``NINA_HOVER_STRAIGHT_LEG_SEC`` (default **0.5 s**), brake, wait for standstill
+(active settle on IMU yaw rate when wired), sample **cumulative** drift from the
+integrator, run iterative left/right micro-step pivots when ``|drift|`` exceeds
+``NINA_HOVER_STRAIGHT_CORR_DEADBAND_DEG``, then repeat until the operator
+releases (``_halt_pulse_series``) or abort drift fires. The old coast↔forward
+pulse ramp series is removed. Cancel with ``stop()`` / ``emergency_stop()`` /
+``set_wheels`` / ``drive_continuous``.
 
-**IMU yaw correction (discrete pause-pivot-resume):** call :meth:`set_imu_hooks`
-once at construction with a yaw-drift sampler and optional begin/end straight
-callbacks (the ``NinaService`` wires :class:`Mpu9250DriftMonitor` here). During
-the main and coast holds of both pulse series the controller polls the yaw
-integrator at ~20 Hz. When ``|drift| >= NINA_HOVER_IMU_CORR_THRESHOLD_DEG`` the
-controller **stops the wheels**, runs an **iterative micro-step realign**: a
-chain of small decisive pivots that each (a) sample drift, (b) re-evaluate
-pivot direction from the latest sample, (c) apply a pivot lean of
-**proportional duration** (``PIVOT_BLEND_PCT`` × per-step duration computed
-from remaining drift), (d) brake-settle. The loop exits when
-``|drift| <= NINA_HOVER_IMU_CORR_DEADBAND_DEG``, on overshoot past zero,
-on the wrong-direction bail (see below), on the **no-progress safeguard**
-(``PROGRESS_CHECK_STEPS`` steps with less than ``PROGRESS_MIN_DEG`` of
-total improvement → exit cleanly, let the next event try fresh), or at the
-``MAX_STEPS`` hard cap. Only then does the controller **brake**, **re-prime**
-the lean stack, and resume the primed forward / back pulse. The previous single-shot pivot was replaced because it either
-undershot (too weak to overcome natural drift) or, when pumped up, slammed
-the bot 30°+ in one go; iterative steps with live re-sampling let total
-correction time scale with the magnitude of the drift instead of being
-decided up-front.
+**IMU hooks:** call :meth:`set_imu_hooks` once at construction with a yaw-drift
+sampler, yaw-rate sampler (for active settle), and begin/end straight callbacks
+(``NinaService`` wires :class:`Mpu9250DriftMonitor` here). Without hooks the
+straight loop still runs 0.5 s legs but skips drift correction
+(``no IMU sample, skipping drift check`` in logs). Tune standstill correction
+via ``NINA_HOVER_STRAIGHT_CORR_*``; legacy ``NINA_HOVER_IMU_CORR_*`` knobs
+below apply to other paths (e.g. held-turn micro-steps), not the straight loop.
 
 Bail behaviour (defends against an un-flipped ``INVERT_SIGN`` on a new
 chassis without false-tripping on momentum or correct-direction overshoot):
