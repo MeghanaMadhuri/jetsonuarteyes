@@ -15,9 +15,29 @@ if TYPE_CHECKING:
 log = logging.getLogger("nina.sensors.touch_at42qt2120")
 
 
-def touch_mask_active(masked: int, idle_mask: int) -> bool:
-    """True when *masked* has bits set above the learned idle fingerprint."""
-    return (int(masked) & ~int(idle_mask) & 0xFFF) != 0
+def touch_mask_active(
+    masked: int,
+    idle_mask: int,
+    *,
+    prev_masked: int = 0,
+) -> bool:
+    """True when *masked* shows touch above the learned idle fingerprint.
+
+    Accepts:
+    - New bit positions above idle (``masked & ~idle``)
+    - Numeric mask increase above idle
+    - Recovery above idle after a brief dip (common AT42QT2120 press shape)
+    """
+    masked &= 0xFFF
+    idle_mask &= 0xFFF
+    prev = int(prev_masked) & 0xFFF
+    if (masked & ~idle_mask) != 0:
+        return True
+    if masked > idle_mask:
+        return True
+    if prev < idle_mask and masked > idle_mask:
+        return True
+    return False
 
 
 def touch_release_rearm_step(
@@ -298,15 +318,16 @@ class TouchAt42qt2120Monitor:
             if self._stuck_latched:
                 touched = (
                     self._baseline_ready
-                    and touch_mask_active(masked, self._idle_mask)
+                    and touch_mask_active(
+                        masked, self._idle_mask, prev_masked=self._prev_masked
+                    )
                     if self._use_key_mask
                     else False
                 )
             elif self._use_key_mask:
-                # Ignore latched STATUS; fire only when new mask bits appear above idle.
-                touched = (
-                    self._baseline_ready
-                    and touch_mask_active(masked, self._idle_mask)
+                # Ignore latched STATUS; fire only when touch rises above idle.
+                touched = self._baseline_ready and touch_mask_active(
+                    masked, self._idle_mask, prev_masked=self._prev_masked
                 )
             else:
                 touched = touched_raw
@@ -350,6 +371,21 @@ class TouchAt42qt2120Monitor:
                 self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
+
+            if (
+                self._use_key_mask
+                and self._baseline_ready
+                and masked != self._prev_masked
+            ):
+                log.info(
+                    "AT42QT2120 mask 0x%03X -> 0x%03X (idle=0x%03X active=%s)",
+                    self._prev_masked,
+                    masked,
+                    self._idle_mask,
+                    touch_mask_active(
+                        masked, self._idle_mask, prev_masked=self._prev_masked
+                    ),
+                )
 
             # After a reaction, stay disarmed until the quiet window ends
             # (max of blind + cooldown) so motor vibration cannot retrigger.

@@ -179,10 +179,11 @@ def test_constant_idle_mask_fires_on_change() -> None:
     fires = 0
     debounce_reads = 3
     release_reads = 2
+    prev_masked = 0
 
     def poll(masked: int) -> None:
         nonlocal idle_mask, baseline_ready, baseline_hits, armed, prev, hits
-        nonlocal release_hits, fires
+        nonlocal release_hits, fires, prev_masked
         baseline_ready, baseline_hits, idle_mask = touch_baseline_idle_step(
             masked,
             baseline_ready=baseline_ready,
@@ -191,8 +192,9 @@ def test_constant_idle_mask_fires_on_change() -> None:
             idle_mask=idle_mask,
         )
         if not baseline_ready:
+            prev_masked = masked
             return
-        touched = touch_mask_active(masked, idle_mask)
+        touched = touch_mask_active(masked, idle_mask, prev_masked=prev_masked)
         if not armed:
             armed, release_hits = touch_release_rearm_step(
                 touched,
@@ -202,10 +204,12 @@ def test_constant_idle_mask_fires_on_change() -> None:
             )
             hits = 0
             prev = touched
+            prev_masked = masked
             return
         if not touched:
             hits = 0
             prev = False
+            prev_masked = masked
             return
         fire, hits = touch_rising_edge_debounce_step(
             touched, prev, debounce_reads=debounce_reads, consecutive_hits=hits
@@ -216,6 +220,7 @@ def test_constant_idle_mask_fires_on_change() -> None:
             armed = False
             release_hits = 0
             hits = 0
+        prev_masked = masked
 
     for _ in range(3):
         poll(0x001)
@@ -233,8 +238,15 @@ def test_constant_idle_mask_fires_on_change() -> None:
 
 def test_mask_drop_to_zero_does_not_fire_with_idle_leakage() -> None:
     """Glitch 0x001→0x000 must not trigger (only new bits above idle count)."""
-    assert not touch_mask_active(0x000, 0x001)
+    assert not touch_mask_active(0x000, 0x001, prev_masked=0x001)
     assert touch_mask_active(0x003, 0x001)
+    assert not touch_mask_active(0x001, 0x001, prev_masked=0x000)
+
+
+def test_dip_then_rise_above_idle_counts_as_touch() -> None:
+    """Press shape 0x001 -> 0x000 -> 0x003 must still fire on the rise leg."""
+    assert not touch_mask_active(0x000, 0x001, prev_masked=0x001)
+    assert touch_mask_active(0x003, 0x001, prev_masked=0x000)
 
 
 def test_stuck_status_high_still_allows_mask_touch() -> None:
