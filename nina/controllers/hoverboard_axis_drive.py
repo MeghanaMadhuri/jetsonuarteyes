@@ -321,14 +321,16 @@ _STRAIGHT_FWD_EXTRA_TICKS = 14
 
 # Per-side raw tick delta added to ``forward_pos_*`` before the straight
 # FWD extra nudge. Matches operator bench language (±N ticks on the goal).
-# New mechanical structure: motor 12 (left) −10, motor 13 (right) +20.
-_STRAIGHT_FWD_LEFT_TICKS_OFFSET = -10
-_STRAIGHT_FWD_RIGHT_TICKS_OFFSET = 20
+# Fleet bench (FWD 2022/2080, brake 2048, +14 nudge): motor 12 → 2010,
+# motor 13 → 2104.
+_STRAIGHT_FWD_LEFT_TICKS_OFFSET = 2
+_STRAIGHT_FWD_RIGHT_TICKS_OFFSET = 10
 
 
 def _straight_fwd_left_ticks_offset() -> int:
     """Raw tick delta on ``forward_pos_left`` for straight FWD (env:
-    ``NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET``, default −10)."""
+    ``NINA_HOVER_STRAIGHT_FWD_LEFT_TICKS_OFFSET``, default +2 — with fleet
+    ``NINA_HOVER_FWD_POS_LEFT=2022`` yields straight goal **2010**)."""
     try:
         return max(
             -50,
@@ -348,7 +350,8 @@ def _straight_fwd_left_ticks_offset() -> int:
 
 def _straight_fwd_right_ticks_offset() -> int:
     """Signed trim on ``forward_pos_right`` for straight FWD (env:
-    ``NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET``, default +20)."""
+    ``NINA_HOVER_STRAIGHT_FWD_RIGHT_TICKS_OFFSET``, default +10 — with fleet
+    ``NINA_HOVER_FWD_POS_RIGHT=2080`` yields straight goal **2104**)."""
     try:
         return max(
             -50,

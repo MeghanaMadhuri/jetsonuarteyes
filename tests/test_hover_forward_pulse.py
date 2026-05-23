@@ -1719,11 +1719,15 @@ def test_straight_back_ticks_offsets_env_overrides_honored() -> None:
 
 
 def test_straight_fwd_ticks_offsets_default_for_new_mechanical_structure() -> None:
-    """Motor 12 (left) −10 ticks, motor 13 (right) +20 on straight forward."""
-    assert _STRAIGHT_FWD_LEFT_TICKS_OFFSET == -10
-    assert _STRAIGHT_FWD_RIGHT_TICKS_OFFSET == 20
-    assert _straight_fwd_left_ticks_offset() == -10
-    assert _straight_fwd_right_ticks_offset() == 20
+    """Fleet FWD 2022/2080 + offsets → straight goals L=2010, R=2104."""
+    assert _STRAIGHT_FWD_LEFT_TICKS_OFFSET == 2
+    assert _STRAIGHT_FWD_RIGHT_TICKS_OFFSET == 10
+    assert _straight_fwd_left_ticks_offset() == 2
+    assert _straight_fwd_right_ticks_offset() == 10
+    fl = _nudge_goal_from_brake(2022 + 2, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    fr = _nudge_goal_from_brake(2080 + 10, 2048, _STRAIGHT_FWD_EXTRA_TICKS)
+    assert fl == 2010
+    assert fr == 2104
 
 
 def test_straight_fwd_ticks_offsets_env_overrides_honored() -> None:
