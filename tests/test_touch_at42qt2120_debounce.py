@@ -6,7 +6,9 @@ from nina.sensors.touch_at42qt2120_monitor import (
     touch_baseline_idle_step,
     touch_baseline_ready_step,
     touch_debounce_step,
+    touch_grace_debounce_step,
     touch_mask_active,
+    touch_press_edge,
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
     touch_stuck_high_step,
@@ -165,6 +167,38 @@ def test_baseline_idle_learns_stable_mask() -> None:
     assert ready
     assert idle == 0x001
     assert hits == 0
+
+
+def test_grace_debounce_tolerates_inverted_bounce() -> None:
+    """0x001->0x000->0x001->0x000 must still fire within the grace window."""
+    hits = 0
+    last = 0.0
+    fired = False
+    t = 0.0
+
+    def step(signal: bool) -> None:
+        nonlocal hits, last, fired, t
+        fire, hits, last = touch_grace_debounce_step(
+            signal,
+            consecutive_hits=hits,
+            last_signal_mono=last,
+            now=t,
+            debounce_reads=2,
+            grace_sec=0.18,
+        )
+        if fire:
+            fired = True
+        t += 0.10
+
+    step(True)   # 0x001 -> 0x000
+    step(False)  # bounce to 0x001 within grace
+    step(True)   # 0x000 again
+    assert fired
+
+
+def test_press_edge_detects_inverted_drop() -> None:
+    assert touch_press_edge(0x001, 0x000, 0x001)
+    assert not touch_press_edge(0x000, 0x001, 0x001)
 
 
 def test_constant_idle_mask_fires_on_press_clearing_bits() -> None:

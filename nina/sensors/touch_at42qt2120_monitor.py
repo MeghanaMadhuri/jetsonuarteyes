@@ -14,6 +14,39 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("nina.sensors.touch_at42qt2120")
 
+# Tolerate brief 0x001 bounce while the inverted electrode reads 0x000.
+_PRESS_GRACE_SEC = 0.18
+
+
+def touch_press_edge(prev_masked: int, masked: int, idle_mask: int) -> bool:
+    """True on the poll where a press begins (inverted drop or normal rise)."""
+    prev = int(prev_masked) & 0xFFF
+    m = int(masked) & 0xFFF
+    idle = int(idle_mask) & 0xFFF
+    if idle != 0 and prev >= idle and m < idle:
+        return True
+    return (m & ~idle) != 0 and (prev & ~idle) == 0
+
+
+def touch_grace_debounce_step(
+    signal: bool,
+    *,
+    consecutive_hits: int,
+    last_signal_mono: float,
+    now: float,
+    debounce_reads: int,
+    grace_sec: float = _PRESS_GRACE_SEC,
+) -> Tuple[bool, int, float]:
+    """Debounce noisy inverted presses that bounce back to idle mid-gesture."""
+    if signal:
+        n = consecutive_hits + 1
+        if n >= debounce_reads:
+            return True, 0, now
+        return False, n, now
+    if consecutive_hits > 0 and (now - last_signal_mono) <= grace_sec:
+        return False, consecutive_hits, last_signal_mono
+    return False, 0, last_signal_mono
+
 
 def touch_mask_active(
     masked: int,
@@ -208,6 +241,7 @@ class TouchAt42qt2120Monitor:
         self._prev_touched = False
         self._hits = 0
         self._release_hits = 0
+        self._last_signal_mono: float = -1e30
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
 
@@ -238,6 +272,7 @@ class TouchAt42qt2120Monitor:
         self._prev_touched = False
         self._hits = 0
         self._release_hits = 0
+        self._last_signal_mono = -1e30
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
         self._stop.clear()
@@ -377,9 +412,20 @@ class TouchAt42qt2120Monitor:
             if (
                 self._use_key_mask
                 and self._baseline_ready
-                and masked != self._prev_masked
+                and touch_press_edge(self._prev_masked, masked, self._idle_mask)
             ):
                 log.info(
+                    "AT42QT2120 press edge 0x%03X -> 0x%03X (idle=0x%03X)",
+                    self._prev_masked,
+                    masked,
+                    self._idle_mask,
+                )
+            elif (
+                self._use_key_mask
+                and self._baseline_ready
+                and masked != self._prev_masked
+            ):
+                log.debug(
                     "AT42QT2120 mask 0x%03X -> 0x%03X (idle=0x%03X active=%s)",
                     self._prev_masked,
                     masked,
@@ -396,6 +442,7 @@ class TouchAt42qt2120Monitor:
                 self._hits = 0
                 self._release_hits = 0
                 self._prev_touched = touched
+                self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
@@ -407,23 +454,38 @@ class TouchAt42qt2120Monitor:
                     consecutive_clear=self._release_hits,
                 )
                 self._hits = 0
+                self._last_signal_mono = -1e30
                 self._prev_touched = touched
+                self._prev_masked = masked
                 time.sleep(self._poll_sec)
                 continue
 
-            if not touched:
-                self._hits = 0
-                self._prev_touched = False
-                time.sleep(self._poll_sec)
-                continue
-
-            fire, self._hits = touch_rising_edge_debounce_step(
-                touched,
-                self._prev_touched,
-                debounce_reads=self._debounce_reads,
-                consecutive_hits=self._hits,
-            )
-            self._prev_touched = touched
+            if self._use_key_mask:
+                press_edge = touch_press_edge(
+                    self._prev_masked, masked, self._idle_mask
+                )
+                signal = touched or press_edge
+                fire, self._hits, self._last_signal_mono = touch_grace_debounce_step(
+                    signal,
+                    consecutive_hits=self._hits,
+                    last_signal_mono=self._last_signal_mono,
+                    now=now,
+                    debounce_reads=self._debounce_reads,
+                )
+            else:
+                if not touched:
+                    self._hits = 0
+                    self._prev_touched = False
+                    self._prev_masked = masked
+                    time.sleep(self._poll_sec)
+                    continue
+                fire, self._hits = touch_rising_edge_debounce_step(
+                    touched,
+                    self._prev_touched,
+                    debounce_reads=self._debounce_reads,
+                    consecutive_hits=self._hits,
+                )
+                self._prev_touched = touched
 
             if fire:
                 self._armed = False
