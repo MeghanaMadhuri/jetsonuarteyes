@@ -2,16 +2,43 @@
   "robot": "nina",
   "actions": {
     "neutral": "recordings/neutral.json",
-    "bye": "recordings/bye.json",
-    "point_right": "recordings/point_right.json",
-    "point_left": "recordings/point_left.json",
-    "fold_arms": "recordings/fold_arms.json",
-    "handshake_right": "recordings/handshake_right.json",
-    "handshake_left": "recordings/handshake_left.json",
-    "salute_left": "recordings/salute_left.json",
-    "salute_right": "recordings/salute_right.json",
+    "bye": {
+      "file": "recordings/bye.json",
+      "audio": "audio/bye.mp3"
+    },
+    "point_right": {
+      "file": "recordings/point_right.json",
+      "audio": "audio/point_right.mp3"
+    },
+    "point_left": {
+      "file": "recordings/point_left.json",
+      "audio": "audio/point_left.mp3"
+    },
+    "fold_arms": {
+      "file": "recordings/fold_arms.json",
+      "audio": "audio/fold_arms.mp3"
+    },
+    "handshake_right": {
+      "file": "recordings/handshake_right.json",
+      "audio": "audio/handshake_right.mp3"
+    },
+    "handshake_left": {
+      "file": "recordings/handshake_left.json",
+      "audio": "audio/handshake_left.mp3"
+    },
+    "salute_left": {
+      "file": "recordings/salute_left.json",
+      "audio": "audio/salute_left.mp3"
+    },
+    "salute_right": {
+      "file": "recordings/salute_right.json",
+      "audio": "audio/salute_right.mp3"
+    },
     "Neutral": "recordings/Neutral.json",
-    "namaste": "recordings/namaste.json",
+    "namaste": {
+      "file": "recordings/namaste.json",
+      "audio": "audio/namaste.mp3"
+    },
     "introduction": {
       "file": "recordings/introduction.json",
       "audio": "audio/introduction.mp3"
