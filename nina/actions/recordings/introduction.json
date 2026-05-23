@@ -1,0 +1,9799 @@
+{
+  "robot": "nina",
+  "description": "Recorded action: introduction",
+  "frame_count": 192,
+  "frames": [
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2176
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2033
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2022
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2047
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2176
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2033
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2022
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2048
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2176
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2033
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2022
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2051
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2176
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2033
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2022
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2051
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2176
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2033
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2022
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2076
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2026
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2067
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2148
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2190
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2002
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2078
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2010
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2112
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2227
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2193
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1944
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2155
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2163
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1933
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2292
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2289
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1818
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1907
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2198
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2270
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1869
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2096
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2295
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2360
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2178
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1817
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1866
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2275
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2396
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1779
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2095
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2302
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2363
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1818
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1858
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2319
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2422
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1695
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2076
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2512
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1864
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1858
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2306
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2423
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1671
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2828
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2178
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1979
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1850
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2268
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2477
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1691
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3018
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2179
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2050
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2222
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2628
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1719
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3095
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2181
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2114
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1809
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2181
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2720
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1767
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3095
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2182
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2125
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2158
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2736
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1798
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3096
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2181
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2124
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1807
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2158
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2743
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1809
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2378
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2195
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2122
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1792
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2163
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2744
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2952
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2378
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2245
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2111
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1728
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2175
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2779
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1805
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2690
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2272
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2101
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1637
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2202
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2856
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2456
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2272
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2096
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2860
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2448
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2272
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2089
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1587
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2873
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1807
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2637
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2271
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2082
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2875
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2052
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2827
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2271
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2079
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2874
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2052
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2973
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2270
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2076
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2865
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1809
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2052
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3088
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2270
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2068
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2857
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1809
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2268
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1589
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2851
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3069
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2251
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1593
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2845
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1805
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2052
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2074
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2964
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2187
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1623
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2845
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1803
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2942
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2079
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1733
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2841
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2077
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2945
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1958
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1898
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2810
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1800
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2153
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3016
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1821
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2046
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2215
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2712
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1797
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2203
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3090
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1706
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2065
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2084
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2215
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2598
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1795
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2053
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2212
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1673
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2084
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2215
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2554
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1796
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2054
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2212
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1702
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2065
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2084
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2577
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2055
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2212
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1827
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2079
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2660
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2212
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3085
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2062
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2772
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1802
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2211
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 3037
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2378
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2199
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2065
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1960
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2871
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1798
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2210
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2954
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2269
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1819
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2927
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1796
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2200
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2868
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2366
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2047
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1726
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2214
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2947
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1796
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2809
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2421
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1666
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2217
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2944
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1796
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2055
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2797
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2378
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2422
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2005
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1657
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2218
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2936
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1796
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2164
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2780
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2421
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2222
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2933
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1793
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2750
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2418
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2005
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2234
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2924
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1774
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2697
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2416
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2004
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2266
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2923
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1722
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2048
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2637
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2411
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1999
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2311
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2907
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1646
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1994
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2588
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2394
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1958
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2350
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2846
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1560
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1949
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2548
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2393
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1906
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1657
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2385
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2760
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1488
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1929
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2521
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2395
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1841
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1657
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2410
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2668
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1450
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1924
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2518
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2411
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1787
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2427
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2578
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1455
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1922
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2518
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2377
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2450
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1765
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2429
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2543
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1466
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1922
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2517
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2376
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2454
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1765
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2428
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2531
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1479
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1926
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2164
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2036
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2513
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2377
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2457
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1766
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1658
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2428
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2534
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1478
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1971
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 2004
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2515
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2377
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2440
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1784
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1665
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2408
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2568
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1468
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2004
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1986
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2515
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2397
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2361
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1806
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1706
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2340
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2634
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1428
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2029
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1986
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2595
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2508
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2280
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1787
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2249
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2669
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1408
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2058
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1986
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2758
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2629
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2152
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2000
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1872
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2669
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1387
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2071
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1984
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2873
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2651
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2201
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1915
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2140
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2668
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1393
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2075
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2875
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2667
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1835
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2321
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1965
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2093
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2663
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1403
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2077
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1955
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2874
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2668
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1771
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2384
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1998
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2058
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2662
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1436
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2077
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1921
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2873
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2709
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1678
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2465
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1999
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2051
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2653
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1502
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2077
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2865
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2777
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1611
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2496
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2000
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2050
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2616
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1532
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2077
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1887
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2865
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2781
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1564
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2501
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2007
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2048
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2585
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1534
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2076
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1884
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2866
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2780
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1562
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2517
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2009
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2048
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2578
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1542
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2077
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2865
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2781
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1562
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2522
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2009
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2049
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2572
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1546
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2076
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2865
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2781
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1563
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2527
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2009
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2049
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2568
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1549
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2076
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2867
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2782
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1572
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2517
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2010
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2049
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2575
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1531
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2075
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2886
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1651
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2424
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2009
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2049
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2587
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1502
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2071
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2903
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1865
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2224
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2005
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2070
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2627
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1465
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1884
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2904
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2103
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1989
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2701
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1397
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2054
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1883
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2904
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2784
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2240
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1948
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1947
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2185
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2755
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1325
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2037
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1884
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2904
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2307
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1853
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1857
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2236
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2769
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1285
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2020
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2908
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2370
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1805
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1774
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2286
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2770
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1285
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2009
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2908
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2382
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1791
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1746
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2769
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1288
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1999
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2908
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2383
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1791
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1746
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2764
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1287
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1991
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2900
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2783
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2371
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1795
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1746
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2762
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1289
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1985
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2815
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2749
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2354
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1808
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1746
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2760
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1322
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1981
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2693
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2677
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2328
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1811
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1745
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2757
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1403
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2001
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2555
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2611
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2316
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1743
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2297
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2736
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1495
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2024
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2523
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2586
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2264
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1811
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1743
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2615
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1588
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2040
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2523
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2519
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2263
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1810
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1744
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2297
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2471
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1706
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2050
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2508
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2458
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2263
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1810
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1747
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2297
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2349
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1807
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2056
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2456
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2397
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2262
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1811
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1763
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2289
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2225
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1894
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2060
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2357
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2317
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2251
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1785
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2266
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1958
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2224
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2269
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2246
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1827
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2234
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2124
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2027
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2204
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2236
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2170
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1814
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1866
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2212
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2072
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2183
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2207
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1893
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2205
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2085
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2193
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2160
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1896
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2199
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2084
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2062
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2139
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2193
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1814
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1896
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2199
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2079
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2063
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2193
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2160
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1896
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2207
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2065
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2216
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1897
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2255
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1953
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2291
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1814
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1908
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2313
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1783
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1888
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2362
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1836
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1938
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2337
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1601
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1885
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2498
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1941
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1946
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2337
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1451
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1846
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2624
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2026
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1946
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2337
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2055
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1310
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1833
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2744
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2086
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1947
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2333
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2056
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1146
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1821
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2867
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2180
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1947
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2325
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2056
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1064
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1799
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 3028
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2223
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1951
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2296
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2056
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1059
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1778
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 3095
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2236
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2262
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2056
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1061
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1774
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 3094
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2236
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2255
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1063
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1773
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 3044
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2155
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2260
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2056
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1060
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1773
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2902
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1962
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2285
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2059
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1059
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2065
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1773
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2801
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1836
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2355
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2060
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1059
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2051
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1777
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2661
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1743
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1958
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2446
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1062
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2022
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1807
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1707
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2514
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1063
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2010
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1848
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2481
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1705
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1958
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2524
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1064
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2004
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1851
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2481
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1716
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2520
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2057
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1064
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1850
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2481
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1759
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1966
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2489
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2059
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1069
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1848
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2482
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1904
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1974
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2392
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1095
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1831
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2483
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1987
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1976
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2252
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2063
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1168
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1815
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2483
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1978
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2143
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1326
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1730
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2538
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2132
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1978
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2091
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1465
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1716
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2580
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2122
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1978
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2089
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1471
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2003
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1717
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2583
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2089
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2096
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1459
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2004
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1717
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2583
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1992
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1982
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2120
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1435
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2021
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1717
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2583
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1874
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1982
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1423
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2038
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1717
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2136
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2583
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1738
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2279
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2067
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1429
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2054
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1717
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2580
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2161
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1636
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2342
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1431
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2066
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1757
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2569
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1517
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2379
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1434
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2079
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1874
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2137
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2529
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1451
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2393
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1454
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1970
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2138
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1442
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2392
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1466
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2138
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1443
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2391
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2071
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1475
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2138
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1450
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1980
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2384
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2072
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1483
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2184
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2164
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1506
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1946
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2383
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2091
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1483
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2087
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2272
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2169
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1577
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1854
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2358
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2175
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1483
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2087
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2165
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2308
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2526
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2177
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1666
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1774
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2334
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2322
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1477
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2087
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1994
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2367
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2527
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2175
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1770
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1768
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2318
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2450
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1451
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1992
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2439
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2534
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2163
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1879
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1770
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2275
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2561
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1397
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1980
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2472
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2083
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1985
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1783
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2213
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2657
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1363
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1980
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2488
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2572
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2061
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2030
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1827
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2164
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2700
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1345
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1965
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2547
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2583
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2017
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2122
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1879
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2127
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2700
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1343
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2086
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1954
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2625
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2618
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1949
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1947
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2084
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2699
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1346
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2085
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1948
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2696
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2648
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1884
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2276
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2004
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2058
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2694
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1366
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1914
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2765
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2745
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1748
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2391
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2050
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2692
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1442
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2171
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1899
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2808
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2834
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1669
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2444
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2667
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1487
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2185
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1877
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2868
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2867
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1623
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2496
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2619
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1509
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2187
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1854
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2906
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2911
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1595
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2542
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2038
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2592
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1536
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1846
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2930
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2935
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1585
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2556
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2038
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2573
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1556
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1833
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2951
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2957
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1579
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2560
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2568
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1561
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1573
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1567
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2963
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1573
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1567
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2067
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2963
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1572
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2566
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1567
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2023
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2963
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1573
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1567
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1973
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2963
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2961
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1573
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1568
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1935
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2965
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2961
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1572
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1569
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1922
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2966
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2960
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2564
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1922
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2968
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2961
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1922
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2969
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2961
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1954
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2972
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2962
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 1994
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2973
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2963
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2565
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2038
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2974
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2965
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2558
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2566
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1570
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2071
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2974
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2966
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1572
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2552
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2017
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2566
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1569
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2974
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2966
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1582
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2532
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2017
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2039
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2570
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1564
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2974
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2966
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1620
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2429
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2017
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2041
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2573
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1533
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2980
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2966
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1722
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2234
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2016
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2073
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2593
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1470
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2980
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2965
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1871
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2167
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2007
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2139
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2645
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1424
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2976
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2956
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2017
+        },
+        "6": {
+          "type": "absolute",
+          "value": 2065
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1981
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2202
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2702
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1381
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2964
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2920
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2129
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1948
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1908
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2261
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2727
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1336
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2938
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2877
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2240
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1853
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1821
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2300
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2732
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1290
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2912
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2814
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2314
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1820
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1739
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2364
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2732
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1238
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2886
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2773
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2334
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1710
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2406
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2732
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1229
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2886
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2772
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2335
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1811
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1710
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2409
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2730
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1231
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2871
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2765
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2334
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1812
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1711
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2409
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2726
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1233
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2816
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2732
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2325
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1826
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1711
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2408
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2725
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1256
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2735
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2689
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2262
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1882
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1712
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2403
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2718
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1319
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2627
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2637
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2193
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1970
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1715
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2393
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2673
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1425
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2557
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2577
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2134
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1991
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1725
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2347
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2592
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1507
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2506
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2493
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2117
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1991
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1748
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2294
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2499
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1576
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2423
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2410
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2116
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1990
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1775
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2261
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2419
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1656
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1813
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2312
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2324
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2116
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1990
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1790
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2237
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2362
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1749
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1814
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2234
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2266
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2073
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1990
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1794
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2215
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2278
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1832
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1816
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2206
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2205
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1989
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1822
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2208
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2189
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1924
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1826
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2166
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2199
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1950
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1838
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2207
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2163
+        },
+        "10": {
+          "type": "absolute",
+          "value": 1977
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1828
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2092
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2164
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2046
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1899
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1847
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2199
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2009
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1830
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2028
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2155
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2030
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1861
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1857
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2196
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2153
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2043
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2188
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1856
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2146
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2031
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1781
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1899
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2185
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2114
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2066
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2187
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1877
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2045
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1725
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1922
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2154
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2113
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2069
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2146
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1897
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2007
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2082
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1677
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1933
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2133
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2111
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2082
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2084
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2142
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1906
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2117
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1634
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1961
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2106
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2110
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2093
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2083
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2135
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1916
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1591
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1971
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2101
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2109
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2083
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1925
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2162
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1579
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1973
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2091
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2096
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2083
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2138
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1762
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1973
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2090
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2114
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2082
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2110
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1889
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1975
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2091
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2067
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2114
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2079
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2100
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1959
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1979
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2092
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2064
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2108
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2008
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1979
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2095
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2063
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2106
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2100
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1979
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2095
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2048
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2102
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1980
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2089
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2052
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2079
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1982
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2075
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2060
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1926
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 1997
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2041
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2059
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1929
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1956
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2011
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2041
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2059
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1928
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2144
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1957
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2012
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2041
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2060
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    },
+    {
+      "delay": 0.0,
+      "duration": 0.05,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 2130
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1928
+        },
+        "3": {
+          "type": "absolute",
+          "value": 2006
+        },
+        "4": {
+          "type": "absolute",
+          "value": 2145
+        },
+        "5": {
+          "type": "absolute",
+          "value": 2099
+        },
+        "6": {
+          "type": "absolute",
+          "value": 1956
+        },
+        "7": {
+          "type": "absolute",
+          "value": 2013
+        },
+        "8": {
+          "type": "absolute",
+          "value": 2041
+        },
+        "9": {
+          "type": "absolute",
+          "value": 2059
+        },
+        "10": {
+          "type": "absolute",
+          "value": 2098
+        },
+        "11": {
+          "type": "absolute",
+          "value": 2078
+        }
+      }
+    }
+  ]
+}

@@ -10,7 +10,11 @@
     "handshake_left": "recordings/handshake_left.json",
     "salute_left": "recordings/salute_left.json",
     "salute_right": "recordings/salute_right.json",
+    "Neutral": "recordings/Neutral.json",
     "namaste": "recordings/namaste.json",
-    "Neutral": "recordings/Neutral.json"
+    "introduction": {
+      "file": "recordings/introduction.json",
+      "audio": "audio/introduction.mp3"
+    }
   }
 }
