@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self._service.start_battery_ads1115_monitor)
         QTimer.singleShot(300, self._service.start_ir_obstacle_stop_monitor)
         QTimer.singleShot(400, self._service.start_esp32_trigger_monitor)
+        QTimer.singleShot(2500, self._service.start_voice_assistant)
         # Touch chip is often absent on the first probe right after reboot.
         QTimer.singleShot(1500, self._bringup_touch_monitor)
         self._touch_bringup_timer.start()
@@ -596,6 +597,7 @@ class MainWindow(QMainWindow):
             self._apply_bus_footer_from_health({})
         self._service.start_ir_obstacle_stop_monitor()
         self._service.start_esp32_trigger_monitor()
+        self._service.start_voice_assistant()
         self._service.start_battery_ads1115_monitor()
         self._service.start_touch_at42qt2120_monitor()
         self._service.start_mpu9250_imu_monitor()

@@ -95,6 +95,8 @@ class NinaService:
         self._esp32_reaction_lock = threading.Lock()
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
         self._movement_store: Optional[MovementStore] = None
+        self._voice_assistant: Optional[Any] = None
+        self._voice_start_detail: Optional[str] = None
 
     @property
     def movement_store(self) -> MovementStore:
@@ -161,6 +163,54 @@ class NinaService:
         if drv is None:
             return False
         return bool(getattr(drv, "is_in_motion", lambda: False)())
+
+    def start_voice_assistant(self) -> None:
+        """Local conversational loop (mic → ASR → Ollama → TTS). Requires voice-edge services."""
+        ve = self.settings.voice_edge
+        if not ve.enabled or not ve.assistant_enabled:
+            return
+        if self._voice_assistant is not None:
+            return
+        try:
+            from nina.voice.settings import load_voice_edge_settings
+            from nina.voice.orchestrator import VoiceAssistant
+
+            repo_root = Path(__file__).resolve().parents[2]
+            full = load_voice_edge_settings(repo_root)
+            self._voice_assistant = VoiceAssistant(full)
+            self._voice_assistant.start()
+            self._voice_start_detail = None
+            log.info("voice assistant thread started")
+        except Exception as exc:
+            self._voice_start_detail = str(exc)
+            log.warning("voice assistant failed to start: %s", exc)
+
+    def voice_assistant_status(self) -> Dict[str, Any]:
+        ve = self.settings.voice_edge
+        if not ve.enabled:
+            return {"enabled": False, "running": False, "detail": "disabled"}
+        mon = self._voice_assistant
+        if mon is None:
+            return {
+                "enabled": True,
+                "running": False,
+                "detail": self._voice_start_detail or "not started",
+            }
+        try:
+            st = mon.status_dict()
+            st["enabled"] = True
+            st["detail"] = "ok" if st.get("running") else "stopped"
+            return st
+        except Exception as exc:
+            return {"enabled": True, "running": False, "detail": str(exc)}
+
+    def stop_voice_assistant(self) -> None:
+        if self._voice_assistant is not None:
+            try:
+                self._voice_assistant.stop()
+            except Exception:
+                pass
+            self._voice_assistant = None
 
     def start_ir_obstacle_stop_monitor(self) -> None:
         """Start GP2Y0E02B IR obstacle handling when enabled."""
@@ -787,6 +837,7 @@ class NinaService:
         return self._autonomy
 
     def shutdown(self) -> None:
+        self.stop_voice_assistant()
         if self._imu_monitor is not None:
             try:
                 self._imu_monitor.stop()

@@ -354,6 +354,19 @@ class Esp32TriggerSettings:
 
 
 @dataclass(frozen=True)
+class VoiceEdgeSettings:
+    """Local ASR + Ollama LLM + TTS on loopback (sirena-repo voice stack, no cloud gateway)."""
+
+    enabled: bool
+    assistant_enabled: bool
+    device_id: str
+    asr_base_url: str
+    llm_base_url: str
+    tts_base_url: str
+    mic_device: str
+
+
+@dataclass(frozen=True)
 class IrObstacleStopSettings:
     """GP2Y0E02B forward IR on header I²C (pins 3/5 → ``/dev/i2c-7``, addr **0x40**).
 
@@ -497,6 +510,7 @@ class NinaSettings:
     battery_ads1115: BatteryAds1115Settings
     touch_at42qt2120: TouchAt42qt2120Settings
     esp32_trigger: Esp32TriggerSettings
+    voice_edge: VoiceEdgeSettings
 
 
 def serial_collision_warnings(settings: NinaSettings) -> list[str]:
@@ -987,6 +1001,22 @@ def load_settings(repo_root: Path) -> NinaSettings:
         motor_goal=max(0, min(4095, _env_int("NINA_TOUCH_MOTOR_GOAL", 2048))),
     )
 
+    voice_edge = VoiceEdgeSettings(
+        enabled=_env_bool("NINA_VOICE_EDGE_ENABLE", False),
+        assistant_enabled=_env_bool("NINA_VOICE_ASSISTANT_ENABLE", True),
+        device_id=(os.environ.get("NINA_VOICE_DEVICE_ID") or "nina-jetson").strip(),
+        asr_base_url=(
+            os.environ.get("NINA_VOICE_ASR_URL") or "http://127.0.0.1:6000"
+        ).rstrip("/"),
+        llm_base_url=(
+            os.environ.get("NINA_VOICE_LLM_URL") or "http://127.0.0.1:4000"
+        ).rstrip("/"),
+        tts_base_url=(
+            os.environ.get("NINA_VOICE_TTS_URL") or "http://127.0.0.1:2000"
+        ).rstrip("/"),
+        mic_device=(os.environ.get("NINA_VOICE_MIC_DEVICE") or "default").strip(),
+    )
+
     return NinaSettings(
         serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB0"),
         baudrate=int(os.environ.get("NINA_DXL_BAUD", "222222")),
@@ -1005,4 +1035,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         battery_ads1115=battery_ads1115,
         touch_at42qt2120=touch_at42qt2120,
         esp32_trigger=esp32_trigger,
+        voice_edge=voice_edge,
     )

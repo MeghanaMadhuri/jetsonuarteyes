@@ -1,0 +1,16 @@
+[Unit]
+Description=Nina edge voice microservices (ASR LLM TTS on loopback)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Nvidia-jetson-platform
+EnvironmentFile=-/etc/nina-link/navigation.env
+ExecStart=%h/Nvidia-jetson-platform/scripts/start-voice-edge.sh
+ExecStop=%h/Nvidia-jetson-platform/scripts/stop-voice-edge.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

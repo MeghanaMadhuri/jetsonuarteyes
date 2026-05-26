@@ -1366,6 +1366,16 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
                 detail=str(exc),
             ) from exc
 
+    @app.get("/v1/voice/status")
+    def voice_status_http() -> Dict[str, Any]:
+        """Local edge voice assistant (ASR / LLM / TTS on loopback)."""
+        try:
+            st = gw.service.voice_assistant_status()
+            st["ok"] = bool(st.get("running") or not st.get("enabled"))
+            return st
+        except Exception as exc:
+            return {"ok": False, "enabled": False, "running": False, "detail": str(exc)}
+
     @app.get("/v1/vision/status")
     def vision_status_http() -> Dict[str, Any]:
         if not cfg.enable_vision_bridge:
