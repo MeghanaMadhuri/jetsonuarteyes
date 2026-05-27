@@ -31,8 +31,14 @@ fi
 
 MODEL_DIR="${ROOT}/models/whisper-tiny"
 if [[ ! -f "${MODEL_DIR}/model.bin" ]] && [[ -f "${ROOT}/scripts/download_whisper_model.py" ]]; then
-  echo "==> Downloading whisper-tiny (CTranslate2)"
-  "${PYTHON}" "${ROOT}/scripts/download_whisper_model.py" || true
+  echo "==> Downloading whisper-tiny (Systran/faster-whisper-tiny, ~75 MB)"
+  if ! "${PYTHON}" "${ROOT}/scripts/download_whisper_model.py" --size tiny --out "${MODEL_DIR}"; then
+    echo "ERROR: Whisper download failed."
+    echo "  rm -rf ${ROOT}/models/models--openai--whisper-large-v3-turbo"
+    echo "  export HF_TOKEN=<token>   # optional, avoids HF rate limits"
+    echo "  ${PYTHON} ${ROOT}/scripts/download_whisper_model.py --size tiny --out ${MODEL_DIR}"
+    exit 1
+  fi
 elif [[ ! -f "${MODEL_DIR}/model.bin" ]]; then
   echo "WARN: place Whisper model at ${MODEL_DIR}/model.bin or set ASR_MODEL_PATH"
 fi

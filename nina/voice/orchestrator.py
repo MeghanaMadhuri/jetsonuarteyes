@@ -230,6 +230,156 @@ class VoiceAssistant:
                 break
             time.sleep(0.05)
 
+    def run_push_to_talk(
+        self,
+        hold_event: threading.Event,
+        *,
+        cancel_event: Optional[threading.Event] = None,
+        post_release_sec: float = 25.0,
+    ) -> bool:
+        """One utterance: stream mic while *hold_event* is set, then ASR → LLM → TTS.
+
+        Blocks the calling thread. Returns True when a reply was spoken.
+        """
+        cancel = cancel_event or threading.Event()
+        try:
+            wait_for_services(
+                llm=self._llm,
+                tts=self._tts,
+                asr_health_url=f"{self._settings.asr_base_url}/health",
+                timeout_sec=90.0,
+            )
+        except VoiceServiceError as exc:
+            self._status(f"voice services unavailable: {exc}")
+            return False
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                self._run_push_to_talk(hold_event, cancel, post_release_sec)
+            )
+        finally:
+            loop.close()
+
+    async def _run_push_to_talk(
+        self,
+        hold_event: threading.Event,
+        cancel_event: threading.Event,
+        post_release_sec: float,
+    ) -> bool:
+        import websockets  # lazy: optional dep
+
+        asr_url = asr_websocket_url(self._settings.asr_base_url, self._settings.device_id)
+        self._status("Hold mic and speak")
+        handled = False
+        release_deadline: Optional[float] = None
+
+        async def _recv_once(ws) -> None:
+            nonlocal handled, release_deadline
+            while not cancel_event.is_set():
+                if release_deadline is not None and time.monotonic() > release_deadline:
+                    self._status("no speech heard")
+                    break
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if isinstance(raw, bytes):
+                    continue
+                text = str(raw).strip()
+                if not text:
+                    continue
+                await self._handle_transcript(text)
+                handled = True
+                break
+
+        try:
+            async with websockets.connect(
+                asr_url,
+                ping_interval=20,
+                ping_timeout=20,
+                max_size=2**20,
+            ) as ws:
+                recv_task = asyncio.create_task(_recv_once(ws))
+                send_task = asyncio.create_task(
+                    self._send_loop_ptt(ws, hold_event, cancel_event)
+                )
+
+                while not cancel_event.is_set() and not recv_task.done():
+                    if not hold_event.is_set() and release_deadline is None:
+                        release_deadline = time.monotonic() + post_release_sec
+                    await asyncio.sleep(0.05)
+
+                if not hold_event.is_set() and release_deadline is None:
+                    release_deadline = time.monotonic() + post_release_sec
+
+                if self._mic is not None:
+                    self._mic.stop()
+                    self._mic = None
+
+                if not recv_task.done():
+                    try:
+                        await asyncio.wait_for(recv_task, timeout=post_release_sec + 2.0)
+                    except asyncio.TimeoutError:
+                        self._status("ASR timeout")
+                else:
+                    try:
+                        await recv_task
+                    except Exception:
+                        log.debug("ptt recv task ended", exc_info=True)
+
+                send_task.cancel()
+                try:
+                    await send_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception as exc:
+            if not cancel_event.is_set():
+                self._status(f"voice error: {exc}")
+            return False
+        finally:
+            if self._mic is not None:
+                self._mic.stop()
+                self._mic = None
+        return handled
+
+    async def _send_loop_ptt(self, ws, hold_event: threading.Event, cancel_event: threading.Event) -> None:
+        queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=256)
+        loop = asyncio.get_running_loop()
+
+        def on_chunk(data: bytes) -> None:
+            if self._speaking or cancel_event.is_set():
+                return
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, data)
+            except Exception:
+                pass
+
+        self._mic = MicCapture(
+            device=self._settings.mic_device,
+            sample_rate=self._settings.mic_rate_hz,
+            on_chunk=on_chunk,
+        )
+        self._mic.start()
+        try:
+            while not cancel_event.is_set():
+                if not hold_event.is_set():
+                    await asyncio.sleep(0.03)
+                    if queue.empty():
+                        break
+                try:
+                    chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+                if chunk is None:
+                    break
+                await ws.send(chunk)
+        finally:
+            if self._mic is not None:
+                self._mic.stop()
+                self._mic = None
+
     def status_dict(self) -> dict:
         return {
             "running": self.running,

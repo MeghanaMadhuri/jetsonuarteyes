@@ -25,6 +25,7 @@ NAV_ITEMS: List[Tuple[str, str, str]] = [
     ("home", "Home", "\u2302"),                # house
     ("drive", "Drive", "\u2B95"),              # right arrow (substitute for car)
     ("vision", "Vision", "\u25CE"),            # bullseye
+    ("voice", "Voice", "\u1F3A4"),             # microphone
     ("perception", "Perception", "\u2299"),    # circled dot - sensor fusion view
     ("map", "Map", "\u25A6"),                  # square with grid
     ("actions", "Actions", "\u2630"),          # trigram (lines)
@@ -38,6 +39,7 @@ NAV_ITEMS: List[Tuple[str, str, str]] = [
 class Sidebar(QFrame):
     nav_changed = pyqtSignal(str)
     dev_quit_requested = pyqtSignal()
+    close_app_requested = pyqtSignal()
 
     def __init__(self, version_label: str = "v0.4", host_label: str = "", parent=None) -> None:
         super().__init__(parent)
@@ -73,6 +75,12 @@ class Sidebar(QFrame):
             self._buttons[key] = btn
 
         v.addStretch(1)
+
+        self._close_btn = QPushButton("  \u2715   Close app")
+        self._close_btn.setObjectName("navRow")
+        self._close_btn.setCursor(Qt.PointingHandCursor)
+        self._close_btn.clicked.connect(self.close_app_requested.emit)
+        v.addWidget(self._close_btn)
 
         footer_text = version_label
         if host_label:

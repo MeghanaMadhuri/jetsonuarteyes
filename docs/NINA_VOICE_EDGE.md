@@ -20,7 +20,7 @@ Runs the **sirena-repo voice stack** entirely on the Jetson (no `just_stream.js`
   Nina AudioPlayer (existing speaker path)
 ```
 
-Services live under `nina/voice/servers/` (copied/adapted from sirena-repo). The kiosk UI starts a **VoiceAssistant** thread when enabled.
+Services live under `nina/voice/servers/` (copied/adapted from sirena-repo). In the Nina app, open **Voice** in the sidebar, then **press and hold** the mic button to stream USB audio through ASR → LLM → TTS (playback on the Jetson speaker). Use **Close app** at the bottom of the sidebar to exit the kiosk UI.
 
 ## Jetson setup
 
@@ -39,6 +39,18 @@ NINA_VOICE_DEVICE_ID=nina-jetson
 NINA_VOICE_MIC_DEVICE=default
 LLM_PRIMARY_MODEL=gemma2:2b
 ASR_MODEL_PATH=/home/jnx/Nvidia-jetson-platform/models/whisper-tiny
+```
+
+Whisper weights (~75 MB for **tiny**) are downloaded by `scripts/install-voice-edge.sh`.
+If download fails (HF rate limit or a partial turbo cache), on the Jetson:
+
+```bash
+cd ~/BLDC_HARI/Nvidia-jetson-platform   # or your clone path
+rm -rf models/models--openai--whisper-large-v3-turbo models/whisper-turbo
+.venv-link/bin/pip install huggingface_hub
+export HF_TOKEN=hf_...   # optional — faster / fewer rate-limit errors
+.venv-link/bin/python scripts/download_whisper_model.py --size tiny \
+  --out models/whisper-tiny
 ```
 
 Terminal 1 — microservices:

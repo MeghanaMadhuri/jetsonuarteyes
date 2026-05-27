@@ -97,6 +97,11 @@ class NinaService:
         self._movement_store: Optional[MovementStore] = None
         self._voice_assistant: Optional[Any] = None
         self._voice_start_detail: Optional[str] = None
+        self._voice_ptt_hold = threading.Event()
+        self._voice_ptt_cancel = threading.Event()
+        self._voice_ptt_thread: Optional[threading.Thread] = None
+        self._voice_ptt_lock = threading.Lock()
+        self._voice_ui_callbacks: Dict[str, Any] = {}
 
     @property
     def movement_store(self) -> MovementStore:
@@ -165,46 +170,174 @@ class NinaService:
         return bool(getattr(drv, "is_in_motion", lambda: False)())
 
     def start_voice_assistant(self) -> None:
-        """Local conversational loop (mic → ASR → Ollama → TTS). Requires voice-edge services."""
+        """Optional always-on listener (off by default; Voice screen uses push-to-talk)."""
         ve = self.settings.voice_edge
         if not ve.enabled or not ve.assistant_enabled:
+            return
+        import os
+
+        if os.environ.get("NINA_VOICE_ASSISTANT_AUTO", "").strip().lower() not in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
             return
         if self._voice_assistant is not None:
             return
         try:
-            from nina.voice.settings import load_voice_edge_settings
-            from nina.voice.orchestrator import VoiceAssistant
-
-            repo_root = Path(__file__).resolve().parents[2]
-            full = load_voice_edge_settings(repo_root)
-            self._voice_assistant = VoiceAssistant(full)
-            self._voice_assistant.start()
+            assistant = self._make_voice_assistant()
+            assistant.start()
+            self._voice_assistant = assistant
             self._voice_start_detail = None
-            log.info("voice assistant thread started")
+            log.info("voice assistant thread started (auto)")
         except Exception as exc:
             self._voice_start_detail = str(exc)
             log.warning("voice assistant failed to start: %s", exc)
+
+    def _make_voice_assistant(self) -> Any:
+        from nina.voice.settings import load_voice_edge_settings
+        from nina.voice.orchestrator import VoiceAssistant
+
+        repo_root = Path(__file__).resolve().parents[2]
+        full = load_voice_edge_settings(repo_root)
+        return VoiceAssistant(
+            full,
+            on_status=self._voice_ui_notify_status,
+            on_transcript=self._voice_ui_notify_transcript,
+            on_response=self._voice_ui_notify_response,
+        )
+
+    def set_voice_ui_callbacks(
+        self,
+        *,
+        on_status: Optional[Any] = None,
+        on_transcript: Optional[Any] = None,
+        on_response: Optional[Any] = None,
+    ) -> None:
+        self._voice_ui_callbacks = {}
+        if on_status is not None:
+            self._voice_ui_callbacks["on_status"] = on_status
+        if on_transcript is not None:
+            self._voice_ui_callbacks["on_transcript"] = on_transcript
+        if on_response is not None:
+            self._voice_ui_callbacks["on_response"] = on_response
+
+    def _voice_ui_notify_status(self, msg: str) -> None:
+        cb = self._voice_ui_callbacks.get("on_status")
+        if cb is not None:
+            try:
+                cb(msg)
+            except Exception:
+                pass
+
+    def _voice_ui_notify_transcript(self, text: str) -> None:
+        cb = self._voice_ui_callbacks.get("on_transcript")
+        if cb is not None:
+            try:
+                cb(text)
+            except Exception:
+                pass
+
+    def _voice_ui_notify_response(self, text: str) -> None:
+        cb = self._voice_ui_callbacks.get("on_response")
+        if cb is not None:
+            try:
+                cb(text)
+            except Exception:
+                pass
+
+    def voice_ptt_busy(self) -> bool:
+        t = self._voice_ptt_thread
+        return t is not None and t.is_alive()
+
+    def begin_voice_ptt(self) -> str:
+        """Start push-to-talk capture (hold mic button). Returns error text or \"\"."""
+        ve = self.settings.voice_edge
+        if not ve.enabled:
+            return "Voice edge disabled — set NINA_VOICE_EDGE_ENABLE=1"
+        with self._voice_ptt_lock:
+            if self.voice_ptt_busy():
+                return "Already listening"
+            self._voice_ptt_hold.set()
+            self._voice_ptt_cancel.clear()
+            thread = threading.Thread(
+                target=self._voice_ptt_worker,
+                name="VoicePTT",
+                daemon=True,
+            )
+            self._voice_ptt_thread = thread
+            thread.start()
+        return ""
+
+    def end_voice_ptt(self) -> None:
+        self._voice_ptt_hold.clear()
+
+    def cancel_voice_ptt(self) -> None:
+        self._voice_ptt_cancel.set()
+        self._voice_ptt_hold.clear()
+        t = self._voice_ptt_thread
+        if t is not None:
+            t.join(timeout=3.0)
+        self._voice_ptt_thread = None
+
+    def _voice_ptt_worker(self) -> None:
+        try:
+            assistant = self._make_voice_assistant()
+            assistant.run_push_to_talk(
+                self._voice_ptt_hold,
+                cancel_event=self._voice_ptt_cancel,
+            )
+        except Exception as exc:
+            self._voice_ui_notify_status(f"voice error: {exc}")
+            log.warning("voice PTT failed: %s", exc)
+        finally:
+            self._voice_ui_notify_status("Hold mic to speak")
+            with self._voice_ptt_lock:
+                self._voice_ptt_thread = None
 
     def voice_assistant_status(self) -> Dict[str, Any]:
         ve = self.settings.voice_edge
         if not ve.enabled:
             return {"enabled": False, "running": False, "detail": "disabled"}
         mon = self._voice_assistant
-        if mon is None:
+        if mon is not None:
+            try:
+                st = mon.status_dict()
+                st["enabled"] = True
+                st["detail"] = "ok" if st.get("running") else "stopped"
+                return st
+            except Exception as exc:
+                return {"enabled": True, "running": False, "detail": str(exc)}
+        try:
+            from nina.voice.clients import LlmClient, TtsClient
+            import requests
+
+            llm = LlmClient(ve.llm_base_url, device_id=ve.device_id)
+            tts = TtsClient(ve.tts_base_url, device_id=ve.device_id)
+            asr_ok = False
+            try:
+                r = requests.get(f"{ve.asr_base_url.rstrip('/')}/health", timeout=2.0)
+                asr_ok = r.status_code == 200
+            except Exception:
+                pass
+            llm_ok = llm.health()
+            tts_ok = tts.health()
+            ready = asr_ok and llm_ok and tts_ok
             return {
                 "enabled": True,
-                "running": False,
-                "detail": self._voice_start_detail or "not started",
+                "running": self.voice_ptt_busy(),
+                "llm_ok": llm_ok,
+                "tts_ok": tts_ok,
+                "asr_ok": asr_ok,
+                "detail": "ready" if ready else "start scripts/start-voice-edge.sh",
+                "mic_device": ve.mic_device,
             }
-        try:
-            st = mon.status_dict()
-            st["enabled"] = True
-            st["detail"] = "ok" if st.get("running") else "stopped"
-            return st
         except Exception as exc:
             return {"enabled": True, "running": False, "detail": str(exc)}
 
     def stop_voice_assistant(self) -> None:
+        self.cancel_voice_ptt()
         if self._voice_assistant is not None:
             try:
                 self._voice_assistant.stop()

@@ -1,102 +1,166 @@
 #!/usr/bin/env python3
-"""
-Download CTranslate2 Whisper Turbo Model
-This script downloads the required model for the enhanced ASR service.
-"""
+"""Download a faster-whisper CTranslate2 model for Nina ASR (Jetson-sized)."""
 
+from __future__ import annotations
+
+import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
-import subprocess
 
-def check_ctranslate2():
-    """Check if ctranslate2 is installed"""
-    try:
-        import ctranslate2
-        print("✅ ctranslate2 is installed")
-        return True
-    except ImportError:
-        print("❌ ctranslate2 is not installed")
-        print("   Install with: pip3 install ctranslate2")
-        return False
+# Repo IDs published by Systran for faster-whisper (small, Orin-friendly).
+MODEL_REPOS = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+}
 
-def download_model():
-    """Download the Whisper Turbo CTranslate2 model"""
-    print("🔍 Downloading Whisper Turbo CTranslate2 model...")
-    
-    # Create models directory
-    models_dir = Path("models")
-    models_dir.mkdir(exist_ok=True)
-    
-    # Model path
-    model_path = models_dir / "whisper-turbo"
-    
-    if (model_path / "model.bin").exists():
-        print("✅ Model already exists at models/whisper-turbo/")
-        return True
-    
-    print("📥 Downloading model (this may take a while)...")
-    
-    try:
-        # Use ctranslate2 to download the model
-        result = subprocess.run([
-            sys.executable, "-c", """
-import ctranslate2
-from faster_whisper import WhisperModel
+# Legacy install script pulled this huge model into the wrong tree — safe to delete.
+_STALE_CACHE_DIRS = (
+    "models/models--openai--whisper-large-v3-turbo",
+    "models/whisper-turbo",
+    "models/_fw_cache",
+)
 
-print("Downloading Whisper Turbo model...")
-model = WhisperModel("openai/whisper-large-v3-turbo", download_root="models")
-print("Model downloaded successfully!")
-"""
-        ], capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            print("✅ Model downloaded successfully!")
-            return True
-        else:
-            print(f"❌ Download failed: {result.stderr}")
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _hf_token() -> str | None:
+    for key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw
+    return None
+
+
+def _remove_stale_caches(root: Path) -> None:
+    for rel in _STALE_CACHE_DIRS:
+        path = root / rel
+        if path.exists():
+            print(f"Removing stale/incomplete cache: {path}")
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _verify_model_dir(model_dir: Path) -> bool:
+    required = ("model.bin", "config.json")
+    for name in required:
+        if not (model_dir / name).is_file():
+            print(f"Missing {model_dir / name}")
             return False
-            
-    except Exception as e:
-        print(f"❌ Error downloading model: {e}")
-        return False
-
-def verify_model():
-    """Verify the downloaded model"""
-    print("🔍 Verifying model...")
-    
-    model_path = Path("models/whisper-turbo")
-    required_files = ["model.bin", "config.json", "tokenizer.json"]
-    
-    for file in required_files:
-        if not (model_path / file).exists():
-            print(f"❌ Missing required file: {file}")
-            return False
-    
-    print("✅ Model verification successful")
     return True
 
-def main():
-    print("🚀 Whisper Turbo Model Downloader")
+
+def download_with_huggingface_hub(repo_id: str, model_dir: Path) -> bool:
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("huggingface_hub not installed (pip install huggingface_hub)")
+        return False
+
+    token = _hf_token()
+    if not token:
+        print(
+            "Note: set HF_TOKEN for faster Hugging Face downloads "
+            "(optional; tiny model is ~75 MB)."
+        )
+
+    model_dir.parent.mkdir(parents=True, exist_ok=True)
+    if model_dir.exists() and not _verify_model_dir(model_dir):
+        print(f"Removing incomplete model dir: {model_dir}")
+        shutil.rmtree(model_dir, ignore_errors=True)
+
+    print(f"Downloading {repo_id} -> {model_dir} ...")
+    snapshot_download(
+        repo_id,
+        local_dir=str(model_dir),
+        local_dir_use_symlinks=False,
+        token=token,
+    )
+    return _verify_model_dir(model_dir)
+
+
+def download_with_faster_whisper(size: str, model_dir: Path, root: Path) -> bool:
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        print("faster_whisper not installed")
+        return False
+
+    cache_root = root / "models" / "_fw_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading faster-whisper size={size!r} via faster_whisper ...")
+    WhisperModel(size, download_root=str(cache_root), device="cpu", compute_type="int8")
+
+    found: Path | None = None
+    for candidate in cache_root.rglob("model.bin"):
+        if candidate.is_file():
+            found = candidate.parent
+            break
+    if found is None:
+        print("Could not locate model.bin after faster_whisper download")
+        return False
+
+    if model_dir.exists():
+        shutil.rmtree(model_dir, ignore_errors=True)
+    shutil.copytree(found, model_dir)
+    return _verify_model_dir(model_dir)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--size",
+        choices=sorted(MODEL_REPOS),
+        default=os.environ.get("WHISPER_MODEL_SIZE", "tiny"),
+        help="Model size (default: tiny — recommended on Orin Nano)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output directory (default: models/whisper-<size>)",
+    )
+    args = parser.parse_args()
+
+    root = _repo_root()
+    os.chdir(root)
+
+    model_dir = args.out or (root / "models" / f"whisper-{args.size}")
+    model_dir = model_dir.resolve()
+
+    print("Nina Whisper model downloader")
     print("=" * 40)
-    
-    # Check dependencies
-    if not check_ctranslate2():
-        sys.exit(1)
-    
-    # Download model
-    if not download_model():
-        print("❌ Failed to download model")
-        sys.exit(1)
-    
-    # Verify model
-    if not verify_model():
-        print("❌ Model verification failed")
-        sys.exit(1)
-    
-    print("\n🎉 Model download complete!")
-    print("📁 Model location: models/whisper-turbo/")
-    print("🔧 You can now run the ASR service with: ./start_asr.sh")
+
+    if _verify_model_dir(model_dir):
+        print(f"Model already present: {model_dir}")
+        print(f"Set ASR_MODEL_PATH={model_dir}")
+        return 0
+
+    _remove_stale_caches(root)
+
+    repo_id = MODEL_REPOS[args.size]
+    ok = download_with_huggingface_hub(repo_id, model_dir)
+    if not ok:
+        print("Retrying with faster_whisper downloader ...")
+        ok = download_with_faster_whisper(args.size, model_dir, root)
+
+    if not ok:
+        print("\nDownload failed.")
+        print("Try:")
+        print(f"  cd {root}")
+        print("  export HF_TOKEN=<your Hugging Face token>   # optional")
+        print(f"  python3 scripts/download_whisper_model.py --size {args.size}")
+        print("Or install hub client: pip install huggingface_hub")
+        return 1
+
+    print("\nModel ready.")
+    print(f"  Path: {model_dir}")
+    print(f"  ASR_MODEL_PATH={model_dir}")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

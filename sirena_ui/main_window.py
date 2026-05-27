@@ -49,6 +49,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -64,7 +65,7 @@ from nina.services.audio_player import (
 )
 from nina.sensors.ads1115 import get_battery_snapshot
 from sirena_ui.host_power import confirm_power_action, perform_host_power
-from sirena_ui.widgets.dev_quit import prompt_dev_quit_password
+from sirena_ui.widgets.dev_quit import dev_quit_password, prompt_dev_quit_password
 from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from sirena_ui.widgets.status_bar import StatusBar
@@ -147,6 +148,7 @@ class MainWindow(QMainWindow):
             "lean_cal": "Nina \u00b7 Lean Cal (backward bench)",
             "settings": "Nina \u00b7 Settings",
             "health": "Nina \u00b7 Health Check",
+            "voice": "Nina \u00b7 Voice",
         }
 
         central = QWidget()
@@ -170,6 +172,7 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar(version_label=f"v{APP_VERSION}", host_label=host)
         self._sidebar.nav_changed.connect(self.navigate)
         self._sidebar.dev_quit_requested.connect(self._on_dev_quit_requested)
+        self._sidebar.close_app_requested.connect(self._on_close_app_requested)
         body.addWidget(self._sidebar)
 
         self._stack = QStackedWidget()
@@ -203,7 +206,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self._service.start_battery_ads1115_monitor)
         QTimer.singleShot(300, self._service.start_ir_obstacle_stop_monitor)
         QTimer.singleShot(400, self._service.start_esp32_trigger_monitor)
-        QTimer.singleShot(2500, self._service.start_voice_assistant)
         # Touch chip is often absent on the first probe right after reboot.
         QTimer.singleShot(1500, self._bringup_touch_monitor)
         self._touch_bringup_timer.start()
@@ -244,6 +246,28 @@ class MainWindow(QMainWindow):
         """8 rapid Sirena-logo taps → password (no prior toast) → quit app."""
         if not prompt_dev_quit_password(self):
             return
+        self._quit_application()
+
+    def _on_close_app_requested(self) -> None:
+        """Sidebar Close app — confirm (and password when configured)."""
+        if dev_quit_password():
+            if not prompt_dev_quit_password(self):
+                return
+        else:
+            box = QMessageBox(self)
+            box.setWindowTitle("Close Nina")
+            box.setText("Close the Nina app on this Jetson?")
+            box.setInformativeText(
+                "The kiosk will exit. Restart with systemctl --user restart "
+                "nina-ui-kiosk.service or launch-sirena.sh."
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            box.setDefaultButton(QMessageBox.No)
+            if box.exec_() != QMessageBox.Yes:
+                return
+        self._quit_application()
+
+    def _quit_application(self) -> None:
         try:
             self._service.shutdown()
         except Exception:
@@ -527,6 +551,9 @@ class MainWindow(QMainWindow):
         if key == "health":
             from sirena_ui.screens.health_screen import HealthScreen
             return HealthScreen(self._service)
+        if key == "voice":
+            from sirena_ui.screens.voice_screen import VoiceScreen
+            return VoiceScreen(self._service)
         raise ValueError(f"Unknown screen key: {key}")
 
     def _on_nav_request(self, key: str) -> None:
@@ -597,7 +624,6 @@ class MainWindow(QMainWindow):
             self._apply_bus_footer_from_health({})
         self._service.start_ir_obstacle_stop_monitor()
         self._service.start_esp32_trigger_monitor()
-        self._service.start_voice_assistant()
         self._service.start_battery_ads1115_monitor()
         self._service.start_touch_at42qt2120_monitor()
         self._service.start_mpu9250_imu_monitor()
@@ -612,7 +638,16 @@ class MainWindow(QMainWindow):
         self._status_bar.set_dot("bus", ok=True)
         self._status_bar.set_dot("wifi", ok=True)
         self._status_bar.set_dot("battery", ok=True)
-        self._status_bar.set_dot("voice", ok=False, warn=True)  # ESP voice not yet wired
+        ve = self._service.settings.voice_edge
+        if ve.enabled:
+            st = self._service.voice_assistant_status()
+            self._status_bar.set_dot(
+                "voice",
+                ok=bool(st.get("llm_ok") and st.get("tts_ok")),
+                warn=ve.enabled and not (st.get("llm_ok") and st.get("tts_ok")),
+            )
+        else:
+            self._status_bar.set_dot("voice", ok=False, warn=True)
         detected = int(health.get("detected", 0) or 0)
         expected = int(health.get("expected", 0) or 0)
         if expected > 0:
