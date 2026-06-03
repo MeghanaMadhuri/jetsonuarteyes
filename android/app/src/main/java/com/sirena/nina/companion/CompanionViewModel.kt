@@ -100,6 +100,8 @@ data class ActionRowUi(
     val file: String?,
     val audio: String?,
     val audioOffsetSec: Double?,
+    val eyeExpression: Int?,
+    val eyeOffsetSec: Double?,
     /** From motion JSON when ``duration_sec`` / ``frame_count`` are present on the link response. */
     val durationSec: Double?,
     val frameCount: Int?,
@@ -542,6 +544,18 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                             o.isNull("audio_offset") -> null
                             else -> o.optDouble("audio_offset").takeUnless { it.isNaN() }
                         }
+                    val eyeExpr =
+                        when {
+                            !o.has("eye_expression") -> null
+                            o.isNull("eye_expression") -> null
+                            else -> o.optInt("eye_expression").takeIf { it in 0..33 }
+                        }
+                    val eyeOff =
+                        when {
+                            !o.has("eye_offset") -> null
+                            o.isNull("eye_offset") -> null
+                            else -> o.optDouble("eye_offset").takeUnless { it.isNaN() }
+                        }
                     val dur =
                         when {
                             !o.has("duration_sec") -> null
@@ -560,6 +574,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                             file = o.optString("file").takeIf { it.isNotBlank() },
                             audio = o.optString("audio").takeIf { it.isNotBlank() },
                             audioOffsetSec = off,
+                            eyeExpression = eyeExpr,
+                            eyeOffsetSec = eyeOff,
                             durationSec = dur,
                             frameCount = fc,
                         ),
@@ -655,6 +671,20 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             null
         }
+
+    suspend fun fetchEyeExpressions(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.eyeExpressionsList(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun sendEyeExpression(expressionId: Int): JSONObject {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        return client.eyeExpressionSet(url, bearer, expressionId)
+    }
 
     suspend fun runMovement(movementId: String): JSONObject {
         val url = prefs.baseUrl.first()
@@ -1119,6 +1149,51 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.actionAudioPreview(url, bearer, action)
+            null
+        } catch (e: Exception) {
+            linkApiErrorMessage(e)
+        }
+
+    suspend fun fetchActionEyeInfo(action: String): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.actionEyeInfo(url, action)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postActionEyeBind(
+        action: String,
+        eyeExpression: Int,
+        eyeOffsetSec: Double,
+    ): String? =
+        try {
+            actionAudioMutateError()?.let { return it }
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionEyeBind(url, bearer, action, eyeExpression, eyeOffsetSec)
+            null
+        } catch (e: Exception) {
+            linkApiErrorMessage(e)
+        }
+
+    suspend fun postActionEyeOffset(action: String, eyeOffsetSec: Double): String? =
+        try {
+            actionAudioMutateError()?.let { return it }
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionEyeOffset(url, bearer, action, eyeOffsetSec)
+            null
+        } catch (e: Exception) {
+            linkApiErrorMessage(e)
+        }
+
+    suspend fun postActionEyeClear(action: String): String? =
+        try {
+            actionAudioMutateError()?.let { return it }
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionEyeClear(url, bearer, action)
             null
         } catch (e: Exception) {
             linkApiErrorMessage(e)

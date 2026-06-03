@@ -244,6 +244,11 @@ class TouchAt42qt2120Monitor:
         self._use_key_mask = bool(getattr(s, "use_key_mask", False))
         self._channel_mask = int(getattr(s, "channel_mask", 0xFFF)) & 0xFFF
         self._poll_sec = float(s.poll_interval_sec)
+        self._chip_init = bool(getattr(s, "chip_init", True))
+        self._detect_threshold = int(getattr(s, "detect_threshold", 25))
+        self._threshold_each_poll = bool(getattr(s, "threshold_each_poll", True))
+        self._sample_settle_sec = float(getattr(s, "sample_settle_sec", 0.02))
+        self._recalib_after_fires = int(getattr(s, "recalib_after_fires", 4))
         self._touch = AT42QT2120(s.i2c_bus, s.i2c_address)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -258,11 +263,30 @@ class TouchAt42qt2120Monitor:
         self._idle_mask: int = 0
         self._prev_masked: int = 0
         self._prev_touched = False
+        self._prev_pressed = False
         self._hits = 0
         self._release_hits = 0
+        self._fire_count_since_calib = 0
         self._last_signal_mono: float = -1e30
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
+
+    def _apply_threshold_for_sample(self) -> None:
+        """DMR ``touchsensing()`` writes threshold then waits before KEY_STATUS read."""
+        if self._detect_threshold <= 0:
+            return
+        if not self._threshold_each_poll and self._fire_count_since_calib > 0:
+            return
+        self._touch.apply_detect_threshold(self._detect_threshold)
+        if self._sample_settle_sec > 0:
+            time.sleep(self._sample_settle_sec)
+
+    def _sample_pressed(self, read_pressed: Callable[[], bool]) -> bool:
+        """Read press state after optional threshold write; ignore chassis-coupled STATUS."""
+        self._apply_threshold_for_sample()
+        if self._touch.status_stuck_idle():
+            return False
+        return bool(read_pressed())
 
     def start(self) -> None:
         s = self._svc.settings.touch_at42qt2120
@@ -277,6 +301,10 @@ class TouchAt42qt2120Monitor:
         self._touch.open()
         try:
             self._touch.verify_chip_id()
+            if self._chip_init:
+                self._touch.dmr_bootstrap(
+                    detect_threshold=self._detect_threshold,
+                )
         except Exception:
             self._touch.close()
             raise
@@ -291,8 +319,10 @@ class TouchAt42qt2120Monitor:
         self._idle_mask = 0
         self._prev_masked = 0
         self._prev_touched = False
+        self._prev_pressed = False
         self._hits = 0
         self._release_hits = 0
+        self._fire_count_since_calib = 0
         self._last_signal_mono = -1e30
         self._last_fire_mono = -1e30
         self._quiet_until_mono = -1e30
@@ -303,14 +333,16 @@ class TouchAt42qt2120Monitor:
         self._thread.start()
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X detect=%s "
-            "poll=%.2fs debounce=%d release=%d cooldown=%.1fs blind=%.2fs "
-            "quiet=max(cooldown,blind) channel=%d)",
+            "poll=%.2fs debounce=%d release=%d threshold=%d chip_init=%s "
+            "cooldown=%.1fs blind=%.2fs channel=%d)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
             self._detect_mode,
             self._poll_sec,
             self._debounce_reads,
             self._release_reads,
+            self._detect_threshold,
+            self._chip_init,
             self._cooldown_sec,
             self._blind_sec,
             self._touch_channel,
@@ -348,17 +380,19 @@ class TouchAt42qt2120Monitor:
             self._run_keystatus(read_pressed)
 
     def _run_keystatus(self, read_pressed: Callable[[], bool]) -> None:
-        """DMR-style loop: KEY_STATUS byte (or STATUS), level debounce, release re-arm."""
+        """DMR-style loop: KEY_STATUS + rising-edge debounce + release re-arm."""
         while not self._stop.is_set():
             try:
                 if self._touch.is_calibrating():
                     self._hits = 0
+                    self._prev_pressed = False
                     time.sleep(self._poll_sec)
                     continue
-                pressed = read_pressed()
+                pressed = self._sample_pressed(read_pressed)
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
                 self._hits = 0
+                self._prev_pressed = False
                 time.sleep(max(self._poll_sec, 0.1))
                 continue
 
@@ -367,6 +401,7 @@ class TouchAt42qt2120Monitor:
                 self._armed = False
                 self._hits = 0
                 self._release_hits = 0
+                self._prev_pressed = pressed
                 time.sleep(self._poll_sec)
                 continue
 
@@ -378,14 +413,17 @@ class TouchAt42qt2120Monitor:
                     consecutive_clear=self._release_hits,
                 )
                 self._hits = 0
+                self._prev_pressed = pressed
                 time.sleep(self._poll_sec)
                 continue
 
-            fire, self._hits = touch_debounce_step(
+            fire, self._hits = touch_rising_edge_debounce_step(
                 pressed,
+                self._prev_pressed,
                 debounce_reads=self._debounce_reads,
                 consecutive_hits=self._hits,
             )
+            self._prev_pressed = pressed
             if fire:
                 self._complete_reaction(pressed=pressed, masked=None)
 
@@ -544,10 +582,22 @@ class TouchAt42qt2120Monitor:
         self._armed = False
         self._release_hits = 0
         self._hits = 0
+        self._prev_pressed = False
         try:
             self._svc.run_touch_reaction()
         except Exception:
             log.exception("Touch reaction failed")
+        self._fire_count_since_calib += 1
+        if (
+            self._recalib_after_fires > 0
+            and self._fire_count_since_calib >= self._recalib_after_fires
+        ):
+            try:
+                self._touch.recalibrate()
+                self._fire_count_since_calib = 0
+                log.info("AT42QT2120 recalibrated after %d touch reactions", self._recalib_after_fires)
+            except Exception:
+                log.warning("AT42QT2120 recalibrate failed", exc_info=True)
         self._last_fire_mono = time.monotonic()
         quiet_sec = max(self._blind_sec, self._cooldown_sec)
         if quiet_sec > 0:

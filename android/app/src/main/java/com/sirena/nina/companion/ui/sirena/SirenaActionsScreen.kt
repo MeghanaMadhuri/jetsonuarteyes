@@ -55,7 +55,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private enum class ActionsSubtab { Playback, Record, Audio }
+private enum class ActionsSubtab { Playback, Record, Audio, Eyes }
 
 private fun defaultSpeechForAction(name: String): String =
     name
@@ -79,6 +79,19 @@ private fun formatMotionMeta(row: ActionRowUi): String {
         d != null -> String.format(Locale.US, "%.1fs", d)
         else -> "—"
     }
+}
+
+private fun formatEyeMeta(row: ActionRowUi): String {
+    val eid = row.eyeExpression
+    val off = row.eyeOffsetSec
+    if (eid == null) return "Eyes: none"
+    val suffix =
+        if (off != null && off > 0.0) {
+            String.format(Locale.US, " • +%.2fs", off)
+        } else {
+            ""
+        }
+    return "Eyes: $eid$suffix"
 }
 
 private fun formatAudioMeta(row: ActionRowUi): String {
@@ -127,7 +140,7 @@ private fun formatRemoteRecordStatus(st: JSONObject?): String {
 }
 
 /**
- * Actions: Playback / Record / Audio — same sub-tabs as [sirena_ui.screens.actions_screen.ActionsScreen],
+ * Actions: Playback / Record / Audio / Eyes — same sub-tabs as [sirena_ui.screens.actions_screen.ActionsScreen],
  * backed by manifest + record HTTP on the link daemon. Content uses the full content area.
  */
 @Composable
@@ -156,10 +169,20 @@ fun SirenaActionsScreen(
             when (initialSubtab.lowercase()) {
                 "record" -> ActionsSubtab.Record
                 "audio" -> ActionsSubtab.Audio
+                "eyes" -> ActionsSubtab.Eyes
                 else -> ActionsSubtab.Playback
             },
         )
     }
+
+    var eyeExprIdStr by remember { mutableStateOf("0") }
+    var eyeOffsetStr by remember { mutableStateOf("0.0") }
+    var eyeActionMenuExpanded by remember { mutableStateOf(false) }
+    var eyeExprMenuExpanded by remember { mutableStateOf(false) }
+    var eyeErr by remember { mutableStateOf<String?>(null) }
+    var eyeBusy by remember { mutableStateOf(false) }
+    var eyeLast by remember { mutableStateOf("—") }
+    var eyeCatalog by remember { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
 
     var recordName by remember { mutableStateOf("motion") }
     var recordSeconds by remember { mutableStateOf("5.0") }
@@ -195,6 +218,7 @@ fun SirenaActionsScreen(
             when (initialSubtab.lowercase()) {
                 "record" -> ActionsSubtab.Record
                 "audio" -> ActionsSubtab.Audio
+                "eyes" -> ActionsSubtab.Eyes
                 else -> ActionsSubtab.Playback
             }
         val p = prefillAudioAction?.trim()?.takeIf { it.isNotEmpty() }
@@ -210,6 +234,24 @@ fun SirenaActionsScreen(
 
     LaunchedEffect(Unit) {
         vm.refreshManifestActions()
+    }
+
+    LaunchedEffect(subtab, link.isOnline) {
+        if (subtab == ActionsSubtab.Eyes && link.isOnline) {
+            val j = vm.fetchEyeExpressions()
+            val arr = j?.optJSONArray("expressions")
+            if (arr != null) {
+                val list = mutableListOf<Pair<Int, String>>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val id = o.optInt("id", -1)
+                    if (id in 0..33) {
+                        list.add(id to o.optString("name", "$id"))
+                    }
+                }
+                eyeCatalog = list.sortedBy { it.first }
+            }
+        }
     }
 
     LaunchedEffect(subtab, link.isOnline) {
@@ -252,12 +294,13 @@ fun SirenaActionsScreen(
     @Composable
     fun TabStrip() {
         SirenaSegmentedTabs(
-            tabs = listOf("Playback", "Record", "Audio"),
+            tabs = listOf("Playback", "Record", "Audio", "Eyes"),
             selectedIndex =
                 when (subtab) {
                     ActionsSubtab.Playback -> 0
                     ActionsSubtab.Record -> 1
                     ActionsSubtab.Audio -> 2
+                    ActionsSubtab.Eyes -> 3
                 },
             onSelect = { i ->
                 if (!recordingActive) {
@@ -265,7 +308,8 @@ fun SirenaActionsScreen(
                         when (i) {
                             0 -> ActionsSubtab.Playback
                             1 -> ActionsSubtab.Record
-                            else -> ActionsSubtab.Audio
+                            2 -> ActionsSubtab.Audio
+                            else -> ActionsSubtab.Eyes
                         }
                 }
             },
@@ -316,6 +360,7 @@ fun SirenaActionsScreen(
                                             row.file?.let { SirenaMutedText(it, maxLines = 1) }
                                             SirenaMutedText(formatMotionMeta(row), maxLines = 1)
                                             SirenaMutedText(formatAudioMeta(row), maxLines = 2)
+                                            SirenaMutedText(formatEyeMeta(row), maxLines = 2)
                                         }
                                         IconButton(
                                             onClick = {
@@ -790,6 +835,201 @@ fun SirenaActionsScreen(
                     }
                     SirenaCardTitle("Last result")
                     Text(audioLast, fontSize = SirenaType.muted, color = SirenaColors.text)
+                }
+            }
+
+            ActionsSubtab.Eyes -> {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SirenaMutedText(
+                        "Bind TFT expression ids (0–33) to actions. On play, the Jetson sends " +
+                            "the id over UART after the eye offset.",
+                        maxLines = 4,
+                    )
+                    Box {
+                        SirenaSecondaryButton(
+                            text =
+                                if (selectedActionName.isBlank()) {
+                                    "Select action ▾"
+                                } else {
+                                    "$selectedActionName ▾"
+                                },
+                            onClick = { eyeActionMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        DropdownMenu(
+                            expanded = eyeActionMenuExpanded,
+                            onDismissRequest = { eyeActionMenuExpanded = false },
+                        ) {
+                            actions.forEach { row ->
+                                DropdownMenuItem(
+                                    text = { Text(row.name) },
+                                    onClick = {
+                                        selectedActionName = row.name
+                                        row.eyeExpression?.let { eyeExprIdStr = it.toString() }
+                                        row.eyeOffsetSec?.let {
+                                            eyeOffsetStr =
+                                                String.format(Locale.US, "%.2f", it)
+                                        }
+                                        eyeActionMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (eyeCatalog.isNotEmpty()) {
+                        val selId = eyeExprIdStr.trim().toIntOrNull() ?: 0
+                        val label =
+                            eyeCatalog.find { it.first == selId }?.let { "${it.first} ${it.second}" }
+                                ?: "Expression $selId ▾"
+                        Box {
+                            SirenaSecondaryButton(
+                                text = label,
+                                onClick = { eyeExprMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            DropdownMenu(
+                                expanded = eyeExprMenuExpanded,
+                                onDismissRequest = { eyeExprMenuExpanded = false },
+                            ) {
+                                eyeCatalog.forEach { (id, name) ->
+                                    DropdownMenuItem(
+                                        text = { Text("$id $name") },
+                                        onClick = {
+                                            eyeExprIdStr = id.toString()
+                                            eyeExprMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = eyeExprIdStr,
+                            onValueChange = { eyeExprIdStr = it },
+                            label = { Text("Expression id (0–33)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = eyeOffsetStr,
+                        onValueChange = { eyeOffsetStr = it },
+                        label = { Text("Eye offset (s)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    eyeErr?.let {
+                        SirenaCard(kind = SirenaCardKind.Error) {
+                            Text(it, color = SirenaColors.pillErrorFg, fontSize = SirenaType.muted)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SirenaSecondaryButton(
+                            text = "Preview face",
+                            onClick = {
+                                scope.launch {
+                                    eyeErr = null
+                                    val id = eyeExprIdStr.trim().toIntOrNull()
+                                    if (id == null || id !in 0..33) {
+                                        eyeErr = "Expression id must be 0–33."
+                                        return@launch
+                                    }
+                                    if (!link.isOnline) {
+                                        eyeErr = "Robot offline."
+                                        return@launch
+                                    }
+                                    eyeBusy = true
+                                    try {
+                                        vm.sendEyeExpression(id)
+                                        eyeLast = "Sent expression $id to ESP."
+                                    } catch (e: Exception) {
+                                        eyeErr = e.message
+                                    } finally {
+                                        eyeBusy = false
+                                    }
+                                }
+                            },
+                            enabled = link.isOnline && !eyeBusy,
+                            modifier = buttonTall,
+                        )
+                        SirenaPrimaryButton(
+                            text = "Save binding",
+                            onClick = {
+                                scope.launch {
+                                    eyeErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        eyeErr = "Select an action."
+                                        return@launch
+                                    }
+                                    val id = eyeExprIdStr.trim().toIntOrNull()
+                                    if (id == null || id !in 0..33) {
+                                        eyeErr = "Expression id must be 0–33."
+                                        return@launch
+                                    }
+                                    if (!actionsStaticOk) {
+                                        eyeErr =
+                                            "Enable NINA_LINK_ENABLE_ACTIONS_STATIC on the Jetson."
+                                        return@launch
+                                    }
+                                    val off = parseDoubleOr(eyeOffsetStr, 0.0)
+                                    eyeBusy = true
+                                    try {
+                                        eyeErr = vm.postActionEyeBind(act, id, off)
+                                        if (eyeErr == null) {
+                                            eyeLast = "Eye binding saved."
+                                            vm.refreshManifestActions()
+                                        }
+                                    } finally {
+                                        eyeBusy = false
+                                    }
+                                }
+                            },
+                            enabled =
+                                selectedActionName.isNotBlank() &&
+                                    link.isOnline &&
+                                    actionsStaticOk &&
+                                    !eyeBusy,
+                            modifier = buttonTall,
+                        )
+                        SirenaSecondaryButton(
+                            text = "Clear",
+                            onClick = {
+                                scope.launch {
+                                    eyeErr = null
+                                    val act = selectedActionName.trim()
+                                    if (act.isEmpty()) {
+                                        eyeErr = "Select an action."
+                                        return@launch
+                                    }
+                                    if (!actionsStaticOk) {
+                                        eyeErr =
+                                            "Enable NINA_LINK_ENABLE_ACTIONS_STATIC on the Jetson."
+                                        return@launch
+                                    }
+                                    eyeBusy = true
+                                    try {
+                                        eyeErr = vm.postActionEyeClear(act)
+                                        if (eyeErr == null) {
+                                            eyeLast = "Eye binding cleared."
+                                            vm.refreshManifestActions()
+                                        }
+                                    } finally {
+                                        eyeBusy = false
+                                    }
+                                }
+                            },
+                            enabled = selectedActionName.isNotBlank() && actionsStaticOk && !eyeBusy,
+                            modifier = buttonTall,
+                        )
+                    }
+                    SirenaCardTitle("Last result")
+                    Text(eyeLast, fontSize = SirenaType.muted, color = SirenaColors.text)
                 }
             }
         }

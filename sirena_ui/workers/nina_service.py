@@ -18,7 +18,8 @@ from typing import Any, Dict, List, Optional
 from PyQt5.QtCore import Qt
 
 from nina.config.settings import NinaSettings, load_settings
-from nina.controllers.action_runner import ActionRunner, action_playback_speed
+from nina.controllers.action_runner import ActionRunner
+from nina.controllers.eye_expression_uart import EyeExpressionUartClient, EyeUartConfig, action_playback_speed
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
@@ -102,6 +103,7 @@ class NinaService:
         self._voice_ptt_thread: Optional[threading.Thread] = None
         self._voice_ptt_lock = threading.Lock()
         self._voice_ui_callbacks: Dict[str, Any] = {}
+        self._eye_uart: Optional[EyeExpressionUartClient] = None
 
     @property
     def movement_store(self) -> MovementStore:
@@ -595,6 +597,8 @@ class NinaService:
 
             audio_path = self.action_audio_path(action_name)
             audio_offset = self.action_audio_offset(action_name) if audio_path else 0.0
+            eye_id = self.action_eye_expression(action_name)
+            eye_offset = self.action_eye_offset(action_name) if eye_id is not None else 0.0
             trig = self.settings.esp32_trigger
             release_speed = max(
                 1,
@@ -616,6 +620,20 @@ class NinaService:
                             audio_timer.daemon = True
                             audio_timer.start()
                             self._esp32_reaction_audio_timer = audio_timer
+                    if eye_id is not None and self.settings.eye_uart.enabled:
+
+                        def _send_eye() -> None:
+                            try:
+                                self.send_eye_expression(eye_id)
+                            except Exception:
+                                log.exception("ESP32 trigger: eye expression %s failed", eye_id)
+
+                        if eye_offset <= 0.0:
+                            _send_eye()
+                        else:
+                            eye_timer = threading.Timer(eye_offset, _send_eye)
+                            eye_timer.daemon = True
+                            eye_timer.start()
                     play_speed = action_playback_speed()
                     log.info(
                         "ESP32 trigger: playing '%s' smooth speed=%.2f",
@@ -969,8 +987,37 @@ class NinaService:
             )
         return self._autonomy
 
+    @property
+    def eye_uart(self) -> EyeExpressionUartClient:
+        if self._eye_uart is None:
+            eu = self.settings.eye_uart
+            self._eye_uart = EyeExpressionUartClient(
+                EyeUartConfig(
+                    enabled=eu.enabled,
+                    port=eu.port,
+                    baudrate=eu.baudrate,
+                    command_delay_sec=eu.command_delay_sec,
+                )
+            )
+        return self._eye_uart
+
+    def list_eye_expressions(self) -> list:
+        return self.eye_uart.list_expressions()
+
+    def eye_uart_status(self) -> Dict[str, Any]:
+        return self.eye_uart.status()
+
+    def send_eye_expression(self, expr_id: int) -> Dict[str, Any]:
+        return self.eye_uart.send_expression(int(expr_id))
+
     def shutdown(self) -> None:
         self.stop_voice_assistant()
+        if self._eye_uart is not None:
+            try:
+                self._eye_uart.close()
+            except Exception:
+                pass
+            self._eye_uart = None
         if self._imu_monitor is not None:
             try:
                 self._imu_monitor.stop()
@@ -1106,6 +1153,42 @@ class NinaService:
             "audio_path": path,
             "audio_offset": self.action_audio_offset(name),
         }
+
+    def action_eye_expression(self, name: str) -> Optional[int]:
+        return self.action_runner.get_action_eye_expression(name)
+
+    def action_eye_offset(self, name: str) -> float:
+        return self.action_runner.get_action_eye_offset(name)
+
+    def get_action_eye_info(self, name: str) -> Dict[str, Any]:
+        from nina.eye.expressions import expression_by_id
+
+        eid = self.action_eye_expression(name)
+        meta = expression_by_id(eid) if eid is not None else None
+        return {
+            "eye_expression": eid,
+            "eye_expression_name": meta.name if meta else None,
+            "eye_offset": self.action_eye_offset(name),
+        }
+
+    def set_action_eye(
+        self,
+        name: str,
+        expression_id: Optional[int],
+        *,
+        eye_offset: Optional[float] = None,
+    ) -> None:
+        self.action_runner.set_action_eye(
+            name, expression_id, eye_offset=eye_offset
+        )
+
+    def set_action_eye_offset(self, name: str, offset: float) -> None:
+        eid = self.action_eye_expression(name)
+        if eid is None:
+            raise ValueError(
+                f"Action '{name}' has no eye_expression; pick an expression first."
+            )
+        self.action_runner.set_action_eye(name, eid, eye_offset=offset)
 
     def generate_action_audio(
         self,

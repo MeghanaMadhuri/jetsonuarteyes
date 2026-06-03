@@ -359,6 +359,24 @@ class LinkClient {
             get("$baseUrl/v1/movements/run/status")
         }
 
+    suspend fun eyeExpressionsList(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/robot/eye/expressions")
+        }
+
+    suspend fun eyeExpressionSet(
+        baseUrl: String,
+        bearer: String?,
+        expressionId: Int,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/robot/eye/expression",
+                bearer,
+                JSONObject().put("id", expressionId).toString(),
+            )
+        }
+
     private fun put(url: String, bearer: String?, jsonBody: String): JSONObject {
         val req =
             Request.Builder()
@@ -491,6 +509,51 @@ class LinkClient {
         withContext(Dispatchers.IO) {
             post(
                 "$baseUrl/v1/actions/audio/clear",
+                bearer,
+                JSONObject().put("action", action).toString(),
+            )
+        }
+
+    suspend fun actionEyeInfo(baseUrl: String, action: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            val enc = java.net.URLEncoder.encode(action, Charsets.UTF_8.name())
+            get("$baseUrl/v1/actions/eye/info?action=$enc")
+        }
+
+    suspend fun actionEyeBind(
+        baseUrl: String,
+        bearer: String?,
+        action: String,
+        eyeExpression: Int,
+        eyeOffsetSec: Double,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("action", action)
+                    .put("eye_expression", eyeExpression)
+                    .put("eye_offset", eyeOffsetSec)
+            post("$baseUrl/v1/actions/eye/bind", bearer, body.toString())
+        }
+
+    suspend fun actionEyeOffset(
+        baseUrl: String,
+        bearer: String?,
+        action: String,
+        eyeOffsetSec: Double,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("action", action)
+                    .put("eye_offset", eyeOffsetSec)
+            post("$baseUrl/v1/actions/eye/offset", bearer, body.toString())
+        }
+
+    suspend fun actionEyeClear(baseUrl: String, bearer: String?, action: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/actions/eye/clear",
                 bearer,
                 JSONObject().put("action", action).toString(),
             )

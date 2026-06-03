@@ -206,15 +206,31 @@ class PlaybackPanel(QWidget):
             return "unknown"
 
     def _audio_meta(self, name: str) -> str:
+        lines: list[str] = []
         try:
             info = self._service.get_action_audio_info(name)
+            rel = info.get("audio_rel")
+            path = info.get("audio_path")
+            offset = float(info.get("audio_offset") or 0.0)
+            if not rel:
+                lines.append("Audio: none")
+            else:
+                suffix = f" \u2022 +{offset:.2f}s" if offset > 0 else ""
+                missing = "" if path else " (missing)"
+                lines.append(f"Audio: {Path(rel).name}{missing}{suffix}")
         except Exception:
-            return ""
-        rel = info.get("audio_rel")
-        path = info.get("audio_path")
-        offset = float(info.get("audio_offset") or 0.0)
-        if not rel:
-            return "Audio: none"
-        suffix = f" \u2022 +{offset:.2f}s" if offset > 0 else ""
-        missing = "" if path else " (missing)"
-        return f"Audio: {Path(rel).name}{missing}{suffix}"
+            lines.append("Audio: —")
+        try:
+            eye = self._service.get_action_eye_info(name)
+            eid = eye.get("eye_expression")
+            if eid is None:
+                lines.append("Eyes: none")
+            else:
+                ename = eye.get("eye_expression_name") or ""
+                off = float(eye.get("eye_offset") or 0.0)
+                suffix = f" \u2022 +{off:.2f}s" if off > 0 else ""
+                label = f"{eid} {ename}".strip()
+                lines.append(f"Eyes: {label}{suffix}")
+        except Exception:
+            pass
+        return "\n".join(lines)

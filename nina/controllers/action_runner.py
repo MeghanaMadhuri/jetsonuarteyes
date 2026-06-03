@@ -65,6 +65,36 @@ class ActionRunner:
                 return max(0.0, float(offset))
         return 0.0
 
+    @staticmethod
+    def _parse_eye_expression_id(raw: Any) -> Optional[int]:
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            eid = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if 0 <= eid <= 33:
+            return eid
+        return None
+
+    def get_action_eye_expression(self, action_name: str) -> Optional[int]:
+        """Manifest ``eye_expression`` (0–33) for UART face display, or None."""
+        manifest = self._load_manifest()
+        raw = manifest.get("actions", {}).get(action_name)
+        if isinstance(raw, dict):
+            return self._parse_eye_expression_id(raw.get("eye_expression"))
+        return None
+
+    def get_action_eye_offset(self, action_name: str) -> float:
+        """Seconds after motion starts before sending the eye expression."""
+        manifest = self._load_manifest()
+        raw = manifest.get("actions", {}).get(action_name)
+        if isinstance(raw, dict):
+            off = raw.get("eye_offset")
+            if isinstance(off, (int, float)):
+                return max(0.0, float(off))
+        return 0.0
+
     def run_named_action(
         self,
         action_name: str,
@@ -135,12 +165,26 @@ class ActionRunner:
         if isinstance(existing, dict):
             file_name = str(existing.get("file", ""))
             existing_offset = existing.get("audio_offset")
+            eye_id = existing.get("eye_expression")
+            eye_off = existing.get("eye_offset")
         else:
             file_name = str(existing)
             existing_offset = None
+            eye_id = None
+            eye_off = None
 
         if not audio_name or not str(audio_name).strip():
-            actions[action_name] = file_name
+            if isinstance(existing, dict) and (
+                eye_id is not None or eye_off is not None
+            ):
+                entry = {"file": file_name}
+                if eye_id is not None:
+                    entry["eye_expression"] = eye_id
+                if isinstance(eye_off, (int, float)) and float(eye_off) > 0:
+                    entry["eye_offset"] = float(eye_off)
+                actions[action_name] = entry
+            else:
+                actions[action_name] = file_name
         else:
             entry: Dict[str, Any] = {"file": file_name, "audio": str(audio_name)}
             if audio_offset is not None:
@@ -148,9 +192,30 @@ class ActionRunner:
                     entry["audio_offset"] = float(audio_offset)
             elif isinstance(existing_offset, (int, float)) and float(existing_offset) > 0:
                 entry["audio_offset"] = float(existing_offset)
+            if eye_id is not None:
+                entry["eye_expression"] = eye_id
+            if isinstance(eye_off, (int, float)) and float(eye_off) > 0:
+                entry["eye_offset"] = float(eye_off)
             actions[action_name] = entry
 
         self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    def set_action_eye(
+        self,
+        action_name: str,
+        expression_id: Optional[int],
+        *,
+        eye_offset: Optional[float] = None,
+    ) -> None:
+        """Set or clear ``eye_expression`` / ``eye_offset`` on a manifest entry."""
+        from nina.jetson_net.manifest_eye import set_action_eye as _set_eye
+
+        _set_eye(
+            self.manifest_path,
+            action_name,
+            expression_id,
+            eye_offset=eye_offset,
+        )
 
     def delete_action(
         self,
@@ -249,19 +314,32 @@ class ActionRunner:
         existing = actions.get(action_name)
         existing_audio: Optional[str] = None
         existing_offset: Optional[float] = None
+        existing_eye: Optional[int] = None
+        existing_eye_off: Optional[float] = None
         if isinstance(existing, dict):
             if isinstance(existing.get("audio"), str):
                 existing_audio = existing["audio"]
             if isinstance(existing.get("audio_offset"), (int, float)):
                 existing_offset = float(existing["audio_offset"])
+            existing_eye = self._parse_eye_expression_id(
+                existing.get("eye_expression")
+            )
+            if isinstance(existing.get("eye_offset"), (int, float)):
+                existing_eye_off = float(existing["eye_offset"])
 
         audio_to_keep = audio_name if audio_name is not None else existing_audio
         offset_to_keep = audio_offset if audio_offset is not None else existing_offset
 
-        if audio_to_keep:
-            entry: Dict[str, Any] = {"file": file_name, "audio": audio_to_keep}
+        if audio_to_keep or existing_eye is not None:
+            entry: Dict[str, Any] = {"file": file_name}
+            if audio_to_keep:
+                entry["audio"] = audio_to_keep
             if offset_to_keep is not None and offset_to_keep > 0:
                 entry["audio_offset"] = float(offset_to_keep)
+            if existing_eye is not None:
+                entry["eye_expression"] = existing_eye
+            if existing_eye_off is not None and existing_eye_off > 0:
+                entry["eye_offset"] = float(existing_eye_off)
             actions[action_name] = entry
         else:
             actions[action_name] = file_name

@@ -26,6 +26,14 @@ REG_CHIP_ID = 0x00
 REG_STATUS = 0x02
 REG_KEY_STATUS1 = 0x03
 REG_KEY_STATUS2 = 0x04
+# DMR / Microchip comms-mode tuning registers (see DMR touch.cpp).
+REG_CALIBRATION = 0x06
+REG_RESET = 0x07
+REG_DETECT_THRESHOLD = 0x10
+
+_DEFAULT_RESET_VALUE = 0x07
+_DEFAULT_CALIB_VALUE = 0x07
+DEFAULT_DETECT_THRESHOLD = 25
 
 # DMR firmware treats a keystatus byte of 0xFF as no touch on that register.
 _KEYSTATUS_IDLE_BYTE = 0xFF
@@ -135,6 +143,54 @@ class AT42QT2120:
             raise RuntimeError(
                 f"AT42QT2120 CHIP_ID=0x{chip_id:02X}, expected 0x{_EXPECTED_CHIP_ID:02X}"
             )
+
+    def write_register(self, register: int, value: int) -> None:
+        if self._bus is None:
+            raise RuntimeError("AT42QT2120 not opened")
+        self._bus.write_byte_data(
+            self._addr, int(register) & 0xFF, int(value) & 0xFF
+        )
+
+    def wait_calibration_done(
+        self, *, timeout_sec: float = 5.0, poll_sec: float = 0.01
+    ) -> None:
+        """Block until STATUS calibrating bit clears (DMR touchinit loop)."""
+        deadline = time.monotonic() + max(0.1, float(timeout_sec))
+        while time.monotonic() < deadline:
+            if not self.is_calibrating():
+                return
+            time.sleep(max(0.001, float(poll_sec)))
+        raise RuntimeError("AT42QT2120 calibration timed out")
+
+    def apply_detect_threshold(self, threshold: int) -> None:
+        """Write DMR-style detection threshold (register 0x10)."""
+        value = max(0, min(255, int(threshold)))
+        self.write_register(REG_DETECT_THRESHOLD, value)
+
+    def recalibrate(self) -> None:
+        """Re-run QTouch calibration without full chip reset (DMR touchcalib)."""
+        self.write_register(REG_CALIBRATION, _DEFAULT_CALIB_VALUE)
+        self.wait_calibration_done()
+
+    def dmr_bootstrap(
+        self,
+        *,
+        detect_threshold: int = DEFAULT_DETECT_THRESHOLD,
+        reset_sleep_sec: float = 0.04,
+    ) -> None:
+        """Reset, calibrate, and set threshold — parity with DMR ``touchinit()``."""
+        self.write_register(REG_RESET, _DEFAULT_RESET_VALUE)
+        time.sleep(max(0.01, float(reset_sleep_sec)))
+        self.write_register(REG_CALIBRATION, _DEFAULT_CALIB_VALUE)
+        self.wait_calibration_done()
+        if int(detect_threshold) > 0:
+            self.apply_detect_threshold(detect_threshold)
+            log.info(
+                "AT42QT2120 bootstrap complete (threshold=%d)",
+                int(detect_threshold),
+            )
+        else:
+            log.info("AT42QT2120 bootstrap complete (threshold write disabled)")
 
     def read_status(self) -> int:
         return self.read_register(REG_STATUS)

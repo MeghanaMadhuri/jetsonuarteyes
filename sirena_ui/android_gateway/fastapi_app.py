@@ -25,6 +25,7 @@ from nina.jetson_net import actions_manifest
 from nina.jetson_net.config import LinkDaemonConfig
 from nina.jetson_net import host_control
 from nina.jetson_net import manifest_audio
+from nina.jetson_net import manifest_eye
 from nina.jetson_net import manifest_delete
 from nina.jetson_net import media_static
 from nina.jetson_net import session_claim
@@ -123,6 +124,7 @@ _UI_POLL_GET_PATHS = frozenset(
         "/v1/depth/status",
         "/v1/autonomy/status",
         "/v1/actions/record/status",
+        "/v1/robot/eye/status",
     }
 )
 
@@ -233,6 +235,12 @@ class PlayActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
 
 
+class EyeExpressionBody(BaseModel):
+    """Set ESP8266 ST7735 expression (0–33, matches firmware Serial menu)."""
+
+    id: int = Field(..., ge=0, le=33)
+
+
 class AutonomyEnabledBody(BaseModel):
     enabled: bool = True
 
@@ -312,6 +320,22 @@ class VisionFollowStartBody(BaseModel):
 class ActionAudioOffsetBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
     audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
+
+
+class ActionEyeBindBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+    eye_expression: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=33,
+        description="0–33; omit or null to clear binding",
+    )
+    eye_offset: float = Field(default=0.0, ge=0.0, le=120.0)
+
+
+class ActionEyeOffsetBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+    eye_offset: float = Field(default=0.0, ge=0.0, le=120.0)
 
 
 class ActionNameBody(BaseModel):
@@ -775,6 +799,10 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             "action_audio_clear_endpoint": "/v1/actions/audio/clear",
             "action_audio_generate_endpoint": "/v1/actions/audio/generate",
             "action_audio_preview_endpoint": "/v1/actions/audio/preview",
+            "action_eye_info_endpoint": "/v1/actions/eye/info",
+            "action_eye_bind_endpoint": "/v1/actions/eye/bind",
+            "action_eye_offset_endpoint": "/v1/actions/eye/offset",
+            "action_eye_clear_endpoint": "/v1/actions/eye/clear",
             "action_delete_endpoint": "/v1/actions/delete",
             "slam_status_endpoint": "/v1/slam/status",
             "slam_snapshot_endpoint": "/v1/slam/snapshot",
@@ -784,6 +812,9 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             "slam_clear_endpoint": "/v1/slam/clear",
             "slam_bridge_enabled": cfg.enable_slam_bridge,
             "robot_health_endpoint": "/v1/robot/health",
+            "eye_expressions_endpoint": "/v1/robot/eye/expressions",
+            "eye_expression_set_endpoint": "/v1/robot/eye/expression",
+            "eye_status_endpoint": "/v1/robot/eye/status",
             "depth_status_endpoint": "/v1/depth/status",
             "depth_stream_endpoint": "/v1/depth/stream",
             "depth_bridge_enabled": cfg.enable_depth_bridge,
@@ -803,6 +834,29 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             lambda: build_robot_health(gw.service, cfg, coordinator),
             timeout=60.0,
         )
+
+    @app.get("/v1/robot/eye/expressions")
+    def eye_expressions_list_http() -> Dict[str, Any]:
+        from nina.eye.expressions import expressions_as_dicts
+
+        return {"expressions": expressions_as_dicts()}
+
+    @app.get("/v1/robot/eye/status")
+    def eye_uart_status_http() -> Dict[str, Any]:
+        return gw.service.eye_uart_status()
+
+    @app.post("/v1/robot/eye/expression")
+    def eye_expression_set_http(
+        body: EyeExpressionBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+
+        def _run() -> Dict[str, Any]:
+            return gw.service.send_eye_expression(body.id)
+
+        return gw.plane.submit(_run, timeout=8.0)
 
     @app.get("/v1/system/volume")
     def system_volume_get_http() -> Dict[str, Any]:
@@ -1340,6 +1394,73 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
+
+    @app.get("/v1/actions/eye/info")
+    def action_eye_info_http(action: str = Query(..., min_length=1, max_length=160)):
+        _require_actions_static_for_audio_edit()
+        try:
+            return manifest_eye.action_eye_info(cfg.actions_manifest_path, action)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/eye/bind")
+    def action_eye_bind_http(
+        body: ActionEyeBindBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        try:
+            manifest_eye.set_action_eye(
+                cfg.actions_manifest_path,
+                body.action.strip(),
+                body.eye_expression,
+                eye_offset=body.eye_offset,
+            )
+            return manifest_eye.action_eye_info(
+                cfg.actions_manifest_path, body.action.strip()
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/eye/offset")
+    def action_eye_offset_http(
+        body: ActionEyeOffsetBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        try:
+            manifest_eye.set_action_eye_offset_only(
+                cfg.actions_manifest_path,
+                body.action.strip(),
+                float(body.eye_offset),
+            )
+            return manifest_eye.action_eye_info(
+                cfg.actions_manifest_path, body.action.strip()
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/eye/clear")
+    def action_eye_clear_http(
+        body: ActionNameBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        try:
+            manifest_eye.set_action_eye(
+                cfg.actions_manifest_path, body.action.strip(), None
+            )
+            return manifest_eye.action_eye_info(
+                cfg.actions_manifest_path, body.action.strip()
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/v1/actions/delete")
     def delete_manifest_action_http(

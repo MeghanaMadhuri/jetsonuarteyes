@@ -293,6 +293,21 @@ class BatteryAds1115Settings:
 
 
 @dataclass(frozen=True)
+class EyeUartSettings:
+    """ESP8266 NodeMCU eye display over UART (115200, expression id 0–33 + newline).
+
+  Wiring (3.3 V logic): Jetson TX → ESP RX, Jetson RX → ESP TX, common GND.
+  Default port ``/dev/ttyTHS1`` (40-pin header UART); USB-TTL often ``/dev/ttyUSB1``.
+  Enable with ``NINA_EYE_UART_ENABLE=1``.
+    """
+
+    enabled: bool
+    port: str
+    baudrate: int
+    command_delay_sec: float
+
+
+@dataclass(frozen=True)
 class TouchAt42qt2120Settings:
     """AT42QT2120 capacitive touch on header pins **3** SDA + **5** SCL (``/dev/i2c-7``).
 
@@ -304,6 +319,9 @@ class TouchAt42qt2120Settings:
     ``0xFF`` idle). Use ``NINA_TOUCH_DETECT=key_mask`` for legacy inverted 12-bit
     mask wiring (idle ``0x001``, press clears to ``0x000``). ``status`` uses the
     STATUS keys bit only.
+
+    DMR parity: ``NINA_TOUCH_CHIP_INIT=1`` reset+calibrate at start;
+    ``NINA_TOUCH_THRESHOLD`` (default 25) written to chip reg 0x10.
     """
 
     enabled: bool
@@ -313,6 +331,11 @@ class TouchAt42qt2120Settings:
     touch_channel: int
     use_key_mask: bool
     channel_mask: int
+    chip_init: bool
+    detect_threshold: int
+    threshold_each_poll: bool
+    sample_settle_sec: float
+    recalib_after_fires: int
     debounce_reads: int
     release_reads: int
     baseline_clear_reads: int
@@ -510,6 +533,7 @@ class NinaSettings:
     battery_ads1115: BatteryAds1115Settings
     touch_at42qt2120: TouchAt42qt2120Settings
     esp32_trigger: Esp32TriggerSettings
+    eye_uart: EyeUartSettings
     voice_edge: VoiceEdgeSettings
 
 
@@ -524,6 +548,7 @@ def serial_collision_warnings(settings: NinaSettings) -> list[str]:
         "dynamixel": settings.serial_port.strip(),
         "nav_remote": nav_remote,
         "lidar": settings.lidar.serial_port.strip(),
+        "eye_uart": settings.eye_uart.port.strip(),
     }
     owners: dict[str, list[str]] = {}
     for name, path in ports.items():
@@ -959,6 +984,18 @@ def load_settings(repo_root: Path) -> NinaSettings:
     else:
         _touch_detect_mode = "keystatus"
 
+    eye_uart = EyeUartSettings(
+        enabled=_env_bool("NINA_EYE_UART_ENABLE", True),
+        port=(os.environ.get("NINA_EYE_UART_PORT") or "/dev/ttyTHS1").strip(),
+        baudrate=max(
+            9600,
+            min(921600, _env_int("NINA_EYE_UART_BAUD", 115200)),
+        ),
+        command_delay_sec=max(
+            0.0, _env_float("NINA_EYE_UART_CMD_DELAY_SEC", 0.02)
+        ),
+    )
+
     touch_at42qt2120 = TouchAt42qt2120Settings(
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
@@ -970,8 +1007,19 @@ def load_settings(repo_root: Path) -> NinaSettings:
             1,
             min(0xFFF, _env_int("NINA_TOUCH_CHANNEL_MASK", 0xFFF)),
         ),
-        debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 2))),
-        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 2))),
+        chip_init=_env_bool("NINA_TOUCH_CHIP_INIT", True),
+        detect_threshold=max(
+            0, min(255, _env_int("NINA_TOUCH_THRESHOLD", 25))
+        ),
+        threshold_each_poll=_env_bool("NINA_TOUCH_THRESHOLD_EACH_POLL", True),
+        sample_settle_sec=max(
+            0.0, _env_float("NINA_TOUCH_SAMPLE_SETTLE_SEC", 0.02)
+        ),
+        recalib_after_fires=max(
+            0, min(20, _env_int("NINA_TOUCH_RECALIB_AFTER_FIRES", 4))
+        ),
+        debounce_reads=max(1, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 5))),
+        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 3))),
         baseline_clear_reads=max(
             1, min(50, _env_int("NINA_TOUCH_BASELINE_CLEAR_READS", 10))
         ),
@@ -993,7 +1041,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         blind_after_reaction_sec=max(
             0.0, _env_float("NINA_TOUCH_BLIND_SEC", 3.0)
         ),
-        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 1.0)),
+        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.05)),
         tts_text=(
             (os.environ.get("NINA_TOUCH_TTS") or "").strip()
             or "Please dont touch me"
@@ -1035,5 +1083,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         battery_ads1115=battery_ads1115,
         touch_at42qt2120=touch_at42qt2120,
         esp32_trigger=esp32_trigger,
+        eye_uart=eye_uart,
         voice_edge=voice_edge,
     )

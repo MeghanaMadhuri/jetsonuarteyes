@@ -300,6 +300,7 @@ def main() -> None:
 
     if args.command == "run-action":
         audio_timer: "threading.Timer | None" = None
+        eye_timer: "threading.Timer | None" = None
         try:
             ensure_motors_ready(dxl)
             mode = "smooth" if not args.no_smooth else "stepped"
@@ -331,9 +332,46 @@ def main() -> None:
                     player.play(audio_path)
             elif audio_rel and not args.no_audio:
                 audio_note = f", audio MISSING ({audio_rel})"
+
+            eye_id = action_runner.get_action_eye_expression(args.name)
+            eye_offset = action_runner.get_action_eye_offset(args.name)
+            eye_note = ""
+            if eye_id is not None and settings.eye_uart.enabled:
+                offset_note = f" +{eye_offset:.2f}s" if eye_offset > 0 else ""
+                eye_note = f", eye={eye_id}{offset_note}"
+                from nina.controllers.eye_expression_uart import (
+                    EyeExpressionUartClient,
+                    EyeUartConfig,
+                )
+
+                eu = settings.eye_uart
+                eye_client = EyeExpressionUartClient(
+                    EyeUartConfig(
+                        enabled=eu.enabled,
+                        port=eu.port,
+                        baudrate=eu.baudrate,
+                        command_delay_sec=eu.command_delay_sec,
+                    )
+                )
+
+                def _send_eye() -> None:
+                    try:
+                        eye_client.send_expression(eye_id)
+                    finally:
+                        eye_client.close()
+
+                if eye_offset > 0:
+                    eye_timer = threading.Timer(eye_offset, _send_eye)
+                    eye_timer.daemon = True
+                    eye_timer.start()
+                else:
+                    _send_eye()
+            elif eye_id is not None:
+                eye_note = f", eye={eye_id} (UART disabled)"
+
             print(
                 f"Playing '{args.name}' ({mode} mode, sub_hz={args.sub_hz}, "
-                f"max_speed={args.max_speed}, speed={args.speed}x{audio_note})..."
+                f"max_speed={args.max_speed}, speed={args.speed}x{audio_note}{eye_note})..."
             )
             action_path = action_runner.run_named_action(
                 args.name,
@@ -346,8 +384,12 @@ def main() -> None:
         except Exception:
             if audio_timer is not None:
                 audio_timer.cancel()
+            if eye_timer is not None:
+                eye_timer.cancel()
             raise
         finally:
+            if eye_timer is not None:
+                eye_timer.cancel()
             dxl.close()
         return
 

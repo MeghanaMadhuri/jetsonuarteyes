@@ -408,6 +408,11 @@ fun NinaApp(
                                 vm = vm,
                                 shellCompact = shellCompact,
                             )
+                        "eye_exprs" ->
+                            SirenaEyeExpressionsScreen(
+                                vm = vm,
+                                shellCompact = shellCompact,
+                            )
                         "actions" ->
                             SirenaActionsScreen(
                                 vm = vm,

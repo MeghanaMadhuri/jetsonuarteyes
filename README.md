@@ -9,6 +9,8 @@ adapter).
 
 ## Documentation
 
+**[docs/CUSTOMER_SETUP_MANUAL.md](docs/CUSTOMER_SETUP_MANUAL.md)** — Customer-facing setup guide: safety, power/battery, wiring checklist, daily operation, charging, and troubleshooting.
+
 **[REQUIREMENTS.md](REQUIREMENTS.md)** — Single reference: hardware BOM, OS versions, Python deps, and the end-to-end bring-up checklist for fresh Jetson + Pi pair.
 
 **[docs/COMPANION_CONTROLS.md](docs/COMPANION_CONTROLS.md)** — Nina **Android companion** + Jetson **`nina-link`**: which HTTP controls need which env flags (`NINA_LINK_ENABLE_*`), auth, and troubleshooting when the tablet UI looks idle.
