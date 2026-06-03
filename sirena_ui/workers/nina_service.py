@@ -18,8 +18,8 @@ from typing import Any, Dict, List, Optional
 from PyQt5.QtCore import Qt
 
 from nina.config.settings import NinaSettings, load_settings
-from nina.controllers.action_runner import ActionRunner
-from nina.controllers.eye_expression_uart import EyeExpressionUartClient, EyeUartConfig, action_playback_speed
+from nina.controllers.action_runner import ActionRunner, action_playback_speed
+from nina.controllers.eye_expression_uart import EyeExpressionUartClient, EyeUartConfig
 from nina.controllers.dynamixel_manager import DynamixelManager
 from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
