@@ -31,7 +31,7 @@ Do **not** use header pins **3/5** (I²C). Avoid button-header UART2 for the eye
 | 40-pin UART1 (pins 8, 10) | `/dev/ttyTHS1` |
 | USB–serial adapter (CP210x/CH340, `dmesg`) | `/dev/ttyUSB0` or `/dev/ttyUSB1` |
 
-**Validated on robot:** one USB **data** cable Jetson USB → NodeMCU micro-USB (`/dev/ttyUSB0`; `dmesg` may show `cp210x` or `ch341`). No separate RX/TX jumper wires. Charge-only cables will not work for serial.
+**Validated on robot:** one standard USB cable (power + data) Jetson USB → NodeMCU micro-USB (`/dev/ttyUSB0`). Typical phone/charger USB cables are fine. No separate RX/TX jumper wires.
 
 Use `NINA_EYE_UART_PORT=/dev/ttyUSB0` for direct USB or a USB–TTL dongle; use `ttyTHS1` only for 40-pin wiring.
 

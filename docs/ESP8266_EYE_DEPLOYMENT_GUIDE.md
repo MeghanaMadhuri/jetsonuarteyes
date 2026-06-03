@@ -97,7 +97,7 @@ Jetson USB port  ──── USB data cable ────  NodeMCU micro-USB
 
 **Important:**
 
-- Use a **data-capable** USB cable. A **charge-only** cable (power wires only) will **not** carry commands — the display may light up but Nina cannot talk to the ESP.
+- Use a normal **USB data cable** (the kind used for phones: power + data — often sold as a “charger cable” but with four connected wires). That is the validated robot setup. Avoid rare **charge-only** cables (two wires, no data); those cannot carry commands.
 - Do **not** connect the ESP to a **Windows PC** USB port while the Jetson owns the cable.
 - For programming on a PC, unplug from the Jetson, flash on Windows, then plug back into the Jetson only.
 
