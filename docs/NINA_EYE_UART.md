@@ -43,9 +43,14 @@ In `/etc/nina-link/navigation.env`:
 
 ```bash
 NINA_EYE_UART_ENABLE=1
-NINA_EYE_UART_PORT=/dev/ttyTHS1
+# Production (CP210x USB–TTL on Jetson USB):
+NINA_EYE_UART_PORT=/dev/ttyUSB0
+# Alternate (40-pin UART1):
+# NINA_EYE_UART_PORT=/dev/ttyTHS1
 NINA_EYE_UART_BAUD=115200
 ```
+
+Full procedure: [ESP8266_EYE_DEPLOYMENT_GUIDE.md](ESP8266_EYE_DEPLOYMENT_GUIDE.md).
 
 ## UI
 

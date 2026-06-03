@@ -55,25 +55,21 @@ Pins (must match your wiring):
 
 You do **not** need a different chip or library stack for Nina — ESP8266 + TFT_eSPI + serial commands is the intended design.
 
-### 4. Jetson UART (40-pin header UART1 — recommended)
+### 4. Jetson connection
 
-Use **J12 pins 8 & 10** (UART1), not the button-header debug UART TXD/RXD.
-
-| J12 pin | Signal | NodeMCU |
-|--------|--------|---------|
-| **8** | UART1_TXD | **RX** |
-| **10** | UART1_RXD | **TX** |
-| **6** | GND | GND |
-
-Power ESP from **3.3 V** (or USB for power only). Set on Jetson:
+**Validated on robot:** CP210x USB–serial adapter on the Jetson USB port → ESP **RX / TX / GND** (device `/dev/ttyUSB0`). See [docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md](../../docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md).
 
 ```bash
 NINA_EYE_UART_ENABLE=1
-NINA_EYE_UART_PORT=/dev/ttyTHS1
+NINA_EYE_UART_PORT=/dev/ttyUSB0
 NINA_EYE_UART_BAUD=115200
 ```
 
-Nina sends `"{id}\n"` (e.g. `15\n`) — same as Serial Monitor.
+Do not connect the ESP to a PC USB port while the Jetson owns the link.
+
+**Alternate:** 40-pin J12 pins **8 → RX**, **10 → TX**, **6 → GND** (`/dev/ttyTHS1`). Requires `jetson-io` → uart1 ON. Not all carriers route UART1 to pins 8/10 without pinmux.
+
+Nina sends `"{id}\n"` (e.g. `15\n`) — same as Serial Monitor. Firmware replies `OK <id>` when `NINA_UART_ECHO` is enabled.
 
 ## Expression IDs (must match Jetson UI)
 
