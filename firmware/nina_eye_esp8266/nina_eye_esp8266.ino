@@ -6,7 +6,12 @@
  *
  * SERIAL 115200: type the expression NUMBER (0-33) then Enter.
  * On boot, Serial prints a full menu: ID, name, and GOOD / BAD mood hint.
+ * Replies with "OK <id>" or "ERR" (disable via NINA_UART_ECHO 0 before build).
  */
+
+#ifndef NINA_UART_ECHO
+#define NINA_UART_ECHO 1
+#endif
 
 #include <TFT_eSPI.h>
 #include <SPI.h>
@@ -661,7 +666,16 @@ void loop() {
     int v = Serial.parseInt();
     if (v >= 0 && v <= EXPR_LAST) {
       applyExpressionChange(v);
+#if NINA_UART_ECHO
+      Serial.print(F("OK "));
+      Serial.println(v);
+#endif
     }
+#if NINA_UART_ECHO
+    else {
+      Serial.println(F("ERR"));
+    }
+#endif
     while (Serial.available()) (void)Serial.read();
   }
 

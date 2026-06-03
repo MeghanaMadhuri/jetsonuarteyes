@@ -12,13 +12,23 @@ The NodeMCU firmware accepts expression IDs **0–33** on **Serial @ 115200** (`
 
 Power the NodeMCU from **3.3 V** (not 5 V on Jetson GPIO). USB programming uses the on-board USB port; runtime UART to the Jetson uses the **TX/RX** pins labeled on the board.
 
-## Jetson UART (not the 40-pin I²C header)
+## Jetson UART — use 40-pin header UART1 (recommended)
 
-Wire the Jetson **dedicated UART TX/RX** to the NodeMCU (cross TX↔RX, common GND, 3.3 V). Do **not** use header pins 3/5 (I²C) for the eyes.
+Per NVIDIA Orin Nano DevKit carrier spec (J12 **Table 3-3**), use **UART1** on the **40-pin expansion header**, not the button-header **UART2 (DEBUG)** TXD/RXD.
+
+| J12 pin | Signal | Wire to ESP NodeMCU |
+|--------|--------|---------------------|
+| **8** | UART1_TXD | **RX** |
+| **10** | UART1_RXD | **TX** |
+| **6** | GND | **GND** |
+
+Typical Linux device: **`/dev/ttyTHS1`** (set `NINA_EYE_UART_PORT` if your board maps UART1 elsewhere).
+
+Do **not** use header pins **3/5** (I²C). Avoid button-header UART2 for the eyes (debug port, often `ttyTHS2`).
 
 | Connection | Typical device |
 |------------|----------------|
-| Module UART (TXD/RXD) | `/dev/ttyTHS0` or `/dev/ttyTHS1` |
+| 40-pin UART1 (pins 8, 10) | `/dev/ttyTHS1` |
 | USB–serial adapter | `/dev/ttyUSB0` or `/dev/ttyUSB1` |
 
 **Do not** share the same `/dev/ttyUSB*` port as Dynamixel (`NINA_DXL_PORT`).
@@ -69,14 +79,17 @@ Flash **[firmware/nina_eye_esp8266/nina_eye_esp8266.ino](../firmware/nina_eye_es
 
 Arduino IDE Serial Monitor: **115200**, send `5` + Enter for angry.
 
-On Jetson:
+On Jetson (firmware replies `OK <id>` on the same UART — read pin 10 / ESP TX):
 
 ```bash
 python3 -c "
 import serial, time
 s=serial.Serial('/dev/ttyTHS1', 115200, timeout=1)
-s.write(b'1\n'); s.flush()
-time.sleep(0.1)
+s.write(b'15\n'); s.flush()
+time.sleep(0.05)
+print(s.readline())   # b'OK 15\n' if ESP received the command
 s.close()
 "
 ```
+
+Build with `NINA_UART_ECHO 0` in the sketch if you want no ack lines.

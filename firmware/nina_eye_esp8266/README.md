@@ -55,19 +55,21 @@ Pins (must match your wiring):
 
 You do **not** need a different chip or library stack for Nina — ESP8266 + TFT_eSPI + serial commands is the intended design.
 
-### 4. Jetson UART (after USB test)
+### 4. Jetson UART (40-pin header UART1 — recommended)
 
-| Jetson TXD/RXD | NodeMCU |
-|----------------|---------|
-| TX | RX |
-| RX | TX |
-| GND | GND |
+Use **J12 pins 8 & 10** (UART1), not the button-header debug UART TXD/RXD.
 
-Power ESP from **3.3 V** (or USB). Set on Jetson:
+| J12 pin | Signal | NodeMCU |
+|--------|--------|---------|
+| **8** | UART1_TXD | **RX** |
+| **10** | UART1_RXD | **TX** |
+| **6** | GND | GND |
+
+Power ESP from **3.3 V** (or USB for power only). Set on Jetson:
 
 ```bash
 NINA_EYE_UART_ENABLE=1
-NINA_EYE_UART_PORT=/dev/ttyTHS1   # your UART device
+NINA_EYE_UART_PORT=/dev/ttyTHS1
 NINA_EYE_UART_BAUD=115200
 ```
 
