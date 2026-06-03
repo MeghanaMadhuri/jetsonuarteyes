@@ -665,11 +665,13 @@ void loop() {
   if (Serial.available()) {
     int v = Serial.parseInt();
     if (v >= 0 && v <= EXPR_LAST) {
-      applyExpressionChange(v);
 #if NINA_UART_ECHO
+      // Ack before animation (applyExpressionChange can block for seconds).
       Serial.print(F("OK "));
       Serial.println(v);
+      Serial.flush();
 #endif
+      applyExpressionChange(v);
     }
 #if NINA_UART_ECHO
     else {

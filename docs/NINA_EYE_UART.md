@@ -85,9 +85,10 @@ On Jetson (firmware replies `OK <id>` on the same UART — read pin 10 / ESP TX)
 python3 -c "
 import serial, time
 s=serial.Serial('/dev/ttyTHS1', 115200, timeout=1)
+s.reset_input_buffer()
 s.write(b'15\n'); s.flush()
-time.sleep(0.05)
-print(s.readline())   # b'OK 15\n' if ESP received the command
+time.sleep(0.2)
+print(s.readline())   # b'OK 15\n' if ESP received (ack is immediate)
 s.close()
 "
 ```
