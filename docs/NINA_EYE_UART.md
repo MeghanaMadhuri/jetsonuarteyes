@@ -29,7 +29,11 @@ Do **not** use header pins **3/5** (I²C). Avoid button-header UART2 for the eye
 | Connection | Typical device |
 |------------|----------------|
 | 40-pin UART1 (pins 8, 10) | `/dev/ttyTHS1` |
-| USB–serial adapter | `/dev/ttyUSB0` or `/dev/ttyUSB1` |
+| USB–serial adapter (CP210x/CH340, `dmesg`) | `/dev/ttyUSB0` or `/dev/ttyUSB1` |
+
+On Jetson USB, confirm the device with `dmesg` after plug-in (e.g. `cp210x ... ttyUSB0`).
+Use `NINA_EYE_UART_PORT=/dev/ttyUSB0` when the ESP is reached via USB–TTL, not `ttyTHS1`.
+Nina disables DTR/RTS on open so the ESP is not reset when the port is opened.
 
 **Do not** share the same `/dev/ttyUSB*` port as Dynamixel (`NINA_DXL_PORT`).
 

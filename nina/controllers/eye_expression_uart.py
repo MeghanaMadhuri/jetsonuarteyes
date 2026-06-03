@@ -103,7 +103,12 @@ class EyeExpressionUartClient:
             baudrate=self._cfg.baudrate,
             timeout=0.15,
             write_timeout=0.5,
+            dsrdtr=False,
+            rtscts=False,
         )
+        # CP210x/CH340 on Jetson USB: default DTR can reset ESP8266 before we send.
+        self._serial.dtr = False
+        self._serial.rts = False
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
         log.info(
