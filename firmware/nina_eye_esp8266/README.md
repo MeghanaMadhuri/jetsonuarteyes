@@ -57,7 +57,7 @@ You do **not** need a different chip or library stack for Nina — ESP8266 + TFT
 
 ### 4. Jetson connection
 
-**Validated on robot:** CP210x USB–serial adapter on the Jetson USB port → ESP **RX / TX / GND** (device `/dev/ttyUSB0`). See [docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md](../../docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md).
+**Validated on robot:** one **USB data cable** Jetson USB host → NodeMCU micro-USB (device `/dev/ttyUSB0`; no extra RX/TX wires). See [docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md](../../docs/ESP8266_EYE_DEPLOYMENT_GUIDE.md).
 
 ```bash
 NINA_EYE_UART_ENABLE=1

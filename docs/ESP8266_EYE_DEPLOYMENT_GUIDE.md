@@ -13,7 +13,7 @@
 
 Dear Team,
 
-Please find below the end-to-end procedure to deploy the Nina face display (expressions 0–33) on the NodeMCU ESP8266 and control it from the Jetson Orin Nano. This document reflects the configuration validated on the robot, including USB serial via a CP210x adapter on the Jetson.
+Please find below the end-to-end procedure to deploy the Nina face display (expressions 0–33) on the NodeMCU ESP8266 and control it from the Jetson Orin Nano. This document reflects the configuration validated on the robot: a **single USB data cable** from the Jetson to the NodeMCU micro-USB port (`/dev/ttyUSB0`), with no separate RX/TX jumper wires.
 
 **Attachments (from the repository `firmware/nina_eye_esp8266/` folder):**
 
@@ -37,8 +37,9 @@ Clone or download from:
 | 1.8" ST7735 TFT (128×160) | SPI wiring per table in Section 3 |
 | USB cable | Micro-USB (or board-appropriate) for programming |
 | Jetson Orin Nano | Ubuntu, Nina software stack installed |
-| CP210x USB–to–TTL adapter (3.3 V logic) | **Validated production path:** Jetson USB → CP210x → ESP RX/TX/GND |
-| Optional: 40-pin UART wires | J12 pins 8, 10, 6 — alternate path (`/dev/ttyTHS1`); requires `jetson-io` uart1 |
+| USB data cable (Jetson USB ↔ ESP micro-USB) | **Validated production path** on the robot — no extra RX/TX jumper wires |
+| Optional: CP210x USB–TTL dongle + 3 wires | Jetson USB → dongle → ESP **RX / TX / GND** (same `ttyUSB0` idea) |
+| Optional: 40-pin UART wires | J12 pins 8, 10, 6 — `/dev/ttyTHS1`; requires `jetson-io` uart1 |
 
 ---
 
@@ -83,25 +84,30 @@ Do **not** use 5 V on the TFT from the Jetson header.
 
 ---
 
-### 4. Jetson connection (validated: USB CP210x)
+### 4. Jetson connection (validated: direct USB cable)
 
-The production configuration that was bench-tested uses a **CP210x USB–serial adapter** on the Jetson USB port, wired to the NodeMCU **UART pins** (not the TFT SPI pins).
+On the robot, the bench-tested setup is a **single USB cable** from the **Jetson USB host port** to the **NodeMCU micro-USB port**. Power and serial both go through that cable via the ESP’s **on-board USB–serial chip** (Linux often reports `cp210x` or `ch341` in `dmesg` as **`/dev/ttyUSB0`**).
 
 ```
-Jetson USB port
-    └── CP210x adapter (appears as /dev/ttyUSB0 in dmesg)
-            TX  ──────►  ESP pin labeled RX  (near USB connector)
-            RX  ◄──────  ESP pin labeled TX
-            GND ───────  ESP GND
+Jetson USB port  ──── USB data cable ────  NodeMCU micro-USB
+                                              └── built-in USB–serial → ESP UART0
 ```
+
+**You do not need** separate jumper wires on ESP **RX / TX** for this setup. The TFT still uses SPI on D4/D5/D7/D8 only.
 
 **Important:**
 
-- Do **not** connect the ESP to a Windows PC USB port while the robot is running (the on-board CH340 shares RX/TX with the header).
-- Power the ESP from the adapter/Jetson USB or a **USB charger** (5 V) on the NodeMCU USB port; use a **common ground** with the CP210x.
-- Do **not** use TFT pins D4/D7/D8 for UART — only **RX** and **TX** silkscreen pins.
+- Use a **data-capable** USB cable. A **charge-only** cable (power wires only) will **not** carry commands — the display may light up but Nina cannot talk to the ESP.
+- Do **not** connect the ESP to a **Windows PC** USB port while the Jetson owns the cable.
+- For programming on a PC, unplug from the Jetson, flash on Windows, then plug back into the Jetson only.
 
-**Alternate (40-pin header):** J12 pin 8 → ESP RX, pin 10 → ESP TX, pin 6 → GND, device `/dev/ttyTHS1`. Requires enabling **uart1** in `sudo jetson-io` and was not the validated path on the test unit.
+**Optional setup B — USB–TTL dongle (if not using direct USB):**
+
+```
+Jetson USB → CP210x/CH340 dongle → ESP RX, TX, GND (header pins beside USB)
+```
+
+**Optional setup C — 40-pin header:** J12 pin 8 → ESP RX, pin 10 → ESP TX, pin 6 → GND, device `/dev/ttyTHS1` (requires `jetson-io` uart1). Not used on the validated robot build.
 
 ---
 
