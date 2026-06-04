@@ -66,6 +66,8 @@ def load_manifest_actions(path: Path) -> List[Dict[str, Any]]:
                     "file": entry,
                     "audio": None,
                     "audio_offset": None,
+                    "eye_expression": None,
+                    "eye_offset": None,
                     "duration_sec": dur,
                     "frame_count": nfrm,
                 }
@@ -79,6 +81,8 @@ def load_manifest_actions(path: Path) -> List[Dict[str, Any]]:
                     "file": rel,
                     "audio": entry.get("audio"),
                     "audio_offset": entry.get("audio_offset"),
+                    "eye_expression": entry.get("eye_expression"),
+                    "eye_offset": entry.get("eye_offset"),
                     "duration_sec": dur,
                     "frame_count": nfrm,
                 }

@@ -1,0 +1,13 @@
+# Edit ONLY the selection block in User_Setup_Select.h
+# Path: .../TFT_eSPI/User_Setup_Select.h
+#
+# BEFORE (default — wrong for Nina eyes):
+#   #include <User_Setup.h>
+#
+# AFTER (only ONE include active):
+
+//#include <User_Setup.h>           // Default setup is root library folder
+
+#include <User_Setups/User_Setup_ST7735_Nina.h>
+
+// Leave every other #include <User_Setups/Setup...> line commented (with //).

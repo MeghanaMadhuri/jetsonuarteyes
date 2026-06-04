@@ -45,8 +45,29 @@ class PlaybackWorker(QThread):
         self._audio_offset_sec = max(0.0, float(audio_offset_sec))
         self._audio_player = AudioPlayer()
         self._audio_timer: Optional[threading.Timer] = None
+        self._eye_timer: Optional[threading.Timer] = None
         #: Call ``ensure_bus`` on the **worker** thread before motion (tablet delegate path).
         self._ensure_before_play = ensure_before_play
+
+    def _schedule_eye(self) -> None:
+        eid = self._service.action_runner.get_action_eye_expression(self._action_name)
+        if eid is None:
+            return
+        offset = self._service.action_runner.get_action_eye_offset(self._action_name)
+
+        def _fire() -> None:
+            try:
+                self._service.send_eye_expression(eid)
+            except Exception:
+                pass
+
+        if offset <= 0.0:
+            _fire()
+            return
+        timer = threading.Timer(offset, _fire)
+        timer.daemon = True
+        self._eye_timer = timer
+        timer.start()
 
     def _schedule_audio(self) -> None:
         if self._audio_path is None:
@@ -80,8 +101,9 @@ class PlaybackWorker(QThread):
                 self.failed.emit(explain_error(exc, self._service.settings))
                 return
         try:
+            self._schedule_audio()
+            self._schedule_eye()
             with self._service.bus_lock:
-                self._schedule_audio()
                 self._service.action_runner.run_named_action(
                     self._action_name,
                     smooth=self._smooth,
@@ -93,5 +115,7 @@ class PlaybackWorker(QThread):
         except Exception as exc:  # pragma: no cover - reported back to UI
             if self._audio_timer is not None:
                 self._audio_timer.cancel()
+            if self._eye_timer is not None:
+                self._eye_timer.cancel()
             self._audio_player.stop_all()
             self.failed.emit(explain_error(exc, self._service.settings))

@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 )
 
 from sirena_ui.widgets.audio_panel import AudioPanel
+from sirena_ui.widgets.eye_panel import EyePanel
 from sirena_ui.widgets.common import Breadcrumb, Pill
 from sirena_ui.widgets.nina_image_panel import NinaImagePanel
 from sirena_ui.widgets.playback_panel import PlaybackPanel
@@ -35,7 +36,7 @@ from sirena_ui.workers.record_worker import RecordWorker
 class ActionsScreen(QWidget):
     bus_status_changed = pyqtSignal(str)
 
-    SUBTAB_INDEX = {"playback": 0, "record": 1, "audio": 2}
+    SUBTAB_INDEX = {"playback": 0, "record": 1, "audio": 2, "eyes": 3}
 
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
@@ -80,9 +81,12 @@ class ActionsScreen(QWidget):
         self._record_panel.stop_requested.connect(self._on_stop_record)
         self._audio_panel = AudioPanel(service)
         self._audio_panel.audio_changed.connect(self._on_audio_changed)
+        self._eye_panel = EyePanel(service)
+        self._eye_panel.eye_changed.connect(self._on_eye_changed)
         self._stack.addWidget(self._playback_panel)
         self._stack.addWidget(self._record_panel)
         self._stack.addWidget(self._audio_panel)
+        self._stack.addWidget(self._eye_panel)
         body.addWidget(self._stack, stretch=62)
 
         outer.addLayout(body, stretch=1)
@@ -97,7 +101,7 @@ class ActionsScreen(QWidget):
         self._tab_group = QButtonGroup(self)
         self._tab_group.setExclusive(True)
 
-        labels = [("Playback", 0), ("Record", 1), ("Audio", 2)]
+        labels = [("Playback", 0), ("Record", 1), ("Audio", 2), ("Eyes", 3)]
         for label, idx in labels:
             btn = QPushButton(label)
             btn.setObjectName("subTabButton")
@@ -130,6 +134,8 @@ class ActionsScreen(QWidget):
         self._stack.setCurrentIndex(idx)
         if idx == 2:
             self._audio_panel.refresh()
+        if idx == 3:
+            self._eye_panel.refresh()
 
     def set_subtab(self, name: str) -> None:
         """Programmatically switch to a sub-tab by name.
@@ -192,6 +198,7 @@ class ActionsScreen(QWidget):
             self._set_status(self._health_text)
         self._playback_panel.refresh()
         self._audio_panel.refresh()
+        self._eye_panel.refresh()
 
     # ---------- playback ----------
 
@@ -203,12 +210,18 @@ class ActionsScreen(QWidget):
         self._playback_panel.set_buttons_enabled(False)
         audio_path = self._service.action_audio_path(name)
         audio_offset = self._service.action_audio_offset(name) if audio_path else 0.0
-        if audio_path and audio_offset > 0:
-            suffix = f" (audio +{audio_offset:.1f}s)"
-        elif audio_path:
-            suffix = " (with audio)"
-        else:
-            suffix = ""
+        eye_id = self._service.action_eye_expression(name)
+        eye_offset = self._service.action_eye_offset(name) if eye_id is not None else 0.0
+        parts = []
+        if audio_path:
+            parts.append(
+                f"audio +{audio_offset:.1f}s" if audio_offset > 0 else "audio"
+            )
+        if eye_id is not None:
+            parts.append(
+                f"eye {eye_id} +{eye_offset:.1f}s" if eye_offset > 0 else f"eye {eye_id}"
+            )
+        suffix = f" ({', '.join(parts)})" if parts else ""
         self._set_status(f"Status: Playing '{name}'{suffix} \u2026")
         self._playback_worker = PlaybackWorker(
             self._service,
@@ -252,6 +265,9 @@ class ActionsScreen(QWidget):
         self._audio_panel.select_action(name)
 
     def _on_audio_changed(self, _name: str) -> None:
+        self._playback_panel.refresh()
+
+    def _on_eye_changed(self, _name: str) -> None:
         self._playback_panel.refresh()
 
     # ---------- delete ----------

@@ -45,6 +45,45 @@ from typing import Iterable, List, Optional, Tuple
 
 DEFAULT_ENV_PATH = Path("/etc/nina-link/navigation.env")
 
+
+def apply_env_file_to_process(
+    env_path: Optional[Path] = None,
+    *,
+    only_if_unset: bool = True,
+) -> int:
+    """Load ``/etc/nina-link/navigation.env`` into ``os.environ``.
+
+    Systemd ``EnvironmentFile`` does this for services; CLI and manual
+    ``python3 -m sirena_ui`` need the same without shell ``export``.
+
+    When *only_if_unset* is True (default), existing process env wins
+    (operator ``export`` or systemd drop-ins are not overwritten).
+    """
+    path = env_path
+    if path is None:
+        custom = (os.environ.get("NINA_NAVIGATION_ENV_PATH") or "").strip()
+        path = Path(custom) if custom else DEFAULT_ENV_PATH
+    if not path.exists():
+        return 0
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+
+    applied = 0
+    for line in text.splitlines():
+        m = _KEY_LINE_RE.match(line)
+        if m is None:
+            continue
+        key = m.group("key")
+        value = m.group("value").strip().strip("\"'")
+        if only_if_unset and key in os.environ:
+            continue
+        os.environ[key] = value
+        applied += 1
+    return applied
+
+
 _KEY_LEFT = "NINA_HOVER_REV_POS_LEFT"
 _KEY_RIGHT = "NINA_HOVER_REV_POS_RIGHT"
 _LEGACY_KEY_LEFT = "NINA_HOVER_FWD_POS_LEFT"

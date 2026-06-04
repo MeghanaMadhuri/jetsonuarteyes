@@ -293,6 +293,21 @@ class BatteryAds1115Settings:
 
 
 @dataclass(frozen=True)
+class EyeUartSettings:
+    """ESP8266 NodeMCU eye display over USB serial (115200, expression id 0–36 + newline).
+
+  Validated wiring: Jetson USB host → NodeMCU micro-USB → ``/dev/ttyUSB0``.
+  40-pin header UART (``/dev/ttyTHS1``) is not used on this robot.
+  Enable with ``NINA_EYE_UART_ENABLE=1``.
+    """
+
+    enabled: bool
+    port: str
+    baudrate: int
+    command_delay_sec: float
+
+
+@dataclass(frozen=True)
 class TouchAt42qt2120Settings:
     """AT42QT2120 capacitive touch on header pins **3** SDA + **5** SCL (``/dev/i2c-7``).
 
@@ -510,6 +525,7 @@ class NinaSettings:
     battery_ads1115: BatteryAds1115Settings
     touch_at42qt2120: TouchAt42qt2120Settings
     esp32_trigger: Esp32TriggerSettings
+    eye_uart: EyeUartSettings
     voice_edge: VoiceEdgeSettings
 
 
@@ -524,6 +540,7 @@ def serial_collision_warnings(settings: NinaSettings) -> list[str]:
         "dynamixel": settings.serial_port.strip(),
         "nav_remote": nav_remote,
         "lidar": settings.lidar.serial_port.strip(),
+        "eye_uart": settings.eye_uart.port.strip(),
     }
     owners: dict[str, list[str]] = {}
     for name, path in ports.items():
@@ -538,6 +555,9 @@ def serial_collision_warnings(settings: NinaSettings) -> list[str]:
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
+    from nina.config.navigation_env import apply_env_file_to_process
+
+    apply_env_file_to_process(only_if_unset=True)
     _scrub_obsolete_navigation_env()
     _scrub_obsolete_hover_env()
 
@@ -959,6 +979,18 @@ def load_settings(repo_root: Path) -> NinaSettings:
     else:
         _touch_detect_mode = "keystatus"
 
+    eye_uart = EyeUartSettings(
+        enabled=_env_bool("NINA_EYE_UART_ENABLE", True),
+        port=(os.environ.get("NINA_EYE_UART_PORT") or "/dev/ttyUSB0").strip(),
+        baudrate=max(
+            9600,
+            min(921600, _env_int("NINA_EYE_UART_BAUD", 115200)),
+        ),
+        command_delay_sec=max(
+            0.0, _env_float("NINA_EYE_UART_CMD_DELAY_SEC", 0.02)
+        ),
+    )
+
     touch_at42qt2120 = TouchAt42qt2120Settings(
         enabled=_env_bool("NINA_TOUCH_AT42QT2120_ENABLE", True),
         i2c_bus=_env_int("NINA_TOUCH_I2C_BUS", 7),
@@ -1035,5 +1067,6 @@ def load_settings(repo_root: Path) -> NinaSettings:
         battery_ads1115=battery_ads1115,
         touch_at42qt2120=touch_at42qt2120,
         esp32_trigger=esp32_trigger,
+        eye_uart=eye_uart,
         voice_edge=voice_edge,
     )

@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
             "settings": "Nina \u00b7 Settings",
             "health": "Nina \u00b7 Health Check",
             "voice": "Nina \u00b7 Voice",
+            "eye_exprs": "Nina \u00b7 Eye expressions",
         }
 
         central = QWidget()
@@ -554,6 +555,9 @@ class MainWindow(QMainWindow):
         if key == "voice":
             from sirena_ui.screens.voice_screen import VoiceScreen
             return VoiceScreen(self._service)
+        if key == "eye_exprs":
+            from sirena_ui.screens.eye_expressions_screen import EyeExpressionsScreen
+            return EyeExpressionsScreen(self._service)
         raise ValueError(f"Unknown screen key: {key}")
 
     def _on_nav_request(self, key: str) -> None:

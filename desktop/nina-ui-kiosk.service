@@ -142,6 +142,12 @@ Environment=NINA_UI_OSK_ARGS=--not-show-in-launcher --layout=Compact
 # to avoid I2C open retries (and use NINA_IR_DISABLE=1 as an alternative).
 # Environment=NINA_IR_OBSTACLE_STOP_ENABLE=0
 
+# ESP8266 eye display UART (NodeMCU @ 115200). Port from navigation.env
+# (validated: Jetson USB -> NodeMCU micro-USB = /dev/ttyUSB0). Do not force ttyTHS1 here.
+# Environment=NINA_EYE_UART_ENABLE=1
+# Environment=NINA_EYE_UART_PORT=/dev/ttyUSB0
+# Environment=NINA_EYE_UART_BAUD=115200
+
 # ESP32 digital trigger on 40-pin physical pin 11 (BCM 17) → namaste.
 Environment=NINA_ESP32_TRIGGER_ENABLE=1
 Environment=NINA_ESP32_TRIGGER_GPIO=17

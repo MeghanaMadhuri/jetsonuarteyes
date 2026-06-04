@@ -16,6 +16,7 @@ object SirenaNavCatalog {
             NavEntry("map", "\u25A6", "Map"),
             NavEntry("actions", "\u2630", "Actions"),
             NavEntry("movements", "\u21BB", "Movements"),
+            NavEntry("eye_exprs", "\u25C9", "Eyes"),
             NavEntry("settings", "\u2699", "Settings"),
             NavEntry("health", "\u2665", "Health"),
         )
@@ -37,6 +38,7 @@ object SirenaNavCatalog {
             "map" -> "Nina · Map (SLAM)"
             "actions" -> "Nina · Actions"
             "movements" -> "Nina · Movements"
+            "eye_exprs" -> "Nina · Eye expressions"
             "settings" -> "Nina · Settings"
             "health" -> "Nina · Health Check"
             "motion_calibration" -> "Nina · Motion calibration"

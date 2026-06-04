@@ -26,6 +26,7 @@ NAV_ITEMS: List[Tuple[str, str, str]] = [
     ("drive", "Drive", "\u2B95"),              # right arrow (substitute for car)
     ("vision", "Vision", "\u25CE"),            # bullseye
     ("voice", "Voice", "\u1F3A4"),             # microphone
+    ("eye_exprs", "Eyes", "\u25C9"),           # eye expressions (ESP8266 TFT)
     ("perception", "Perception", "\u2299"),    # circled dot - sensor fusion view
     ("map", "Map", "\u25A6"),                  # square with grid
     ("actions", "Actions", "\u2630"),          # trigram (lines)
