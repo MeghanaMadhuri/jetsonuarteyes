@@ -1,4 +1,4 @@
-"""Catalog of TFT eye expression IDs (must match ESP firmware Serial.parseInt 0–33)."""
+"""Catalog of TFT eye expression IDs (must match ESP firmware Serial.parseInt 0–36)."""
 
 from __future__ import annotations
 
@@ -61,6 +61,9 @@ EYE_EXPRESSIONS: Tuple[EyeExpression, ...] = (
     EyeExpression(31, "concerned", "-"),
     EyeExpression(32, "wink_left", "~"),
     EyeExpression(33, "wink_both", "~"),
+    EyeExpression(34, "screen_red", "~"),
+    EyeExpression(35, "screen_blue", "~"),
+    EyeExpression(36, "screen_green", "~"),
 )
 
 _BY_ID: Dict[int, EyeExpression] = {e.id: e for e in EYE_EXPRESSIONS}

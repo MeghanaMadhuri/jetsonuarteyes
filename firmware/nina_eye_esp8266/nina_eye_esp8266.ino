@@ -1,10 +1,10 @@
 /*
- * Nina / NodeMCU (ESP-12E) + 1.8" ST7735 - Nino neutral + expressions 0..33
+ * Nina / NodeMCU (ESP-12E) + 1.8" ST7735 - Nino neutral + expressions 0..36
  *
  * WIRING: VCC 3V3, GND, CS D8, RST D0, DC D4, MOSI D7, SCK D5, LED 3V3
  * TFT_eSPI: User_Setup_ST7735_Nina.h - rotation 1 = 160x128 landscape
  *
- * SERIAL 115200: type the expression NUMBER (0-33) then Enter.
+ * SERIAL 115200: type the expression NUMBER (0-36) then Enter.
  * On boot, Serial prints a full menu: ID, name, and GOOD / BAD mood hint.
  * Replies with "OK <id>" or "ERR" (disable via NINA_UART_ECHO 0 before build).
  */
@@ -38,7 +38,7 @@ const uint32_t NEU_DIAMETER_STEP_MS = 11;
 #define TFT_PINK 0xF81F
 #endif
 
-#define EXPR_LAST 33
+#define EXPR_LAST 36
 
 bool isAnimated(int e);
 void drawCurrentExpression();
@@ -262,6 +262,7 @@ void drawBaseEyeRxRy(int rx, int ry, int offsetX, int offsetY) {
 }
 
 bool isAnimated(int e) {
+  if (e >= 34 && e <= EXPR_LAST) return false;
   return (e >= 0 && e <= EXPR_LAST);
 }
 
@@ -445,7 +446,7 @@ static void drawHeartShape(int hx, int hy, int size, uint16_t col) {
   eye.fillTriangle(hx - hs, hy - hs / 5, hx + hs, hy - hs / 5, hx, hy + hs, col);
 }
 
-/** ID 15 - red heart with “lub-dub” heartbeat (two quick scale bumps, then rest). */
+/** ID 15 - true red heart (color565 avoids blue-tinted TFT_RED on some ST7735 tabs). */
 void exprLove() {
   const uint32_t beatPeriodMs = 880;
   uint32_t t = millis() % beatPeriodMs;
@@ -461,12 +462,27 @@ void exprLove() {
   int s = sBase + (int)(bumpPx + 0.5f);
   if (s < sBase) s = sBase;
   int beatLift = (int)(bumpPx * 0.22f);
-  eye.fillSprite(TFT_WHITE);
-  drawHeartShape(cx, cy - 2 - beatLift, s, TFT_RED);
+  const uint16_t loveRed = eye.color565(255, 0, 0);
+  eye.fillSprite(TFT_BLACK);
+  drawHeartShape(cx, cy - 2 - beatLift, s, loveRed);
   int glintR = max(4, s / 9);
   eye.fillCircle(cx - s / 5, cy - s / 4 - beatLift, glintR, TFT_WHITE);
   eye.pushSprite(0, 0);
 }
+
+static void exprScreenFill(uint8_t r, uint8_t g, uint8_t b) {
+  eye.fillSprite(eye.color565(r, g, b));
+  eye.pushSprite(0, 0);
+}
+
+/** ID 34 - full display solid red. */
+void exprScreenRed() { exprScreenFill(255, 0, 0); }
+
+/** ID 35 - full display solid blue. */
+void exprScreenBlue() { exprScreenFill(0, 0, 255); }
+
+/** ID 36 - full display solid green. */
+void exprScreenGreen() { exprScreenFill(0, 255, 0); }
 
 void exprCurious() {
   int rx = maxRadius - 2;
@@ -616,13 +632,16 @@ void drawCurrentExpression() {
     case 31: exprConcerned(); break;
     case 32: exprWinkLeft(); break;
     case 33: exprWinkBoth(); break;
+    case 34: exprScreenRed(); break;
+    case 35: exprScreenBlue(); break;
+    case 36: exprScreenGreen(); break;
     default: drawBaseEye(maxRadius, 0, 0); break;
   }
 }
 
 void printExpressionMenu() {
   Serial.println();
-  Serial.println(F("========== NINA EYES: type 0-33 + Enter =========="));
+  Serial.println(F("========== NINA EYES: type 0-36 + Enter =========="));
   Serial.println(F("MOOD KEY: [+] positive/neutral  [-] negative/stress  [~] look/utility"));
   Serial.println(F("----------------------------------------------------"));
   Serial.println(F(" 0 neutral~   1 happy+    2 excited+   3 sad-      4 sleepy~"));
@@ -633,8 +652,9 @@ void printExpressionMenu() {
   Serial.println(F("24 listening+ 25 thinking+ 26 acknowledging+ 27 unsure~"));
   Serial.println(F("28 relief+  29 tracking~ 30 shy+     31 concerned-"));
   Serial.println(F("32 wink_left~ 33 wink_both~"));
+  Serial.println(F("34 screen_red~ 35 screen_blue~ 36 screen_green~"));
   Serial.println(F("----------------------------------------------------"));
-  Serial.println(F("Same names as UI list: neutral,happy,...,wink_both"));
+  Serial.println(F("Same names as UI list + screen_red/blue/green"));
   Serial.println(F("===================================================="));
 }
 

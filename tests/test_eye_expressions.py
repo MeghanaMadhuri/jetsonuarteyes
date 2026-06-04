@@ -11,10 +11,11 @@ from nina.controllers.eye_expression_uart import (
 from nina.eye.expressions import EYE_EXPRESSIONS, expression_by_id
 
 
-def test_catalog_has_34_expressions_0_to_33() -> None:
-    assert len(EYE_EXPRESSIONS) == 34
+def test_catalog_has_37_expressions_0_to_36() -> None:
+    assert len(EYE_EXPRESSIONS) == 37
     assert EYE_EXPRESSIONS[0].id == 0
-    assert EYE_EXPRESSIONS[-1].id == 33
+    assert EYE_EXPRESSIONS[-1].id == 36
+    assert expression_by_id(34).name == "screen_red"
     assert expression_by_id(15) is not None
     assert expression_by_id(15).name == "love"
 

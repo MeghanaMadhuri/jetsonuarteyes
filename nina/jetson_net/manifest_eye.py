@@ -28,7 +28,7 @@ def _parse_eye_id(raw: Any) -> Optional[int]:
         eid = int(raw)
     except (TypeError, ValueError):
         return None
-    if 0 <= eid <= 33:
+    if 0 <= eid <= 36:
         return eid
     return None
 
@@ -69,7 +69,7 @@ def set_action_eye(
     *,
     eye_offset: Optional[float] = None,
 ) -> None:
-    """Bind an expression id (0–33) to an action; ``None`` clears eye fields."""
+    """Bind an expression id (0–36) to an action; ``None`` clears eye fields."""
     manifest = _load_manifest(manifest_path)
     actions = manifest.setdefault("actions", {})
     existing = actions.get(action_name)
@@ -93,8 +93,8 @@ def set_action_eye(
             actions[action_name] = entry
     else:
         eid = int(expression_id)
-        if eid < 0 or eid > 33:
-            raise ValueError("eye_expression must be 0..33")
+        if eid < 0 or eid > 36:
+            raise ValueError("eye_expression must be 0..36")
         entry["eye_expression"] = eid
         if eye_offset is not None:
             if eye_offset > 0:

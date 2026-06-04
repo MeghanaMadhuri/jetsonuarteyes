@@ -73,12 +73,12 @@ class ActionRunner:
             eid = int(raw)
         except (TypeError, ValueError):
             return None
-        if 0 <= eid <= 33:
+        if 0 <= eid <= 36:
             return eid
         return None
 
     def get_action_eye_expression(self, action_name: str) -> Optional[int]:
-        """Manifest ``eye_expression`` (0–33) for UART face display, or None."""
+        """Manifest ``eye_expression`` (0–36) for UART eye display, or None."""
         manifest = self._load_manifest()
         raw = manifest.get("actions", {}).get(action_name)
         if isinstance(raw, dict):
