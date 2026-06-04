@@ -563,6 +563,9 @@ def serial_collision_warnings(settings: NinaSettings) -> list[str]:
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
+    from nina.config.navigation_env import apply_env_file_to_process
+
+    apply_env_file_to_process(only_if_unset=True)
     _scrub_obsolete_navigation_env()
     _scrub_obsolete_hover_env()
 
@@ -986,7 +989,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     eye_uart = EyeUartSettings(
         enabled=_env_bool("NINA_EYE_UART_ENABLE", True),
-        port=(os.environ.get("NINA_EYE_UART_PORT") or "/dev/ttyTHS1").strip(),
+        port=(os.environ.get("NINA_EYE_UART_PORT") or "/dev/ttyUSB0").strip(),
         baudrate=max(
             9600,
             min(921600, _env_int("NINA_EYE_UART_BAUD", 115200)),

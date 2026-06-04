@@ -13,7 +13,7 @@ from nina.eye.expressions import EYE_EXPRESSIONS, expression_by_id
 
 log = logging.getLogger("nina.controllers.eye_expression_uart")
 
-DEFAULT_EYE_UART_PORT = "/dev/ttyTHS1"
+DEFAULT_EYE_UART_PORT = "/dev/ttyUSB0"
 DEFAULT_EYE_UART_BAUD = 115200
 EXPR_ID_MIN = 0
 EXPR_ID_MAX = 33
