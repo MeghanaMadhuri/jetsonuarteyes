@@ -57,12 +57,12 @@ class EyeExpressionsScreen(QWidget):
         card = Card()
         card_l = QVBoxLayout(card)
         card_l.setSpacing(6)
-        card_l.addWidget(CardTitle("ESP8266 face display"))
+        card_l.addWidget(CardTitle("ESP8266 eye display"))
         eu = service.settings.eye_uart
         card_l.addWidget(
             MutedLabel(
-                f"UART {eu.port} @ {eu.baudrate} — tap an expression. "
-                "Wiring: Jetson TX→ESP RX, Jetson RX→ESP TX, GND."
+                f"USB serial {eu.port} @ {eu.baudrate} — tap an expression. "
+                "Jetson USB → NodeMCU micro-USB (not 40-pin UART)."
             )
         )
         outer.addWidget(card)
@@ -124,7 +124,7 @@ class EyeExpressionsScreen(QWidget):
             QMessageBox.warning(
                 self,
                 "Eye UART",
-                "Eye UART is disabled. Set NINA_EYE_UART_ENABLE=1 in navigation.env.",
+                "Eye display serial is disabled. Set NINA_EYE_UART_ENABLE=1 in navigation.env.",
             )
             return
         self._busy = True

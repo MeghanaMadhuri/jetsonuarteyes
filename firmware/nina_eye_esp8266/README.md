@@ -67,7 +67,9 @@ NINA_EYE_UART_BAUD=115200
 
 Do not connect the ESP to a PC USB port while the Jetson owns the link.
 
-**Alternate:** 40-pin J12 pins **8 → RX**, **10 → TX**, **6 → GND** (`/dev/ttyTHS1`). Requires `jetson-io` → uart1 ON. Not all carriers route UART1 to pins 8/10 without pinmux.
+<!-- Not used on this robot:
+**Alternate:** 40-pin J12 pins 8 → RX, 10 → TX, 6 → GND (/dev/ttyTHS1). Requires jetson-io uart1 ON.
+-->
 
 Nina sends `"{id}\n"` (e.g. `15\n`) — same as Serial Monitor. Firmware replies `OK <id>` when `NINA_UART_ECHO` is enabled.
 

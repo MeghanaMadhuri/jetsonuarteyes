@@ -31,7 +31,7 @@ Deeper references for each subsystem:
 - [`sirena_ui/docs/NINA_APP.md`](sirena_ui/docs/NINA_APP.md) — full feature reference for the PyQt5 cockpit (every screen, every env var, every tunable).
 - [`pi_motor_bridge/README.md`](pi_motor_bridge/README.md) — Raspberry Pi bring-up walkthrough (Bookworm, pigpio, UART, every pothole).
 - [`pi_motor_bridge/PINMAP.md`](pi_motor_bridge/PINMAP.md) — JYQD ↔ Pi GPIO wiring table.
-- [`docs/NINA_EYE_UART.md`](docs/NINA_EYE_UART.md) — ESP8266 eye display UART (Jetson USB `/dev/ttyUSB0`).
+- [`docs/NINA_EYE_UART.md`](docs/NINA_EYE_UART.md) — ESP8266 eye display over Jetson USB (`/dev/ttyUSB0`).
 - [`firmware/nina_eye_esp8266/README.md`](firmware/nina_eye_esp8266/README.md) — Eye firmware flash checklist.
 
 ## Repository structure

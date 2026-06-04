@@ -294,10 +294,10 @@ class BatteryAds1115Settings:
 
 @dataclass(frozen=True)
 class EyeUartSettings:
-    """ESP8266 NodeMCU eye display over UART (115200, expression id 0–33 + newline).
+    """ESP8266 NodeMCU eye display over USB serial (115200, expression id 0–36 + newline).
 
-  Wiring (3.3 V logic): Jetson TX → ESP RX, Jetson RX → ESP TX, common GND.
-  Default port ``/dev/ttyTHS1`` (40-pin header UART); USB-TTL often ``/dev/ttyUSB1``.
+  Validated wiring: Jetson USB host → NodeMCU micro-USB → ``/dev/ttyUSB0``.
+  40-pin header UART (``/dev/ttyTHS1``) is not used on this robot.
   Enable with ``NINA_EYE_UART_ENABLE=1``.
     """
 

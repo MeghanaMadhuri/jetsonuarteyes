@@ -1,58 +1,45 @@
-# Nina eye expressions (ESP8266 + ST7735 over UART)
+# Nina eye display (ESP8266 + ST7735 over USB serial)
 
-The NodeMCU firmware accepts expression IDs **0–33** on **Serial @ 115200** (`Serial.parseInt()` + Enter). Nina sends `"{id}\n"` from the Jetson UI and Android companion.
+The NodeMCU firmware accepts expression IDs **0–36** on **USB serial @ 115200** (`Serial.parseInt()` + Enter). Nina sends `"{id}\n"` from the Jetson UI and Android companion.
 
-## Wiring (3.3 V logic)
+## Jetson connection (validated — USB only)
 
-| Jetson | NodeMCU (ESP-12E) |
-|--------|-------------------|
-| **TX** | **RX** |
-| **RX** | **TX** |
-| **GND** | **GND** |
+**Do not use the 40-pin header UART** for the eyes on this robot. Use a **USB data cable**:
 
-Power the NodeMCU from **3.3 V** (not 5 V on Jetson GPIO). USB programming uses the on-board USB port; runtime UART to the Jetson uses the **TX/RX** pins labeled on the board.
+```
+Jetson USB port  ────  USB cable  ────  NodeMCU micro-USB
+```
 
-## Jetson UART — use 40-pin header UART1 (recommended)
-
-Per NVIDIA Orin Nano DevKit carrier spec (J12 **Table 3-3**), use **UART1** on the **40-pin expansion header**, not the button-header **UART2 (DEBUG)** TXD/RXD.
-
-| J12 pin | Signal | Wire to ESP NodeMCU |
-|--------|--------|---------------------|
-| **8** | UART1_TXD | **RX** |
-| **10** | UART1_RXD | **TX** |
-| **6** | GND | **GND** |
-
-Typical Linux device: **`/dev/ttyTHS1`** (set `NINA_EYE_UART_PORT` if your board maps UART1 elsewhere).
-
-Do **not** use header pins **3/5** (I²C). Avoid button-header UART2 for the eyes (debug port, often `ttyTHS2`).
-
-| Connection | Typical device |
-|------------|----------------|
-| 40-pin UART1 (pins 8, 10) | `/dev/ttyTHS1` |
-| USB–serial adapter (CP210x/CH340, `dmesg`) | `/dev/ttyUSB0` or `/dev/ttyUSB1` |
-
-**Validated on robot:** one standard USB cable (power + data) Jetson USB → NodeMCU micro-USB (`/dev/ttyUSB0`). Typical phone/charger USB cables are fine. No separate RX/TX jumper wires.
-
-Use `NINA_EYE_UART_PORT=/dev/ttyUSB0` for direct USB or a USB–TTL dongle; use `ttyTHS1` only for 40-pin wiring.
-
-Nina disables DTR/RTS on open so the ESP is not reset when the port is opened.
-
-**Do not** share the same `/dev/ttyUSB*` port as Dynamixel (`NINA_DXL_PORT`).
-
-## Configuration
-
-In `/etc/nina-link/navigation.env`:
+Linux device: **`/dev/ttyUSB0`** (confirm with `dmesg` after plug-in).
 
 ```bash
 NINA_EYE_UART_ENABLE=1
-# Production (CP210x USB–TTL on Jetson USB):
 NINA_EYE_UART_PORT=/dev/ttyUSB0
-# Alternate (40-pin UART1):
-# NINA_EYE_UART_PORT=/dev/ttyTHS1
 NINA_EYE_UART_BAUD=115200
 ```
 
+In `/etc/nina-link/navigation.env` (loaded automatically by Nina; no shell `export` needed).
+
+Nina disables DTR/RTS on open so the ESP is not reset when the port is opened.
+
+**Do not** share the same `/dev/ttyUSB*` port as Dynamixel (`NINA_DXL_PORT`). Do not connect the ESP to a PC USB port while the Jetson owns the cable.
+
 Full procedure: [ESP8266_EYE_DEPLOYMENT_GUIDE.md](ESP8266_EYE_DEPLOYMENT_GUIDE.md).
+
+<!--
+## NOT USED — 40-pin header UART1 (ttyTHS1)
+
+Per NVIDIA Orin Nano DevKit, UART1 on J12 pins 8/10 was an alternate path.
+This robot uses USB only; the header path was not validated.
+
+| J12 pin | Signal | Wire to ESP NodeMCU |
+|--------|--------|---------------------|
+| 8 | UART1_TXD | RX |
+| 10 | UART1_RXD | TX |
+| 6 | GND | GND |
+
+Device: /dev/ttyTHS1 — requires jetson-io uart1 ON.
+-->
 
 ## UI
 
@@ -62,12 +49,12 @@ Full procedure: [ESP8266_EYE_DEPLOYMENT_GUIDE.md](ESP8266_EYE_DEPLOYMENT_GUIDE.m
 ## HTTP (companion)
 
 - `GET /v1/robot/eye/expressions` — list
-- `GET /v1/robot/eye/status` — UART status
+- `GET /v1/robot/eye/status` — serial port status
 - `POST /v1/robot/eye/expression` — body `{"id": 5}` (requires bearer on LAN)
 
 ## Per-action binding (record / play)
 
-In `nina/actions/manifest.json`, same pattern as `audio_offset`:
+In `nina/actions/manifest.json`:
 
 ```json
 "namaste": {
@@ -79,29 +66,17 @@ In `nina/actions/manifest.json`, same pattern as `audio_offset`:
 
 - **Kiosk:** Actions → **Eyes** sub-tab
 - **CLI:** `python -m nina.app.eye_cli bind namaste 15 --offset 0.5`
-- **HTTP:** `GET/POST /v1/actions/eye/info`, `/bind`, `/offset`, `/clear`
-- **Android:** Actions → **Eyes** sub-tab
 
 ## ESP firmware
 
-Flash **[firmware/nina_eye_esp8266/nina_eye_esp8266.ino](../firmware/nina_eye_esp8266/nina_eye_esp8266.ino)** in Arduino IDE (see [firmware/nina_eye_esp8266/README.md](../firmware/nina_eye_esp8266/README.md) for TFT_eSPI setup).
+Flash **[firmware/nina_eye_esp8266/nina_eye_esp8266.ino](../firmware/nina_eye_esp8266/nina_eye_esp8266.ino)** (see [firmware/nina_eye_esp8266/README.md](../firmware/nina_eye_esp8266/README.md)).
 
-## Bench test (USB serial to PC)
+## Bench test
 
-Arduino IDE Serial Monitor: **115200**, send `5` + Enter for angry.
+Arduino IDE Serial Monitor: **115200**, send `15` + Enter for love.
 
-On Jetson (firmware replies `OK <id>` on the same UART — read pin 10 / ESP TX):
+On Jetson:
 
 ```bash
-python3 -c "
-import serial, time
-s=serial.Serial('/dev/ttyTHS1', 115200, timeout=1)
-s.reset_input_buffer()
-s.write(b'15\n'); s.flush()
-time.sleep(0.2)
-print(s.readline())   # b'OK 15\n' if ESP received (ack is immediate)
-s.close()
-"
+python3 -m nina.app.eye_cli send 15
 ```
-
-Build with `NINA_UART_ECHO 0` in the sketch if you want no ack lines.

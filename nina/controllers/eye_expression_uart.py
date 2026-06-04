@@ -1,4 +1,4 @@
-"""UART client for NodeMCU ESP8266 eye firmware (115200, expression id + newline)."""
+"""USB-serial client for NodeMCU ESP8266 eye firmware (115200, expression id + newline)."""
 
 from __future__ import annotations
 

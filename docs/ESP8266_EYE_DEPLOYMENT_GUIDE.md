@@ -38,8 +38,8 @@ Clone or download from:
 | USB cable | Micro-USB (or board-appropriate) for programming |
 | Jetson Orin Nano | Ubuntu, Nina software stack installed |
 | USB data cable (Jetson USB ↔ ESP micro-USB) | **Validated production path** on the robot — no extra RX/TX jumper wires |
-| Optional: CP210x USB–TTL dongle + 3 wires | Jetson USB → dongle → ESP **RX / TX / GND** (same `ttyUSB0` idea) |
-| Optional: 40-pin UART wires | J12 pins 8, 10, 6 — `/dev/ttyTHS1`; requires `jetson-io` uart1 |
+<!-- | Optional: CP210x USB–TTL dongle + 3 wires | Not used — direct USB cable instead |
+| Optional: 40-pin UART wires | Not used — /dev/ttyTHS1 header path disabled on this robot | -->
 
 ---
 
@@ -101,13 +101,7 @@ Jetson USB port  ──── USB data cable ────  NodeMCU micro-USB
 - Do **not** connect the ESP to a **Windows PC** USB port while the Jetson owns the cable.
 - For programming on a PC, unplug from the Jetson, flash on Windows, then plug back into the Jetson only.
 
-**Optional setup B — USB–TTL dongle (if not using direct USB):**
-
-```
-Jetson USB → CP210x/CH340 dongle → ESP RX, TX, GND (header pins beside USB)
-```
-
-**Optional setup C — 40-pin header:** J12 pin 8 → ESP RX, pin 10 → ESP TX, pin 6 → GND, device `/dev/ttyTHS1` (requires `jetson-io` uart1). Not used on the validated robot build.
+<!-- Optional setup B/C (40-pin UART / USB–TTL dongle) — not used on this robot. USB cable only. -->
 
 ---
 
@@ -219,7 +213,7 @@ Configure via kiosk **Actions → Eyes**, CLI `eye_cli bind`, or Android compani
 | `ModuleNotFoundError: fastapi` | `pip3 install -r requirements-link.txt` |
 | UI ImportError on startup | `git pull` (latest `jetsonuarteyes` main) |
 | `rx: b''` on Jetson | DTR/RTS false; 2 s delay after open; confirm `dmesg` device |
-| `ttyTHS1` send OK in software, no face | Enable uart1 in jetson-io or use USB path |
+| `ttyTHS1` | Not used — use `/dev/ttyUSB0` only |
 
 ---
 
