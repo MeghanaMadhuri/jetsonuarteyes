@@ -155,6 +155,24 @@ class _BusInitThread(QThread):
         self.finished_ok.emit(health)
 
 
+class _VolumeProbeThread(QThread):
+    """Read the system mixer (amixer/pactl) off the Qt GUI thread.
+
+    ``get_system_output_volume_pct()`` spawns a subprocess; doing that on the
+    GUI thread every couple seconds visibly stutters the kiosk on the Jetson.
+    We run it here and hand the result back through a signal instead.
+    """
+
+    probed = pyqtSignal(object)  # system volume pct (int) or None when no mixer
+
+    def run(self) -> None:
+        try:
+            pct = get_system_output_volume_pct()
+        except Exception:
+            pct = None
+        self.probed.emit(pct)
+
+
 def _env_truthy(name: str) -> bool:
     """Permissive bool parse so the operator can use 1/true/yes/on."""
     raw = os.environ.get(name, "").strip().lower()
@@ -256,8 +274,12 @@ class MainWindow(QMainWindow):
         self._battery_ui_timer.timeout.connect(self._refresh_battery_tray)
         self._battery_ui_timer.start()
 
+        # System-mixer reads spawn a subprocess, so they run off-thread and
+        # poll slowly — in-app volume changes update the header immediately, so
+        # this only needs to catch the rare external (amixer/pactl) change.
+        self._volume_probe_thread: Optional[_VolumeProbeThread] = None
         self._volume_ui_timer = QTimer(self)
-        self._volume_ui_timer.setInterval(2500)
+        self._volume_ui_timer.setInterval(15000)
         self._volume_ui_timer.timeout.connect(self._refresh_header_volume)
         self._volume_ui_timer.start()
         QTimer.singleShot(400, self._refresh_header_volume)
@@ -272,12 +294,13 @@ class MainWindow(QMainWindow):
             self._hide_sleep_overlay,
         )
         self._power.state_changed.connect(self._on_power_state_changed)
+        # A single application-wide filter already sees every input event;
+        # installing it again on individual widgets just doubled the work per
+        # tap, so we register it once on the QApplication only.
         self._power_filter = _PowerActivityFilter(self._power)
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self._power_filter)
-        for widget in (central, self._header, self._sidebar, self._stack, self._status_bar):
-            widget.installEventFilter(self._power_filter)
 
         # Initial state
         self.navigate("home")
@@ -358,8 +381,24 @@ class MainWindow(QMainWindow):
             app.quit()
 
     def _refresh_header_volume(self) -> None:
-        sys_pct = get_system_output_volume_pct()
-        if sys_pct is not None:
+        """Kick an off-thread mixer probe (skips if one is already running)."""
+        existing = self._volume_probe_thread
+        if existing is not None and existing.isRunning():
+            return
+        thread = _VolumeProbeThread()
+        thread.setParent(self)
+        self._volume_probe_thread = thread
+        thread.probed.connect(self._on_volume_probed)
+
+        def _clear() -> None:
+            if self._volume_probe_thread is thread:
+                self._volume_probe_thread = None
+
+        thread.finished.connect(_clear)
+        thread.start()
+
+    def _on_volume_probed(self, sys_pct: object) -> None:
+        if isinstance(sys_pct, int):
             self._header.set_volume_state(sys_pct, available=True)
             return
         app_pct = get_app_audio_volume_pct()
