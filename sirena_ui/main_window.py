@@ -631,6 +631,10 @@ class MainWindow(QMainWindow):
         self._service.start_battery_ads1115_monitor()
         self._service.start_touch_at42qt2120_monitor()
         self._service.start_mpu9250_imu_monitor()
+        try:
+            self._service.drive.ensure_hardware()
+        except Exception:
+            log.exception("drive init after bus ready failed")
 
     def _on_bus_init_failed(self, message: str) -> None:
         self._bus_init_thread = None
@@ -639,7 +643,10 @@ class MainWindow(QMainWindow):
         self._status_bar.set_right_text(f"Bus offline \u2014 {detail}")
 
     def _apply_bus_footer_from_health(self, health: dict) -> None:
-        self._status_bar.set_dot("bus", ok=True)
+        connected = bool(health.get("connected", False))
+        detected = int(health.get("detected", 0) or 0)
+        expected = int(health.get("expected", 0) or 0)
+        self._status_bar.set_dot("bus", ok=connected and detected > 0)
         self._status_bar.set_dot("wifi", ok=True)
         self._status_bar.set_dot("battery", ok=True)
         ve = self._service.settings.voice_edge
@@ -652,8 +659,6 @@ class MainWindow(QMainWindow):
             )
         else:
             self._status_bar.set_dot("voice", ok=False, warn=True)
-        detected = int(health.get("detected", 0) or 0)
-        expected = int(health.get("expected", 0) or 0)
         if expected > 0:
             self._status_bar.set_right_text(
                 f"Motors {detected}/{expected} \u00b7 Bus ready"

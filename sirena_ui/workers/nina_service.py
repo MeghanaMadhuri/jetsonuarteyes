@@ -21,7 +21,7 @@ from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner, action_playback_speed
 from nina.controllers.eye_expression_uart import EyeExpressionUartClient, EyeUartConfig
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
+from nina.config.motor_ids import HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
     format_pack_voltage,
     get_battery_snapshot,
@@ -53,8 +53,6 @@ from sirena_ui.workers.face_greeter import FaceGreeter, FaceGreetReceiver
 from sirena_ui.workers.vision_worker import VisionWorker
 
 
-DEFAULT_MOTOR_IDS: List[int] = list(EXPECTED_DYNAMIXEL_IDS)
-
 log = logging.getLogger("sirena_ui.nina_service")
 
 
@@ -64,10 +62,11 @@ class NinaService:
             repo_root = Path(__file__).resolve().parents[2]
             settings = load_settings(repo_root)
         self.settings = settings
+        self._expected_motor_ids: List[int] = list(settings.dynamixel_expected_ids)
         self.dxl = DynamixelManager(
             serial_port=settings.serial_port,
             baudrate=settings.baudrate,
-            expected_motor_ids=DEFAULT_MOTOR_IDS,
+            expected_motor_ids=self._expected_motor_ids,
         )
         self.action_runner = ActionRunner(
             manifest_path=settings.manifest_path,
@@ -76,7 +75,7 @@ class NinaService:
         )
         self.bus_lock = threading.RLock()
         self._bus_ready = False
-        self._motor_count = len(DEFAULT_MOTOR_IDS)
+        self._motor_count = len(self._expected_motor_ids)
         self._drive: Optional[DriveController] = None
         self._face_follow: Optional[FaceFollowController] = None
         self._vision: Optional[VisionWorker] = None
@@ -726,7 +725,7 @@ class NinaService:
         """Sync-write goal position for Dynamixel IDs 1–13 (neutral pose)."""
         axis = self.settings.hoverboard_axis
         ms = max(0, min(1023, int(axis.moving_speed)))
-        goals = {int(sid): int(goal) for sid in EXPECTED_DYNAMIXEL_IDS}
+        goals = {int(sid): int(goal) for sid in self._expected_motor_ids}
         with self.bus_lock:
             if not self._bus_ready:
                 return

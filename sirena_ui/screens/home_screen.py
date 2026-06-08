@@ -197,7 +197,8 @@ class HomeScreen(QWidget):
         try:
             dc = self._service.drive
             dc.state_changed.connect(self._on_drive_state_changed, type=Qt.UniqueConnection)
-            dc.ensure_hardware()
+            if self._service.bus_ready:
+                dc.ensure_hardware()
         except Exception:
             pass
 
@@ -402,7 +403,8 @@ class HomeScreen(QWidget):
 
         try:
             dc = self._service.drive
-            dc.ensure_hardware()
+            if self._service.bus_ready:
+                dc.ensure_hardware()
             self._apply_torque_pill_from_state(dc.state())
         except Exception as exc:
             self._apply_torque_pill_from_state(
