@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.linkApiErrorMessage
 import com.sirena.nina.companion.data.LinkClient
+import com.sirena.nina.companion.data.PowerStateUi
+import com.sirena.nina.companion.data.toPowerStateUi
 import com.sirena.nina.companion.data.SlamOccupancyGrid
 import com.sirena.nina.companion.data.jsonCleanString
 import com.sirena.nina.companion.data.Prefs
@@ -874,6 +876,36 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(null)
             } catch (e: Exception) {
                 onResult(e.message ?: "Reboot request failed")
+            }
+        }
+    }
+
+    suspend fun fetchPowerState(): PowerStateUi? =
+        try {
+            client.systemPowerState(prefs.baseUrl.first()).toPowerStateUi()
+        } catch (_: Exception) {
+            null
+        }
+
+    fun requestJetsonWake(onResult: (String?) -> Unit) {
+        NinaLog.tap("System", "jetson_wake", "")
+        vmD("requestJetsonWake")
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                if (bearer.isNullOrBlank()) {
+                    onResult("Not paired ΓÇö connect on Home first.")
+                    return@launch
+                }
+                val out = client.systemWake(url, bearer, "tablet")
+                if (!out.optBoolean("ok", true)) {
+                    onResult(out.optString("detail").ifBlank { "Wake failed" })
+                } else {
+                    onResult(null)
+                }
+            } catch (e: Exception) {
+                onResult(e.message ?: "Wake request failed")
             }
         }
     }

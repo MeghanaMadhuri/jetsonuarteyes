@@ -117,8 +117,8 @@ QPushButton#navRow {{
     border: none;
     border-left: 3px solid transparent;
     text-align: left;
-    padding: 12px 16px 12px 17px;
-    font-size: 14px;
+    padding: 8px 14px 8px 17px;
+    font-size: 13px;
     font-weight: 500;
 }}
 QPushButton#navRow:hover {{
@@ -129,6 +129,42 @@ QPushButton#navRow:checked {{
     color: {BRAND_RED};
     border-left: 3px solid {BRAND_RED};
     font-weight: 600;
+}}
+
+/* Grouped nav: section captions + scroll container in the sidebar */
+
+QLabel#navSection {{
+    background-color: transparent;
+    color: #8a8a8f;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 9px 16px 2px 17px;
+}}
+QScrollArea#navScroll {{
+    background: transparent;
+    border: none;
+}}
+QScrollArea#navScroll > QWidget > QWidget {{
+    background: transparent;
+}}
+QScrollArea#navScroll QScrollBar:vertical {{
+    background: transparent;
+    width: 5px;
+    margin: 0px;
+}}
+QScrollArea#navScroll QScrollBar::handle:vertical {{
+    background: #55555a;
+    border-radius: 2px;
+    min-height: 28px;
+}}
+QScrollArea#navScroll QScrollBar::add-line:vertical,
+QScrollArea#navScroll QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollArea#navScroll QScrollBar::add-page:vertical,
+QScrollArea#navScroll QScrollBar::sub-page:vertical {{
+    background: transparent;
 }}
 
 /* Sub-sidebar used inside the Settings screen */

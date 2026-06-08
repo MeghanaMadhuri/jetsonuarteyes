@@ -276,6 +276,25 @@ class LinkClient {
             post("$baseUrl/v1/system/reboot", bearer, "{}")
         }
 
+    /** Kiosk power tier (``GET /v1/system/power-state`` ΓÇö no auth). */
+    suspend fun systemPowerState(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/system/power-state")
+        }
+
+    /** Wake Jetson from idle/sleep (``POST /v1/system/wake``, requires pair token). */
+    suspend fun systemWake(
+        baseUrl: String,
+        bearer: String?,
+        source: String = "tablet",
+    ): JSONObject = withContext(Dispatchers.IO) {
+        post(
+            "$baseUrl/v1/system/wake",
+            bearer,
+            JSONObject().put("source", source).toString(),
+        )
+    }
+
     /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
     suspend fun robotDriveStatus(baseUrl: String, bearer: String? = null): JSONObject =
         withContext(Dispatchers.IO) {

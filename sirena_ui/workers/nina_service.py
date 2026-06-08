@@ -93,6 +93,7 @@ class NinaService:
         self._esp32_reaction_audio_timer: Optional[threading.Timer] = None
         self._esp32_reaction_lock = threading.Lock()
         self._imu_monitor: Optional[Mpu9250DriftMonitor] = None
+        self._power_stood_down: bool = False
         self._movement_store: Optional[MovementStore] = None
         self._voice_assistant: Optional[Any] = None
         self._voice_start_detail: Optional[str] = None
@@ -193,6 +194,99 @@ class NinaService:
         if drv is None:
             return False
         return bool(getattr(drv, "is_in_motion", lambda: False)())
+
+    # ---- power save (L1 idle / L2 sleep) background management ----
+
+    def stop_touch_monitor_for_power(self) -> None:
+        """Stop the capacitive touch monitor so it can be re-opened on wake."""
+        if self._touch_monitor is not None:
+            try:
+                self._touch_monitor.stop()
+            except Exception:
+                pass
+            self._touch_monitor = None
+
+    def stand_down_background(self, *, keep_touch_monitor: bool = False) -> None:
+        """Light stand-down for L1/L2 — keeps Dynamixel bus and drive alive.
+
+        Stops the chatty background workers (voice, IMU, battery, ESP32, IR,
+        face follow, camera face/object) so an idle kiosk draws less power.
+        Autonomy/SLAM are stood down too when present; all calls are guarded
+        so a missing subsystem (e.g. autonomy 'coming soon') is a no-op.
+        """
+        if self._power_stood_down:
+            return
+        self._power_stood_down = True
+        self.stop_voice_assistant()
+        if self._imu_monitor is not None:
+            try:
+                self._imu_monitor.stop()
+            except Exception:
+                pass
+            self._imu_monitor = None
+        if self._battery_monitor is not None:
+            try:
+                self._battery_monitor.stop()
+            except Exception:
+                pass
+            self._battery_monitor = None
+        if self._esp32_trigger_monitor is not None:
+            try:
+                self._esp32_trigger_monitor.stop()
+            except Exception:
+                pass
+            self._esp32_trigger_monitor = None
+        if self._ir_obstacle_monitor is not None:
+            try:
+                self._ir_obstacle_monitor.stop()
+            except Exception:
+                pass
+            self._ir_obstacle_monitor = None
+        if not keep_touch_monitor:
+            self.stop_touch_monitor_for_power()
+        if self._face_follow is not None:
+            try:
+                self._face_follow.stop()
+            except Exception:
+                pass
+        autonomy = getattr(self, "_autonomy", None)
+        if autonomy is not None:
+            disable = getattr(autonomy, "_disable", None)
+            if callable(disable):
+                try:
+                    disable()
+                except Exception:
+                    pass
+        slam = getattr(self, "_slam", None)
+        if slam is not None:
+            try:
+                slam.stop()
+            except Exception:
+                pass
+        if self._vision is not None:
+            try:
+                self._vision.set_face_enabled(False)
+                self._vision.set_object_enabled(False)
+            except Exception:
+                pass
+            stand_down = getattr(self._vision, "stand_down_for_power", None)
+            if callable(stand_down):
+                try:
+                    stand_down()
+                except Exception:
+                    pass
+
+    def restore_background(self) -> None:
+        """Restart background monitors after wake (camera stays lazy per screen)."""
+        if not self._power_stood_down:
+            return
+        self._power_stood_down = False
+        self.start_battery_ads1115_monitor()
+        self.start_ir_obstacle_stop_monitor()
+        self.start_esp32_trigger_monitor()
+        if self.settings.touch_at42qt2120.enabled:
+            self.start_touch_at42qt2120_monitor()
+        self.start_voice_assistant()
 
     def start_voice_assistant(self) -> None:
         """Optional always-on listener (off by default; Voice screen uses push-to-talk)."""

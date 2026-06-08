@@ -55,6 +55,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.BuildConfig
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.data.PowerStateUi
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import com.sirena.nina.companion.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -259,7 +262,7 @@ fun SirenaSettingsScreen(
                                     onBackToProductHub = onBackToProductHub,
                                     onNavigateToHealth = onNavigateToHealth,
                                 )
-                            "display" -> SettingsPlaceholderDisplay()
+                            "display" -> SettingsDisplayPane(vm = vm, ready = ready)
                             "audio" -> SettingsPlaceholderAudio()
                             "privacy" -> SettingsPlaceholderPrivacy()
                             "autodock" -> SettingsPlaceholderAutodock()
@@ -487,22 +490,49 @@ private fun SettingsPlaceholderShell(title: String, content: @Composable ColumnS
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsPlaceholderDisplay() {
-    var wifiIdx by rememberSaveable { mutableIntStateOf(0) }
-    val wifiOpts = listOf("Sirena-5G", "Sirena-Guest", "Other…")
-    var bright by rememberSaveable { mutableFloatStateOf(70f) }
-    var sleepIdx by rememberSaveable { mutableIntStateOf(0) }
-    val sleepOpts = listOf("Never", "1 min", "5 min", "15 min")
-    SettingsPlaceholderShell("Display") {
-        SettingsFormDropdown("Wi-Fi network", wifiOpts, wifiIdx, { wifiIdx = it })
-        Text("IP address", fontSize = SirenaType.muted, color = SirenaColors.muted)
-        Text("\u2014", color = SirenaColors.text)
-        Text("Brightness", fontSize = SirenaType.muted, color = SirenaColors.muted)
-        Slider(value = bright, onValueChange = { bright = it }, valueRange = 0f..100f)
-        SettingsFormDropdown("Screen sleep", sleepOpts, sleepIdx, { sleepIdx = it })
+private fun SettingsDisplayPane(
+    vm: CompanionViewModel,
+    ready: CompanionUiState.Ready?,
+) {
+    val online = ready != null
+    val scope = rememberCoroutineScope()
+    var power by remember { mutableStateOf<PowerStateUi?>(null) }
+    var wakeInFlight by remember { mutableStateOf(false) }
+    var wakeMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(online) {
+        while (true) {
+            if (online) {
+                try {
+                    power = vm.fetchPowerState()
+                } catch (_: Exception) {
+                }
+            } else {
+                power = null
+            }
+            kotlinx.coroutines.delay(5000L)
+        }
     }
+
+    SirenaPowerSaveSection(
+        power = power,
+        jetsonOnline = online,
+        wakeInFlight = wakeInFlight,
+        wakeMessage = wakeMessage,
+        onWake = {
+            wakeInFlight = true
+            wakeMessage = null
+            vm.requestJetsonWake { err ->
+                wakeInFlight = false
+                wakeMessage =
+                    err ?: "Wake sent — robot display should turn on."
+                scope.launch {
+                    power = vm.fetchPowerState()
+                }
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -576,6 +606,46 @@ private fun SettingsPowerPane(
     var lastResult by remember { mutableStateOf<String?>(null) }
     var inFlight by remember { mutableStateOf(false) }
     val online = ready != null
+
+    val scope = rememberCoroutineScope()
+    var power by remember { mutableStateOf<PowerStateUi?>(null) }
+    var wakeInFlight by remember { mutableStateOf(false) }
+    var wakeMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(online) {
+        while (true) {
+            if (online) {
+                try {
+                    power = vm.fetchPowerState()
+                } catch (_: Exception) {
+                }
+            } else {
+                power = null
+            }
+            kotlinx.coroutines.delay(5000L)
+        }
+    }
+
+    if (online && power?.needsWake == true) {
+        SirenaPowerSaveSection(
+            power = power,
+            jetsonOnline = online,
+            wakeInFlight = wakeInFlight,
+            wakeMessage = wakeMessage,
+            onWake = {
+                wakeInFlight = true
+                wakeMessage = null
+                vm.requestJetsonWake { err ->
+                    wakeInFlight = false
+                    wakeMessage = err ?: "Wake sent."
+                    scope.launch { power = vm.fetchPowerState() }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            compact = true,
+        )
+        Spacer(Modifier.height(8.dp))
+    }
 
     SirenaCard {
         SirenaSectionLabel("Power")

@@ -35,7 +35,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.compose.ui.Alignment
@@ -50,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.R
+import com.sirena.nina.companion.data.PowerStateUi
 
 /**
  * Dashboard aligned with [sirena_ui.screens.home_screen.HomeScreen] quick tiles + status strip.
@@ -438,6 +438,9 @@ fun SirenaHomeScreen(
     val scope = rememberCoroutineScope()
     var healthRows by remember { mutableStateOf<JSONArray?>(null) }
     var driveStatus by remember { mutableStateOf<JSONObject?>(null) }
+    var powerState by remember { mutableStateOf<PowerStateUi?>(null) }
+    var wakeInFlight by remember { mutableStateOf(false) }
+    var wakeMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(jetsonOnline) {
         while (isActive) {
@@ -460,6 +463,14 @@ fun SirenaHomeScreen(
                             } catch (_: Exception) {
                             }
                         }
+                        launch {
+                            try {
+                                powerState = vm.fetchPowerState()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                            }
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -467,8 +478,21 @@ fun SirenaHomeScreen(
             } else {
                 healthRows = null
                 driveStatus = null
+                powerState = null
             }
-            delay(6000L)
+            delay(5000L)
+        }
+    }
+
+    val onWakeRobot = {
+        wakeInFlight = true
+        wakeMessage = null
+        vm.requestJetsonWake { err ->
+            wakeInFlight = false
+            wakeMessage = err ?: "Wake sent."
+            scope.launch {
+                powerState = vm.fetchPowerState()
+            }
         }
     }
 
@@ -509,6 +533,17 @@ fun SirenaHomeScreen(
                     phoneDense = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (jetsonOnline && powerState?.needsWake == true) {
+                    SirenaPowerSaveSection(
+                        power = powerState,
+                        jetsonOnline = true,
+                        wakeInFlight = wakeInFlight,
+                        wakeMessage = wakeMessage,
+                        onWake = onWakeRobot,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Text(
                     "QUICK ACTIONS",
                     color = SirenaColors.grey,
@@ -578,6 +613,18 @@ fun SirenaHomeScreen(
                     phoneDense = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                if (jetsonOnline && powerState?.needsWake == true) {
+                    SirenaPowerSaveSection(
+                        power = powerState,
+                        jetsonOnline = true,
+                        wakeInFlight = wakeInFlight,
+                        wakeMessage = wakeMessage,
+                        onWake = onWakeRobot,
+                        compact = false,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 SirenaSectionLabel("Quick actions")
 

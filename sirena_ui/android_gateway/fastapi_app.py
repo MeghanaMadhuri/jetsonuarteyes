@@ -367,6 +367,12 @@ class RobotDisplayNameBody(BaseModel):
     display_name: str = Field(default="", max_length=128)
 
 
+class SystemWakeBody(BaseModel):
+    """Tablet-initiated wake from L2 sleep; ``source`` is recorded for logs."""
+
+    source: str = Field(default="tablet", max_length=64)
+
+
 class MovementUpsertBody(BaseModel):
     """Saved drive sequence (same JSON as ``nina/movements`` on disk)."""
 
@@ -1190,6 +1196,49 @@ def create_tablet_app(gw: TabletGateway) -> FastAPI:
     ) -> Dict[str, Any]:
         auth_mutate(authorization, request)
         return host_control.queue_reboot()
+
+    @app.get("/v1/system/power-state")
+    def system_power_state_http() -> Dict[str, Any]:
+        from sirena_ui.workers.power_registry import get_power_manager
+
+        pm = get_power_manager()
+        if pm is None:
+            return {
+                "state": "active",
+                "enabled": False,
+                "idle_sec_remaining": 0,
+                "sleep_sec_remaining": 0,
+                "wake_sources_enabled": {},
+            }
+        return pm.status_dict()
+
+    @app.post("/v1/system/wake")
+    def system_wake_http(
+        body: SystemWakeBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        from sirena_ui.workers.power_registry import get_power_manager
+
+        pm = get_power_manager()
+        if pm is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Power manager not available (kiosk UI not running).",
+            )
+        if not pm.config.wake_tablet:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Tablet wake disabled (NINA_POWER_WAKE_TABLET=0).",
+            )
+        source = (body.source or "tablet").strip() or "tablet"
+
+        def _wake() -> Dict[str, Any]:
+            pm.wake(source)
+            return {"ok": True, "state": pm.state}
+
+        return gw.plane.submit(_wake, timeout=5.0)
 
     @app.post("/v1/system/display-name")
     def set_robot_display_name_http(

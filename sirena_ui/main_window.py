@@ -43,7 +43,7 @@ def _fleet_panel_size() -> tuple[int, int]:
             pass
     return _FLEET_PANEL_W, _FLEET_PANEL_H
 
-from PyQt5.QtCore import QSettings, Qt, QThread, QTimer, QRect, pyqtSignal
+from PyQt5.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, QRect, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
     QApplication,
@@ -70,8 +70,70 @@ from sirena_ui.widgets.header_bar import HeaderBar
 from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from sirena_ui.widgets.status_bar import StatusBar
 from sirena_ui.workers.nina_service import NinaService
+from sirena_ui.workers.power_config import PowerConfig
+from sirena_ui.workers.power_manager import (
+    PowerManager,
+    STATE_IDLE,
+    STATE_SLEEP,
+)
+from sirena_ui.workers.power_registry import set_power_manager
 
 APP_VERSION = "0.4"
+
+# Screens that power on USB camera / lidar / depth — must not start in idle/sleep.
+_SENSOR_SCREEN_KEYS = frozenset({"drive", "vision", "perception"})
+
+
+_POWER_INTERACTION_EVENTS = frozenset(
+    {
+        QEvent.MouseButtonPress,
+        QEvent.MouseButtonRelease,
+        QEvent.MouseButtonDblClick,
+        QEvent.TouchBegin,
+        QEvent.TouchUpdate,
+        QEvent.TouchEnd,
+        QEvent.TouchCancel,
+        QEvent.KeyPress,
+        QEvent.Wheel,
+    }
+)
+
+
+class _PowerActivityFilter(QObject):
+    """Forward UI input to ``PowerManager`` (wake from sleep or reset idle timer)."""
+
+    def __init__(self, power_manager: PowerManager) -> None:
+        super().__init__()
+        self._power = power_manager
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() not in _POWER_INTERACTION_EVENTS:
+            return False
+        if self._power.state == STATE_SLEEP:
+            if self._power.config.wake_display_tap:
+                self._power.wake("display_touch")
+            return False
+        if self._power.state == STATE_IDLE:
+            self._power.note_activity("ui")
+            return False
+        self._power.note_activity("ui")
+        return False
+
+
+class _SleepOverlay(QWidget):
+    """Fullscreen black layer for L2 sleep (first tap wakes)."""
+
+    def __init__(self, power_manager: PowerManager, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._power = power_manager
+        self.setStyleSheet("background-color: #000000;")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.hide()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._power.config.wake_display_tap:
+            self._power.wake("display_touch")
+        event.accept()
 
 
 class _BusInitThread(QThread):
@@ -137,6 +199,7 @@ class MainWindow(QMainWindow):
             self.setMinimumSize(1024, 600)
 
         self._screens: Dict[str, QWidget] = {}
+        self._current_screen_key = "home"
         self._titles: Dict[str, str] = {
             "home": "Nina \u00b7 Home",
             "drive": "Nina \u00b7 Drive",
@@ -198,6 +261,23 @@ class MainWindow(QMainWindow):
         self._volume_ui_timer.timeout.connect(self._refresh_header_volume)
         self._volume_ui_timer.start()
         QTimer.singleShot(400, self._refresh_header_volume)
+
+        self._power = PowerManager(service, parent=self)
+        set_power_manager(self._power)
+        self._power.set_navigate_home(lambda: self.navigate("home"))
+        self._power.set_screen_key_provider(lambda: self._current_screen_key)
+        self._sleep_overlay = _SleepOverlay(self._power, central)
+        self._power.set_sleep_overlay_hooks(
+            self._show_sleep_overlay,
+            self._hide_sleep_overlay,
+        )
+        self._power.state_changed.connect(self._on_power_state_changed)
+        self._power_filter = _PowerActivityFilter(self._power)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._power_filter)
+        for widget in (central, self._header, self._sidebar, self._stack, self._status_bar):
+            widget.installEventFilter(self._power_filter)
 
         # Initial state
         self.navigate("home")
@@ -483,6 +563,7 @@ class MainWindow(QMainWindow):
         screen_key, _, subtab = key.partition(":")
         if not screen_key:
             return
+        self._current_screen_key = screen_key
 
         widget = self._screens.get(screen_key)
         if widget is None:
@@ -493,6 +574,13 @@ class MainWindow(QMainWindow):
         # Notify the outgoing screen so screens that own background
         # workers (e.g. Vision releases the camera) can stand down.
         previous = self._stack.currentWidget()
+        if hasattr(self, "_power") and previous is not widget:
+            # Browsing sensor UIs while idle/sleep must not wake or reset timers.
+            if (
+                screen_key not in _SENSOR_SCREEN_KEYS
+                or self._power.state == "active"
+            ):
+                self._power.note_activity(f"navigate:{screen_key}")
         if previous is not None and previous is not widget:
             on_leave = getattr(previous, "on_leave", None)
             if callable(on_leave):
@@ -559,6 +647,64 @@ class MainWindow(QMainWindow):
             from sirena_ui.screens.eye_expressions_screen import EyeExpressionsScreen
             return EyeExpressionsScreen(self._service)
         raise ValueError(f"Unknown screen key: {key}")
+
+    def _show_sleep_overlay(self) -> None:
+        central = self.centralWidget()
+        if central is None:
+            return
+        self._sleep_overlay.setGeometry(central.rect())
+        self._sleep_overlay.raise_()
+        self._sleep_overlay.show()
+
+    def _hide_sleep_overlay(self) -> None:
+        self._sleep_overlay.hide()
+
+    def _on_power_state_changed(self, state: str) -> None:
+        if state == STATE_SLEEP:
+            self._status_bar.set_right_text("Asleep — tap screen or tablet to wake")
+        elif state == STATE_IDLE:
+            self._status_bar.set_right_text("Idle — power save")
+        else:
+            self._status_bar.set_right_text("")
+        if state == "active" and self._current_screen_key in _SENSOR_SCREEN_KEYS:
+            widget = self._stack.currentWidget()
+            on_enter = getattr(widget, "on_enter", None)
+            if callable(on_enter):
+                QTimer.singleShot(0, on_enter)
+
+    def apply_power_settings(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        idle_sec: Optional[int] = None,
+        sleep_sec: Optional[int] = None,
+    ) -> None:
+        """Runtime tuning from Settings → Display (QSettings + env defaults)."""
+        cfg = PowerConfig.from_env()
+        settings = QSettings("Sirena", "Nina")
+        if enabled is None:
+            raw = settings.value("power/enabled", "")
+            if str(raw).strip():
+                enabled = str(raw).strip().lower() in ("1", "true", "yes", "on")
+        if idle_sec is None:
+            try:
+                idle_sec = int(settings.value("power/idle_sec", cfg.idle_sec))
+            except (TypeError, ValueError):
+                idle_sec = cfg.idle_sec
+        if sleep_sec is None:
+            try:
+                sleep_sec = int(settings.value("power/sleep_sec", cfg.sleep_sec))
+            except (TypeError, ValueError):
+                sleep_sec = cfg.sleep_sec
+        from dataclasses import replace
+
+        new_cfg = replace(
+            cfg,
+            enabled=cfg.enabled if enabled is None else bool(enabled),
+            idle_sec=max(30, int(idle_sec)),
+            sleep_sec=max(int(idle_sec) + 30, int(sleep_sec)),
+        )
+        self._power.reload_config(new_cfg)
 
     def _on_nav_request(self, key: str) -> None:
         self.navigate(key)
@@ -688,7 +834,14 @@ class MainWindow(QMainWindow):
             if hasattr(home, "_health_collect_thread"):
                 home._health_collect_thread = None
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        central = self.centralWidget()
+        if central is not None and hasattr(self, "_sleep_overlay"):
+            self._sleep_overlay.setGeometry(central.rect())
+
     def closeEvent(self, event) -> None:
+        set_power_manager(None)
         self._wait_background_qthreads()
         try:
             self._service.shutdown()
