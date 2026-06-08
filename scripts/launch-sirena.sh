@@ -34,6 +34,16 @@ LOG_DIR="${HOME}/.cache/sirena"
 LOG_FILE="${LOG_DIR}/launch.log"
 mkdir -p "${LOG_DIR}"
 
+# Fleet tuning + power/eye/DXL ports (same file as nina-ui-kiosk.service).
+_NAV_ENV="/etc/nina-link/navigation.env"
+if [[ -f "${_NAV_ENV}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${_NAV_ENV}"
+    set +a
+    echo "[env] loaded ${_NAV_ENV}" >> "${LOG_FILE}" 2>/dev/null || true
+fi
+
 # Choose Python before ~/.bashrc — rc files sometimes export SIRENA_PYTHON or
 # PYTHONHOME and would skip ${REPO_ROOT}/.venv-link (uvicorn is in requirements-link.txt).
 # Order: explicit SIRENA_PYTHON (systemd/interactive override), then repo venv, then system.

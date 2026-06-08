@@ -140,6 +140,15 @@ if [[ -x "${HDMI_AUDIO_SCRIPT}" ]]; then
     fi
 fi
 
+# Pin standard USB serial layout (eye ttyUSB0, Dynamixel ttyUSB1). Idempotent merge.
+DXL_ENV_SCRIPT="${REPO_ROOT}/scripts/patch-navigation-dxl-env.sh"
+if [[ -x "${DXL_ENV_SCRIPT}" ]]; then
+    echo "[INSTALL] ensuring NINA_DXL_* in /etc/nina-link/navigation.env"
+    if ! sudo "${DXL_ENV_SCRIPT}"; then
+        echo "[WARN] patch-navigation-dxl-env.sh failed (run manually with sudo)" >&2
+    fi
+fi
+
 # Fleet Jetson default: ultralytics + opencv-headless in .venv-link (Vision tab).
 # Requires .venv-link from install-sirena-companion-jetson.sh (or bring-up step 3).
 VISION_SCRIPT="${REPO_ROOT}/scripts/install-vision-jetson.sh"

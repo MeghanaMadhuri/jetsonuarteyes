@@ -646,7 +646,7 @@ class MainWindow(QMainWindow):
         connected = bool(health.get("connected", False))
         detected = int(health.get("detected", 0) or 0)
         expected = int(health.get("expected", 0) or 0)
-        self._status_bar.set_dot("bus", ok=connected and detected > 0)
+        self._status_bar.set_dot("bus", ok=connected)
         self._status_bar.set_dot("wifi", ok=True)
         self._status_bar.set_dot("battery", ok=True)
         ve = self._service.settings.voice_edge

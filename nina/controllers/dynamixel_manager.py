@@ -103,16 +103,34 @@ class DynamixelManager:
             self.write_reg(sid, *REG_CCW_ANGLE_LIMIT, POS_MAX)
             time.sleep(0.02)
 
-    def run_health_check(self) -> HealthReport:
+    def run_health_check(
+        self,
+        probe_ids: Optional[List[int]] = None,
+    ) -> HealthReport:
+        from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
+
         self._require_initialized()
-        reachable = [sid for sid in self.expected_motor_ids if self.ping(sid)]
-        missing = [sid for sid in self.expected_motor_ids if sid not in reachable]
-        connected = len(missing) == 0
-        detail = "All expected motors reachable." if connected else f"Missing motor IDs: {missing}"
+        probe = list(probe_ids or EXPECTED_DYNAMIXEL_IDS)
+        reachable = [sid for sid in probe if self.ping(sid)]
+        missing = [sid for sid in probe if sid not in reachable]
+        self.expected_motor_ids = reachable
+        lean_ready = all(sid in reachable for sid in HOVERBOARD_LEAN_IDS)
+        connected = lean_ready if reachable else False
+        if connected:
+            detail = f"Connected motor IDs: {reachable}"
+        elif reachable:
+            detail = (
+                f"Lean servos missing (need {HOVERBOARD_LEAN_IDS}); "
+                f"present: {reachable}"
+            )
+        else:
+            detail = "No Dynamixel motors responded on the bus"
+        if missing and reachable:
+            detail += f"; not present: {missing}"
         return HealthReport(
             connected=connected,
             detected_motors=len(reachable),
-            expected_motors=len(self.expected_motor_ids),
+            expected_motors=len(probe),
             detail=detail,
         )
 

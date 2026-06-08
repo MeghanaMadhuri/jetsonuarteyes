@@ -21,7 +21,7 @@ from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner, action_playback_speed
 from nina.controllers.eye_expression_uart import EyeExpressionUartClient, EyeUartConfig
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.config.motor_ids import HOVERBOARD_LEAN_IDS
+from nina.config.motor_ids import EXPECTED_DYNAMIXEL_IDS, HOVERBOARD_LEAN_IDS
 from nina.sensors.ads1115 import (
     format_pack_voltage,
     get_battery_snapshot,
@@ -62,11 +62,10 @@ class NinaService:
             repo_root = Path(__file__).resolve().parents[2]
             settings = load_settings(repo_root)
         self.settings = settings
-        self._expected_motor_ids: List[int] = list(settings.dynamixel_expected_ids)
         self.dxl = DynamixelManager(
             serial_port=settings.serial_port,
             baudrate=settings.baudrate,
-            expected_motor_ids=self._expected_motor_ids,
+            expected_motor_ids=list(EXPECTED_DYNAMIXEL_IDS),
         )
         self.action_runner = ActionRunner(
             manifest_path=settings.manifest_path,
@@ -75,7 +74,7 @@ class NinaService:
         )
         self.bus_lock = threading.RLock()
         self._bus_ready = False
-        self._motor_count = len(self._expected_motor_ids)
+        self._motor_count = len(EXPECTED_DYNAMIXEL_IDS)
         self._drive: Optional[DriveController] = None
         self._face_follow: Optional[FaceFollowController] = None
         self._vision: Optional[VisionWorker] = None
@@ -145,17 +144,42 @@ class NinaService:
             )
 
     def ensure_bus(self) -> Dict[str, object]:
-        """Initialize the bus once, run a non-fatal health check, enable torque."""
+        """Initialize the bus once, discover connected motors, enable torque."""
+        from nina.config.dynamixel_port import resolve_dynamixel_port
+
         with self.bus_lock:
             first_bus_init = not self._bus_ready
             if not self._bus_ready:
+                exclude = []
+                if self.settings.eye_uart.enabled and self.settings.eye_uart.port:
+                    exclude.append(self.settings.eye_uart.port.strip())
+                resolved = resolve_dynamixel_port(
+                    self.settings.serial_port,
+                    self.settings.baudrate,
+                    exclude=exclude,
+                )
+                if resolved != self.dxl.serial_port:
+                    self.dxl.serial_port = resolved
                 self.dxl.initialize_bus()
                 self._bus_ready = True
-            health = self.dxl.run_health_check()
+            health = self.dxl.run_health_check(list(EXPECTED_DYNAMIXEL_IDS))
+            if not health.connected:
+                log.warning("Dynamixel bus: %s", health.detail)
+                return {
+                    "connected": False,
+                    "detected": health.detected_motors,
+                    "expected": health.expected_motors,
+                    "detail": health.detail,
+                }
             self.dxl.ensure_joint_mode_for_ids(HOVERBOARD_LEAN_IDS)
             self.dxl.set_torque_all(True)
             if first_bus_init:
                 apply_hoverboard_brake_positions(self.dxl, self.settings.hoverboard_axis)
+            log.info(
+                "Dynamixel bus ready on %s: %s",
+                self.dxl.serial_port,
+                health.detail,
+            )
             return {
                 "connected": health.connected,
                 "detected": health.detected_motors,
@@ -725,7 +749,7 @@ class NinaService:
         """Sync-write goal position for Dynamixel IDs 1–13 (neutral pose)."""
         axis = self.settings.hoverboard_axis
         ms = max(0, min(1023, int(axis.moving_speed)))
-        goals = {int(sid): int(goal) for sid in self._expected_motor_ids}
+        goals = {int(sid): int(goal) for sid in self.dxl.expected_motor_ids}
         with self.bus_lock:
             if not self._bus_ready:
                 return

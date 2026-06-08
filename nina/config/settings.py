@@ -510,7 +510,6 @@ class GotoSettings:
 class NinaSettings:
     serial_port: str
     baudrate: int
-    dynamixel_expected_ids: tuple[int, ...]
     neutral_action_name: str
     actions_dir: Path
     manifest_path: Path
@@ -1050,12 +1049,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         mic_device=(os.environ.get("NINA_VOICE_MIC_DEVICE") or "default").strip(),
     )
 
-    from nina.config.motor_ids import dynamixel_expected_ids_from_env
-
     return NinaSettings(
-        serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB0"),
+        serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB1"),
         baudrate=int(os.environ.get("NINA_DXL_BAUD", "222222")),
-        dynamixel_expected_ids=tuple(dynamixel_expected_ids_from_env()),
         neutral_action_name=os.environ.get("NINA_NEUTRAL_ACTION", "neutral"),
         actions_dir=actions_dir,
         manifest_path=manifest_path,

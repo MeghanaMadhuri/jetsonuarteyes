@@ -999,6 +999,13 @@ class DriveController(QObject):
     def _do_init(self) -> None:
         if self._init_attempted:
             return
+        if self._injected_nav is not None:
+            dxl = getattr(self._injected_nav, "_dxl", None)
+            if dxl is not None and not getattr(dxl, "_is_initialized", False):
+                log.debug(
+                    "DriveController: Dynamixel bus not ready yet — deferring hover init"
+                )
+                return
         nav: Optional[NavigationManagerLike] = None
         try:
             if self._injected_nav is not None:
