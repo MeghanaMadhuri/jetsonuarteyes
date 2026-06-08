@@ -34,6 +34,7 @@ VOICE_PRESETS = [
     ("Australian English", "en", "com.au", False),
     ("Indian English", "en", "co.in", False),
     ("Hindi", "hi", "co.in", False),
+    ("Tamil", "ta", "co.in", False),
     ("Spanish (Spain)", "es", "es", False),
     ("French (France)", "fr", "fr", False),
 ]

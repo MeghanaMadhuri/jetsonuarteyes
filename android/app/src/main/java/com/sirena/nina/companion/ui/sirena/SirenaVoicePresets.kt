@@ -19,6 +19,7 @@ val SirenaVoicePresets: List<SirenaVoicePreset> =
         SirenaVoicePreset("Australian English", "en", "com.au", false),
         SirenaVoicePreset("Indian English", "en", "co.in", false),
         SirenaVoicePreset("Hindi", "hi", "co.in", false),
+        SirenaVoicePreset("Tamil", "ta", "co.in", false),
         SirenaVoicePreset("Spanish (Spain)", "es", "es", false),
         SirenaVoicePreset("French (France)", "fr", "fr", false),
     )
