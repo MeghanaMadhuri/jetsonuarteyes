@@ -26,9 +26,15 @@ REG_CHIP_ID = 0x00
 REG_STATUS = 0x02
 REG_KEY_STATUS1 = 0x03
 REG_KEY_STATUS2 = 0x04
+REG_CALIBRATION = 0x06
+REG_RESET = 0x07
+REG_DETECT_THRESHOLD = 0x10  # KEY 0; keys 1..11 at 0x11..0x1B
 
 # DMR firmware treats a keystatus byte of 0xFF as no touch on that register.
 _KEYSTATUS_IDLE_BYTE = 0xFF
+
+# Soft reset: watchdog ~125 ms then full reset; chip NACKs ~200 ms (datasheet).
+_DMR_RESET_QUIET_SEC = 0.35
 
 # STATUS bits
 _STATUS_KEYS = 1 << 0
@@ -126,6 +132,13 @@ class AT42QT2120:
             raise RuntimeError("AT42QT2120 not opened")
         return int(self._bus.read_byte_data(self._addr, int(register) & 0xFF))
 
+    def write_register(self, register: int, value: int) -> None:
+        if self._bus is None:
+            raise RuntimeError("AT42QT2120 not opened")
+        self._bus.write_byte_data(
+            self._addr, int(register) & 0xFF, int(value) & 0xFF
+        )
+
     def read_chip_id(self) -> int:
         return self.read_register(REG_CHIP_ID)
 
@@ -141,6 +154,59 @@ class AT42QT2120:
 
     def is_calibrating(self) -> bool:
         return bool(self.read_status() & _STATUS_CALIBRATING)
+
+    def wait_for_calibration(self, *, timeout_sec: float = 2.0) -> None:
+        """Block until the CALIBRATE status bit clears."""
+        deadline = time.monotonic() + max(0.1, float(timeout_sec))
+        while time.monotonic() < deadline:
+            if not self.is_calibrating():
+                return
+            time.sleep(0.02)
+        raise RuntimeError("AT42QT2120 calibration timed out")
+
+    def recalibrate(self, *, timeout_sec: float = 2.0) -> None:
+        """DMR-style recalibration command (register 0x06)."""
+        self.write_register(REG_CALIBRATION, 0x07)
+        self.wait_for_calibration(timeout_sec=timeout_sec)
+
+    def dmr_bootstrap(
+        self,
+        *,
+        detect_threshold: int = 25,
+        touch_channel: int = 0,
+        reset_sleep_sec: float = _DMR_RESET_QUIET_SEC,
+        cal_timeout_sec: float = 2.0,
+    ) -> None:
+        """Reset, calibrate, and set per-key detect threshold (DMR parity).
+
+        Matches fleet bench: soft reset → calibrate → DTHR for ``touch_channel``.
+        Raise ``detect_threshold`` (default 25) if the pad is too sensitive.
+        """
+        self.write_register(REG_RESET, 0x07)
+        quiet = float(reset_sleep_sec)
+        if quiet < 0:
+            quiet = _DMR_RESET_QUIET_SEC
+        if quiet > 0:
+            time.sleep(quiet)
+        self.write_register(REG_CALIBRATION, 0x07)
+        self.wait_for_calibration(timeout_sec=cal_timeout_sec)
+        ch = max(0, min(11, int(touch_channel)))
+        thr = max(1, min(255, int(detect_threshold)))
+        self.write_register(REG_DETECT_THRESHOLD + ch, thr)
+        log.info(
+            "AT42QT2120 DMR bootstrap done (ch=%d threshold=%d)",
+            ch,
+            thr,
+        )
+
+    def read_key_status_byte(self, channel: int = 0) -> int:
+        """Raw KEY_STATUS byte for ``channel`` (DMR: 0xFF = idle)."""
+        ch = int(channel)
+        if ch < 0 or ch > 11:
+            raise ValueError("channel must be 0..11")
+        if ch > 7:
+            return self.read_register(REG_KEY_STATUS2)
+        return self.read_register(REG_KEY_STATUS1)
 
     def keys_pressed(self) -> bool:
         """True when STATUS bit 0 reports any key channel active."""
@@ -196,13 +262,17 @@ class AT42QT2120:
             return (self.read_key_mask() & (int(channel_mask) & 0xFFF)) != 0
         return False
 
-    def touch_snapshot(self) -> dict:
-        """Raw register view for bench/debug (STATUS vs key mask)."""
+    def touch_snapshot(self, *, channel: int = 0) -> dict:
+        """Raw register view for bench/debug (STATUS vs key mask vs DMR keystatus)."""
         st = self.read_status()
         mask = self.read_key_mask()
+        ks = self.read_key_status_byte(channel)
+        ch = max(0, min(11, int(channel)))
         return {
             "status": st,
             "mask": mask,
+            "key_status_byte": ks,
+            "key_pressed_dmr": self.is_key_pressed(ch),
             "keys_pressed": bool(st & _STATUS_KEYS),
             "slider_pressed": bool(st & _STATUS_SLIDER),
             "calibrating": bool(st & _STATUS_CALIBRATING),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
@@ -231,7 +232,10 @@ class TouchAt42qt2120Monitor:
         s = service.settings.touch_at42qt2120
         self._detect_mode = str(getattr(s, "detect_mode", "keystatus"))
         self._touch_channel = int(getattr(s, "touch_channel", 0))
+        self._chip_init = bool(getattr(s, "chip_init", False))
+        self._detect_threshold = int(getattr(s, "detect_threshold", 25))
         self._debounce_reads = int(s.debounce_reads)
+        self._hold_sec = float(getattr(s, "hold_sec", 0.4))
         self._release_reads = int(s.release_reads)
         self._baseline_clear_reads = int(s.baseline_clear_reads)
         self._post_baseline_arm_reads = int(
@@ -277,6 +281,11 @@ class TouchAt42qt2120Monitor:
         self._touch.open()
         try:
             self._touch.verify_chip_id()
+            if self._chip_init:
+                self._touch.dmr_bootstrap(
+                    detect_threshold=self._detect_threshold,
+                    touch_channel=self._touch_channel,
+                )
         except Exception:
             self._touch.close()
             raise
@@ -347,8 +356,16 @@ class TouchAt42qt2120Monitor:
                 read_pressed = lambda ch=ch: self._touch.is_key_pressed(ch)
             self._run_keystatus(read_pressed)
 
+    def _min_fire_reads(self) -> int:
+        """Consecutive pressed polls required (debounce + optional hold time)."""
+        hold_reads = 1
+        if self._hold_sec > 0 and self._poll_sec > 0:
+            hold_reads = max(1, int(math.ceil(self._hold_sec / self._poll_sec)))
+        return max(self._debounce_reads, hold_reads)
+
     def _run_keystatus(self, read_pressed: Callable[[], bool]) -> None:
         """DMR-style loop: KEY_STATUS byte (or STATUS), level debounce, release re-arm."""
+        fire_reads = self._min_fire_reads()
         while not self._stop.is_set():
             try:
                 if self._touch.is_calibrating():
@@ -383,7 +400,7 @@ class TouchAt42qt2120Monitor:
 
             fire, self._hits = touch_debounce_step(
                 pressed,
-                debounce_reads=self._debounce_reads,
+                debounce_reads=fire_reads,
                 consecutive_hits=self._hits,
             )
             if fire:

@@ -318,7 +318,8 @@ class TouchAt42qt2120Settings:
     Set ``NINA_TOUCH_DETECT=keystatus`` for DMR-style KEY_STATUS reads (channel 0,
     ``0xFF`` idle). Use ``NINA_TOUCH_DETECT=key_mask`` for legacy inverted 12-bit
     mask wiring (idle ``0x001``, press clears to ``0x000``). ``status`` uses the
-    STATUS keys bit only.
+    STATUS keys bit only. ``NINA_TOUCH_CHIP_INIT=1`` runs DMR reset+calibrate+threshold
+    at monitor start (``NINA_TOUCH_THRESHOLD``, default 25).
     """
 
     enabled: bool
@@ -326,6 +327,8 @@ class TouchAt42qt2120Settings:
     i2c_address: int
     detect_mode: str
     touch_channel: int
+    chip_init: bool
+    detect_threshold: int
     use_key_mask: bool
     channel_mask: int
     debounce_reads: int
@@ -997,6 +1000,10 @@ def load_settings(repo_root: Path) -> NinaSettings:
         i2c_address=_env_int("NINA_TOUCH_I2C_ADDR", 0x1C),
         detect_mode=_touch_detect_mode,
         touch_channel=max(0, min(11, _env_int("NINA_TOUCH_CHANNEL", 0))),
+        chip_init=_env_bool("NINA_TOUCH_CHIP_INIT", True),
+        detect_threshold=max(
+            1, min(255, _env_int("NINA_TOUCH_THRESHOLD", 25))
+        ),
         use_key_mask=_env_bool("NINA_TOUCH_USE_KEY_MASK", False),
         channel_mask=max(
             1,
@@ -1025,7 +1032,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         blind_after_reaction_sec=max(
             0.0, _env_float("NINA_TOUCH_BLIND_SEC", 3.0)
         ),
-        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 1.0)),
+        poll_interval_sec=max(0.02, _env_float("NINA_TOUCH_POLL_SEC", 0.05)),
         tts_text=(
             (os.environ.get("NINA_TOUCH_TTS") or "").strip()
             or "Please dont touch me"
