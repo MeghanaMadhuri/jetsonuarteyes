@@ -222,18 +222,18 @@ class AT42QT2120:
         return ((hi & 0x0F) << 8) | (lo & 0xFF)
 
     def is_key_pressed(self, channel: int = 0) -> bool:
-        """DMR-style touch read: KEY_STATUS byte, ``0xFF`` idle, bit set = pressed."""
+        """DMR-style touch read: KEY_STATUS byte idle ``0xFF`` or ``0x00``, bit set = pressed."""
         ch = int(channel)
         if ch < 0 or ch > 11:
             return False
         if ch > 7:
-            data = self.read_register(REG_KEY_STATUS2)
+            data = int(self.read_register(REG_KEY_STATUS2))
             ch -= 8
         else:
-            data = self.read_register(REG_KEY_STATUS1)
-        if int(data) == _KEYSTATUS_IDLE_BYTE:
+            data = int(self.read_register(REG_KEY_STATUS1))
+        if data == _KEYSTATUS_IDLE_BYTE or data == 0x00:
             return False
-        return bool(int(data) & (1 << ch))
+        return bool(data & (1 << ch))
 
     def any_touch(self) -> bool:
         """True if STATUS or (optionally) key mask reports activity."""

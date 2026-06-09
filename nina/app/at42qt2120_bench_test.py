@@ -18,7 +18,6 @@ KEY_STATUS for channel 0, ``0xFF`` = idle, bit set = pressed.
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 import time
@@ -32,11 +31,12 @@ from nina.sensors.at42qt2120 import (
     is_available,
 )
 from nina.sensors.touch_at42qt2120_monitor import (
-    touch_debounce_step,
+    KeystatusDebounceState,
     touch_grace_debounce_step,
     touch_inverted_idle,
     touch_inverted_press,
     touch_mask_active,
+    touch_min_fire_reads,
     touch_release_rearm_step,
     touch_rising_edge_debounce_step,
     touch_stuck_high_step,
@@ -84,13 +84,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _min_fire_reads(debounce: int, hold_sec: float, poll_sec: float) -> int:
-    hold_reads = 1
-    if hold_sec > 0 and poll_sec > 0:
-        hold_reads = max(1, int(math.ceil(hold_sec / poll_sec)))
-    return max(debounce, hold_reads)
-
-
 class _BenchState:
     """Mirrors production monitor debounce / re-arm for bench output."""
 
@@ -111,15 +104,16 @@ class _BenchState:
         self.channel = channel
         self.debounce_reads = debounce_reads
         self.release_reads = release_reads
-        self.fire_reads = _min_fire_reads(debounce_reads, hold_sec, poll_sec)
+        self.fire_reads = touch_min_fire_reads(debounce_reads, hold_sec, poll_sec)
+        self.keystatus = KeystatusDebounceState(
+            fire_reads=self.fire_reads,
+            release_reads=release_reads,
+        )
         self.poll_sec = poll_sec
         self.channel_mask = channel_mask & 0xFFF
         self.stuck_after_sec = stuck_after_sec
         self.stuck_clear_reads = stuck_clear_reads
 
-        self.armed = True
-        self.hits = 0
-        self.release_hits = 0
         self.prev_touched = False
         self.prev_masked = 0
         self.idle_mask = 0
@@ -129,31 +123,10 @@ class _BenchState:
         self.stuck_clear_hits = 0
         self.touch_high_since: float | None = None
         self.last_signal_mono = -1e30
-        self.fire_count = 0
 
     def step_keystatus(self, pressed: bool, now: float) -> tuple[bool, str]:
-        if not self.armed:
-            self.armed, self.release_hits = touch_release_rearm_step(
-                pressed,
-                armed=False,
-                release_reads=self.release_reads,
-                consecutive_clear=self.release_hits,
-            )
-            self.hits = 0
-            return False, "re-arming"
-
-        fire, self.hits = touch_debounce_step(
-            pressed,
-            debounce_reads=self.fire_reads,
-            consecutive_hits=self.hits,
-        )
-        if fire:
-            self.armed = False
-            self.release_hits = 0
-            self.hits = 0
-            self.fire_count += 1
-            return True, f"FIRE #{self.fire_count}"
-        return False, f"debounce {self.hits}/{self.fire_reads}"
+        del now  # production uses monotonic only for quiet/cooldown
+        return self.keystatus.step(pressed)
 
     def step_key_mask(
         self, dev: AT42QT2120, now: float
@@ -382,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        fire_reads = _min_fire_reads(debounce, hold_sec, poll_sec)
+        fire_reads = touch_min_fire_reads(debounce, hold_sec, poll_sec)
         print(
             f"Watching ({detect}) poll={poll_sec:.3f}s debounce={debounce} "
             f"fire_reads={fire_reads} release={release_reads}  Ctrl+C to stop"
@@ -416,14 +389,15 @@ def main(argv: list[str] | None = None) -> int:
                 fired, note = bench.step_keystatus(pressed, now)
                 line = (
                     f"dmr ch{channel} KEY=0x{ks:02X} pressed={pressed} "
-                    f"armed={bench.armed} {note}"
+                    f"armed={bench.keystatus.armed} {note}"
                 )
             elif detect == "status":
                 pressed = dev.keys_pressed()
                 fired, note = bench.step_keystatus(pressed, now)
                 st = dev.read_status()
                 line = (
-                    f"STATUS=0x{st:02X} keys={pressed} armed={bench.armed} {note}"
+                    f"STATUS=0x{st:02X} keys={pressed} "
+                    f"armed={bench.keystatus.armed} {note}"
                 )
             else:
                 fired, note, snap = bench.step_key_mask(dev, now)

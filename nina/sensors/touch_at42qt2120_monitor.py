@@ -6,6 +6,7 @@ import logging
 import math
 import threading
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
 from nina.sensors.at42qt2120 import AT42QT2120, is_available
@@ -206,6 +207,55 @@ def touch_baseline_idle_step(
     return False, n, idle_mask
 
 
+def touch_min_fire_reads(
+    debounce_reads: int,
+    hold_sec: float,
+    poll_sec: float,
+) -> int:
+    """Consecutive pressed polls before fire (bench + production share this)."""
+    hold_reads = 1
+    if hold_sec > 0 and poll_sec > 0:
+        hold_reads = max(1, int(math.ceil(hold_sec / poll_sec)))
+    return max(int(debounce_reads), hold_reads)
+
+
+@dataclass
+class KeystatusDebounceState:
+    """DMR keystatus debounce — same state machine as ``at42qt2120_bench_test``."""
+
+    fire_reads: int
+    release_reads: int
+    armed: bool = True
+    hits: int = 0
+    release_hits: int = 0
+    fire_count: int = 0
+
+    def step(self, pressed: bool) -> tuple[bool, str]:
+        """Return ``(should_fire, status_note)`` for one poll."""
+        if not self.armed:
+            self.armed, self.release_hits = touch_release_rearm_step(
+                pressed,
+                armed=False,
+                release_reads=self.release_reads,
+                consecutive_clear=self.release_hits,
+            )
+            self.hits = 0
+            return False, "re-arming"
+
+        fire, self.hits = touch_debounce_step(
+            pressed,
+            debounce_reads=self.fire_reads,
+            consecutive_hits=self.hits,
+        )
+        if fire:
+            self.armed = False
+            self.release_hits = 0
+            self.hits = 0
+            self.fire_count += 1
+            return True, f"FIRE #{self.fire_count}"
+        return False, f"debounce {self.hits}/{self.fire_reads}"
+
+
 def touch_baseline_ready_step(
     effective_touched: bool,
     *,
@@ -310,19 +360,24 @@ class TouchAt42qt2120Monitor:
             target=self._run, name="TouchAt42qt2120Monitor", daemon=True
         )
         self._thread.start()
+        fire_reads = self._min_fire_reads()
         log.info(
             "AT42QT2120 touch monitor started (i2c-%s 0x%02X detect=%s "
-            "poll=%.2fs debounce=%d release=%d cooldown=%.1fs blind=%.2fs "
-            "quiet=max(cooldown,blind) channel=%d)",
+            "ch=%d chip_init=%s threshold=%d poll=%.3fs debounce=%d "
+            "fire_reads=%d release=%d hold=%.2fs cooldown=%.1fs blind=%.1fs)",
             self._svc.settings.touch_at42qt2120.i2c_bus,
             self._svc.settings.touch_at42qt2120.i2c_address,
             self._detect_mode,
+            self._touch_channel,
+            self._chip_init,
+            self._detect_threshold,
             self._poll_sec,
             self._debounce_reads,
+            fire_reads,
             self._release_reads,
+            self._hold_sec,
             self._cooldown_sec,
             self._blind_sec,
-            self._touch_channel,
         )
 
     def stop(self) -> None:
@@ -357,53 +412,44 @@ class TouchAt42qt2120Monitor:
             self._run_keystatus(read_pressed)
 
     def _min_fire_reads(self) -> int:
-        """Consecutive pressed polls required (debounce + optional hold time)."""
-        hold_reads = 1
-        if self._hold_sec > 0 and self._poll_sec > 0:
-            hold_reads = max(1, int(math.ceil(self._hold_sec / self._poll_sec)))
-        return max(self._debounce_reads, hold_reads)
+        return touch_min_fire_reads(
+            self._debounce_reads, self._hold_sec, self._poll_sec
+        )
 
     def _run_keystatus(self, read_pressed: Callable[[], bool]) -> None:
-        """DMR-style loop: KEY_STATUS byte (or STATUS), level debounce, release re-arm."""
-        fire_reads = self._min_fire_reads()
+        """DMR keystatus loop — same debounce path as ``at42qt2120_bench_test``."""
+        debounce = KeystatusDebounceState(
+            fire_reads=self._min_fire_reads(),
+            release_reads=self._release_reads,
+        )
         while not self._stop.is_set():
             try:
                 if self._touch.is_calibrating():
-                    self._hits = 0
+                    debounce.hits = 0
                     time.sleep(self._poll_sec)
                     continue
                 pressed = read_pressed()
             except Exception:
                 log.debug("AT42QT2120 read failed", exc_info=True)
-                self._hits = 0
+                debounce.hits = 0
                 time.sleep(max(self._poll_sec, 0.1))
                 continue
 
             now = time.monotonic()
             if now < self._quiet_until_mono:
-                self._armed = False
-                self._hits = 0
-                self._release_hits = 0
+                debounce.armed = False
+                debounce.hits = 0
+                debounce.release_hits = 0
                 time.sleep(self._poll_sec)
                 continue
 
-            if not self._armed:
-                self._armed, self._release_hits = touch_release_rearm_step(
-                    pressed,
-                    armed=False,
-                    release_reads=self._release_reads,
-                    consecutive_clear=self._release_hits,
-                )
-                self._hits = 0
-                time.sleep(self._poll_sec)
-                continue
-
-            fire, self._hits = touch_debounce_step(
-                pressed,
-                debounce_reads=fire_reads,
-                consecutive_hits=self._hits,
-            )
+            fire, _note = debounce.step(pressed)
             if fire:
+                log.debug(
+                    "AT42QT2120 keystatus %s pressed=%s",
+                    _note,
+                    pressed,
+                )
                 self._complete_reaction(pressed=pressed, masked=None)
 
             time.sleep(self._poll_sec)

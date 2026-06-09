@@ -1009,8 +1009,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
             1,
             min(0xFFF, _env_int("NINA_TOUCH_CHANNEL_MASK", 0xFFF)),
         ),
-        debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 2))),
-        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 2))),
+        debounce_reads=max(2, min(20, _env_int("NINA_TOUCH_DEBOUNCE", 5))),
+        release_reads=max(1, min(20, _env_int("NINA_TOUCH_RELEASE_READS", 3))),
         baseline_clear_reads=max(
             1, min(50, _env_int("NINA_TOUCH_BASELINE_CLEAR_READS", 10))
         ),

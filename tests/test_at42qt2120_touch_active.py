@@ -54,6 +54,12 @@ def test_is_key_pressed_uses_ff_idle_sentinel() -> None:
     assert not dev.is_key_pressed(1)
 
 
+def test_is_key_pressed_treats_zero_byte_as_idle() -> None:
+    dev = AT42QT2120(7)
+    dev.read_register = MagicMock(return_value=0x00)  # type: ignore[method-assign]
+    assert not dev.is_key_pressed(0)
+
+
 def test_is_key_pressed_reads_second_register_for_high_channels() -> None:
     dev = AT42QT2120(7)
     dev.read_register = MagicMock(return_value=0x04)  # type: ignore[method-assign]
